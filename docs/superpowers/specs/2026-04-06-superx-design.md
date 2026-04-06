@@ -43,6 +43,7 @@ Three levels, cycleable at any time:
 
 **How to change levels:**
 - **Slash command:** `/superx:level 1`, `/superx:level 2`, `/superx:level 3`
+- **Arrow key cycling:** Quick keyboard shortcut to cycle 1→2→3→1 (mirrors Claude Code effort slider UX)
 - **Adaptive suggestions:** superx notices patterns:
   - If user approves everything without changes at Level 1 → suggests bumping to Level 2
   - If user keeps rejecting/modifying at Level 3 → suggests stepping down to Level 2
@@ -113,8 +114,8 @@ Before any code reaches git:
 1. **Tests pass** — test bench is always maintained and run
 2. **Lint clean** — enforced standards, zero warnings policy
 3. **Conflict reflection** — reviews all logged conflicts since last push
-4. **PR review skill** — mandatory code review before push
-5. **CLAUDE.md updated** — project context kept current
+4. **PR review skill** — mandatory `pr-review-toolkit:review-pr` or `code-review:code-review` before push
+5. **CLAUDE.md updated** — via `claude-md-improver` skill
 
 ### 3.3 Test Bench
 
@@ -130,6 +131,7 @@ superx always maintains a ready test bench:
 
 ### 4.1 Human-Readable State: CLAUDE.md
 
+Managed via `claude-md-improver` skill:
 - Project context, goals, current phase
 - Active decisions and their rationale
 - Links to relevant specs and docs
@@ -211,18 +213,18 @@ Sources:
 Issue detected
   → Classify severity (critical / high / medium / low)
   → Classify confidence (can auto-fix / needs investigation / needs human)
-
+  
   For auto-fixable (low severity + high confidence):
     → Spawn coder agent with fix
     → Run tests
     → Add to patch release batch
     → Auto-merge after tests pass
-
+  
   For investigation needed:
     → Spawn investigator agent
     → If fix found → create PR, wait for human merge
     → If unclear → escalate to user with context
-
+  
   For critical:
     → Immediately alert team
     → Spawn agent for hotfix
@@ -245,6 +247,8 @@ superx communicates like a colleague, not a bot:
 - **Fix in progress:** "Found the root cause — the session token validation wasn't handling expired tokens. Writing a fix with tests."
 - **Fix ready:** "Fixed in PR #47. Also batched two related edge cases. Tests pass. Ready for v1.2.4."
 - **Needs help:** "I'm stuck on issue #23 — the expected behavior isn't clear from the spec. Can you clarify: should expired tokens return 401 or 403?"
+
+Channel: Slack (via slack skills), GitHub comments, or direct in-session messages — depending on what's available.
 
 ---
 
@@ -282,7 +286,58 @@ When no installed skill matches a detected need:
 
 ---
 
-## 7. Success Criteria
+## 7. Directory Structure
+
+```
+superx/
+├── .claude-plugin/
+│   └── plugin.json              # Plugin manifest
+├── skills/
+│   └── superx/
+│       ├── SKILL.md             # Main skill — orchestrator
+│       ├── scripts/
+│       │   ├── detect_skills.py # Skill matching engine
+│       │   ├── state_manager.py # superx-state.json CRUD
+│       │   ├── conflict_resolver.py
+│       │   ├── authenticity_checker.py
+│       │   └── maintainer_cron.py
+│       ├── references/
+│       │   ├── agent-templates.md    # Templates for spawning each agent type
+│       │   ├── quality-gates.md      # Detailed gate specifications
+│       │   ├── maintainer-guide.md   # Maintainer mode documentation
+│       │   └── communication-templates.md
+│       └── assets/
+│           └── superx-state-schema.json
+├── commands/
+│   ├── level.md                 # /superx:level command
+│   ├── status.md                # /superx:status — show current state
+│   ├── maintain.md              # /superx:maintain — toggle maintainer mode
+│   └── reflect.md               # /superx:reflect — force reflection pass
+├── docs/
+│   └── superpowers/
+│       └── specs/
+│           └── 2026-04-06-superx-design.md
+├── evals/
+│   └── evals.json               # Test cases for skill-creator workflow
+├── README.md
+├── LICENSE
+└── CHANGELOG.md
+```
+
+---
+
+## 8. Open Design Questions
+
+These will be resolved during approach selection:
+
+1. **Skill detection algorithm**: Keyword matching vs. semantic embedding vs. LLM-based classification?
+2. **State sync across agents**: How do parallel agents share state without conflicts?
+3. **Maintainer cron implementation**: OS-level cron, Claude Code scheduled triggers, or something else?
+4. **Arrow key binding**: Can we register custom keybindings in Claude Code, or do we need a different UX?
+
+---
+
+## 9. Success Criteria
 
 - A user can say "build me X" and superx handles everything from planning to shipping
 - Quality of output matches or exceeds what a skilled developer following all best practices would produce
