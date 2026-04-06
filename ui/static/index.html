@@ -18,6 +18,7 @@
       </div>
       <div class="header-right">
         <button id="stop-btn" class="btn">STOP</button>
+        <button id="history-btn" class="history-btn" title="Past sessions">&#9776;</button>
       </div>
     </div>
 
@@ -70,6 +71,17 @@
       </div>
     </div>
 
+  </div>
+
+  <!-- History drawer -->
+  <div id="history-overlay" class="history-overlay">
+    <div class="history-drawer">
+      <div class="history-drawer-header">
+        <h2>PAST SESSIONS</h2>
+        <button id="history-close" class="history-close">X</button>
+      </div>
+      <div id="history-list" class="history-list"></div>
+    </div>
   </div>
 
   <script src="sprites.js"></script>
