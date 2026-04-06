@@ -24,6 +24,50 @@ terminal_lines: list[str] = []
 terminal_lock = threading.Lock()
 MAX_TERMINAL_LINES = 500
 pending_prompts: dict[int, str] = {}  # stores original prompt awaiting approval
+timeline_events: list[dict] = []  # persisted timeline events
+MAX_TIMELINE_EVENTS = 200
+SESSION_FILE = Path("superx-session.json")
+session_lock = threading.Lock()
+
+
+def save_session():
+    """Persist timeline events and terminal lines to disk."""
+    with session_lock:
+        data = {
+            "timeline": timeline_events[-MAX_TIMELINE_EVENTS:],
+            "terminal": terminal_lines[-MAX_TERMINAL_LINES:],
+            "pending_prompt": pending_prompts.get(0, None),
+            "saved_at": time.time(),
+        }
+        SESSION_FILE.write_text(json.dumps(data))
+
+
+def load_session():
+    """Restore session from disk on startup."""
+    global timeline_events
+    if SESSION_FILE.exists():
+        try:
+            data = json.loads(SESSION_FILE.read_text())
+            timeline_events = data.get("timeline", [])
+            restored_terminal = data.get("terminal", [])
+            with terminal_lock:
+                terminal_lines.clear()
+                terminal_lines.extend(restored_terminal)
+            pending = data.get("pending_prompt")
+            if pending:
+                pending_prompts[0] = pending
+        except (json.JSONDecodeError, KeyError):
+            pass
+
+
+def add_timeline_event(event: dict):
+    """Add a timeline event and persist."""
+    timeline_events.append(event)
+    if len(timeline_events) > MAX_TIMELINE_EVENTS:
+        timeline_events.pop(0)
+    push_event("timeline", event)
+    # Save async to avoid blocking
+    threading.Thread(target=save_session, daemon=True).start()
 
 
 def watch_state_file():
@@ -109,25 +153,25 @@ def stream_claude_output(proc: subprocess.Popen):
                             # Detect plan content and send as rich plan event
                             lower = new_part.lower()
                             if any(kw in lower for kw in ["sub-project", "dependency", "wave ", "phase ", "## plan", "decompos"]):
-                                push_event("timeline", {
+                                add_timeline_event({
                                     "agent": "architect",
                                     "type": "warning",
                                     "message": new_part.strip()[:300]
                                 })
                             elif any(kw in lower for kw in ["quality gate", "test", "lint", "review"]):
-                                push_event("timeline", {
+                                add_timeline_event({
                                     "agent": "test-runner",
                                     "type": "info",
                                     "message": new_part.strip()[:200]
                                 })
                             elif any(kw in lower for kw in ["design", "ui/ux", "component", "layout", "color"]):
-                                push_event("timeline", {
+                                add_timeline_event({
                                     "agent": "design",
                                     "type": "info",
                                     "message": new_part.strip()[:200]
                                 })
                             else:
-                                push_event("timeline", {
+                                add_timeline_event({
                                     "agent": "superx",
                                     "type": "info",
                                     "message": new_part.strip()[:200]
@@ -140,7 +184,7 @@ def stream_claude_output(proc: subprocess.Popen):
                     if tool_name == "Agent":
                         desc = tool_input.get("description", tool_input.get("prompt", "")[:60])
                         _terminal_append(f"[Agent] {desc}")
-                        push_event("timeline", {
+                        add_timeline_event({
                             "agent": "superx",
                             "type": "info",
                             "message": f"Spawning agent: {desc}"
@@ -148,7 +192,7 @@ def stream_claude_output(proc: subprocess.Popen):
                     elif tool_name == "Bash":
                         cmd = tool_input.get("command", "")[:80]
                         _terminal_append(f"$ {cmd}")
-                        push_event("timeline", {
+                        add_timeline_event({
                             "agent": "coder",
                             "type": "info",
                             "message": f"$ {cmd}"
@@ -157,7 +201,7 @@ def stream_claude_output(proc: subprocess.Popen):
                         fpath = tool_input.get("file_path", "")
                         fname = fpath.split("/")[-1] if fpath else "unknown"
                         _terminal_append(f"[{tool_name}] {fname}")
-                        push_event("timeline", {
+                        add_timeline_event({
                             "agent": "coder",
                             "type": "info",
                             "message": f"{tool_name}: {fname}"
@@ -169,7 +213,7 @@ def stream_claude_output(proc: subprocess.Popen):
                     elif tool_name == "Skill":
                         skill = tool_input.get("skill", "unknown")
                         _terminal_append(f"[Skill] {skill}")
-                        push_event("timeline", {
+                        add_timeline_event({
                             "agent": "superx",
                             "type": "info",
                             "message": f"Using skill: {skill}"
@@ -177,7 +221,7 @@ def stream_claude_output(proc: subprocess.Popen):
                     elif tool_name in ("TaskCreate", "TaskUpdate"):
                         subject = tool_input.get("subject", tool_input.get("status", ""))
                         _terminal_append(f"[Task] {subject}")
-                        push_event("timeline", {
+                        add_timeline_event({
                             "agent": "superx",
                             "type": "warning",
                             "message": f"Task: {subject}"
@@ -206,13 +250,21 @@ def stream_claude_output(proc: subprocess.Popen):
     push_event("process", {"status": "exited", "code": proc.returncode})
 
 
+_last_session_save = 0
+
 def _terminal_append(line: str):
     """Add a line to the terminal buffer and push to clients."""
+    global _last_session_save
     with terminal_lock:
         terminal_lines.append(line)
         if len(terminal_lines) > MAX_TERMINAL_LINES:
             terminal_lines.pop(0)
     push_event("terminal", line)
+    # Throttled session save (every 2 seconds max)
+    now = time.time()
+    if now - _last_session_save > 2:
+        _last_session_save = now
+        threading.Thread(target=save_session, daemon=True).start()
 
 
 def start_claude(prompt: str):
@@ -379,6 +431,8 @@ class DashboardHandler(SimpleHTTPRequestHandler):
             self.handle_state()
         elif self.path == "/api/terminal":
             self.handle_terminal()
+        elif self.path == "/api/session":
+            self.handle_session()
         elif self.path == "/":
             self.path = "/index.html"
             super().do_GET()
@@ -448,6 +502,19 @@ class DashboardHandler(SimpleHTTPRequestHandler):
             lines = list(terminal_lines)
         self.send_json(200, {"lines": lines})
 
+    def handle_session(self):
+        """Return full session state for restore after refresh."""
+        with terminal_lock:
+            term = list(terminal_lines)
+        running = claude_process is not None and claude_process.poll() is None
+        has_pending = bool(pending_prompts.get(0))
+        self.send_json(200, {
+            "timeline": timeline_events[-MAX_TIMELINE_EVENTS:],
+            "terminal": term,
+            "running": running,
+            "pending_plan": has_pending,
+        })
+
     def handle_prompt(self):
         """Accept a prompt and start claude."""
         length = int(self.headers.get("Content-Length", 0))
@@ -493,14 +560,19 @@ class DashboardHandler(SimpleHTTPRequestHandler):
             self.send_json(400, {"error": "Invalid JSON"})
 
     def handle_stop(self):
-        """Stop the running claude process."""
+        """Stop the running claude process and clear the session."""
         global claude_process
         if claude_process and claude_process.poll() is None:
             claude_process.terminate()
-            push_event("process", {"status": "stopped"})
-            self.send_json(200, {"status": "stopped"})
-        else:
-            self.send_json(200, {"status": "not_running"})
+        # Clear session
+        timeline_events.clear()
+        with terminal_lock:
+            terminal_lines.clear()
+        pending_prompts.clear()
+        if SESSION_FILE.exists():
+            SESSION_FILE.unlink()
+        push_event("process", {"status": "stopped"})
+        self.send_json(200, {"status": "stopped"})
 
     def send_json(self, code: int, data: dict):
         self.send_response(code)
@@ -515,6 +587,7 @@ class DashboardHandler(SimpleHTTPRequestHandler):
 
 def main():
     init_state_if_needed()
+    load_session()
 
     watcher = threading.Thread(target=watch_state_file, daemon=True)
     watcher.start()
