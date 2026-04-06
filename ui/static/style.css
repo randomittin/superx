@@ -44,7 +44,7 @@ body {
 
 .dashboard {
   display: grid;
-  grid-template-rows: auto 1fr 1fr;
+  grid-template-rows: auto 1fr auto;
   grid-template-columns: 1fr 320px;
   height: 100vh;
   gap: 2px;
@@ -127,6 +127,7 @@ body {
   display: flex;
   flex-direction: column;
   overflow: hidden;
+  min-height: 0;
 }
 
 .timeline-header {
@@ -407,7 +408,8 @@ body {
   display: flex;
   flex-direction: column;
   overflow: hidden;
-  max-height: 100px;
+  height: auto;
+  flex-shrink: 0;
 }
 
 .warroom-header {
