@@ -177,9 +177,34 @@ function isMarkdown(text) {
 
 function renderMarkdown(text) {
   if (typeof marked !== 'undefined' && typeof DOMPurify !== 'undefined') {
-    return DOMPurify.sanitize(marked.parse(text));
+    let html = DOMPurify.sanitize(marked.parse(text));
+    // Post-process: add pixel art icons to file tree lines
+    html = addFileTreeIcons(html);
+    return html;
   }
   return null;
+}
+
+function addFileTreeIcons(html) {
+  // Replace folder patterns in <code> blocks within <pre>
+  // Folders end with /
+  html = html.replace(/(├──|└──|│\s+├──|│\s+└──)(\s*)([a-zA-Z0-9._-]+\/)/g,
+    '$1$2<span style="color:#f1c40f">&#128193;</span> <span style="color:#f1c40f">$3</span>');
+  // Files with extensions
+  html = html.replace(/(├──|└──|│\s+├──|│\s+└──)(\s*)([a-zA-Z0-9._-]+\.\w+)/g, (match, tree, space, file) => {
+    // Already processed (has folder icon)?
+    if (match.includes('&#128193;')) return match;
+    const ext = file.split('.').pop().toLowerCase();
+    let icon = '&#128196;'; // default: page
+    let color = '#6bcbef';
+    if (['ts', 'tsx', 'js', 'jsx'].includes(ext)) { icon = '&#9889;'; color = '#f1c40f'; }
+    else if (['json', 'yaml', 'yml', 'toml'].includes(ext)) { icon = '&#9881;'; color = '#e67e22'; }
+    else if (['md', 'mdx', 'txt'].includes(ext)) { icon = '&#128221;'; color = '#4ecca3'; }
+    else if (['css', 'scss'].includes(ext)) { icon = '&#127912;'; color = '#e056a0'; }
+    else if (['png', 'jpg', 'svg', 'ico'].includes(ext)) { icon = '&#128247;'; color = '#9b59b6'; }
+    return tree + space + '<span style="color:' + color + '">' + icon + '</span> <span style="color:' + color + '">' + file + '</span>';
+  });
+  return html;
 }
 
 function addTimelineEvent(type, agent, message, useMono, markdown) {
