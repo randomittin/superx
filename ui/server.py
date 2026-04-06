@@ -48,15 +48,36 @@ def archive_session():
     """Save current session to history before clearing."""
     if not timeline_events:
         return
-    # Find the first user task message for summary
+    # Find the user's original task prompt for the title
     task_summary = ""
     for evt in timeline_events:
         msg = evt.get("message", "")
+        # Look for the user task submission
         if msg.startswith("Task:"):
             task_summary = msg[5:].strip()
             break
+    # Fallback: look for the longest markdown message (the plan)
+    if not task_summary:
+        for evt in timeline_events:
+            if evt.get("markdown"):
+                # Extract first heading from markdown
+                lines = evt.get("message", "").split("\n")
+                for line in lines:
+                    stripped = line.strip().lstrip("#").strip()
+                    if stripped and len(stripped) > 5:
+                        task_summary = stripped[:120]
+                        break
+                if task_summary:
+                    break
+    # Final fallback
     if not task_summary and timeline_events:
-        task_summary = timeline_events[0].get("message", "")[:100]
+        for evt in timeline_events:
+            msg = evt.get("message", "")
+            if not msg.startswith("$") and not msg.startswith("Using skill") and len(msg) > 10:
+                task_summary = msg[:120]
+                break
+    if not task_summary:
+        task_summary = "Untitled session"
 
     entry = {
         "timestamp": time.time(),
