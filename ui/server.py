@@ -223,14 +223,14 @@ def start_claude(prompt: str):
         push_event("error", "Claude is already running. Wait for it to finish.")
         return
 
-    # Phase 1: Plan only — do not execute
+    # Phase 1: Plan only — do not execute, do not ask questions
     plan_prompt = (
-        "IMPORTANT: Before writing any code, you MUST first present a clear plan. "
-        "Start by listing the sub-projects you'll create, the dependency order, "
-        "which agents will handle each part, and what the final result will look like. "
-        "Format the plan with clear headers and bullet points. "
-        "DO NOT start implementing. ONLY present the plan, then stop. "
-        "End your response with: ---PLAN READY---\n\n"
+        "IMPORTANT: Present a clear execution plan before writing any code. "
+        "List sub-projects, dependency order, which agents handle each part, "
+        "and expected outcome. Use clear headers and bullet points. "
+        "Do NOT ask clarifying questions — make reasonable assumptions and note them. "
+        "Do NOT start implementing. ONLY output the plan then stop. "
+        "End with exactly: ---PLAN READY---\n\n"
         "User task: " + prompt
     )
 
