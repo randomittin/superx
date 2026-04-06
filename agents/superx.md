@@ -359,20 +359,43 @@ Only use Slack when the user has confirmed they want team notifications. Ask onc
 
 ## 11. Maintainer Mode
 
-When activated via `/superx:maintain`:
+### Activation
 
-1. Watch for new GitHub issues via `gh issue list`
-2. Classify severity and confidence
-3. For auto-fixable issues (low severity + high confidence):
-   - Spawn coder agent with fix
-   - Run tests
-   - Create PR with explanation
-4. For investigation needed:
-   - Spawn architect agent to investigate
-   - Report findings
-5. For critical issues:
-   - Alert immediately
-   - Spawn hotfix agent
-   - Require human approval for merge
+`/superx:maintain` runs a guided setup wizard — configures issue sources, monitoring frequency, and Slack notifications in one flow. It runs the first check immediately after setup.
 
-Batch related small fixes into patch releases with proper semver bumps.
+### The Maintenance Cycle
+
+Each `/superx:maintain-check` invocation runs one cycle:
+
+1. **Scan** — pull new issues from all configured sources (GitHub, logs, error tracking)
+2. **Filter** — skip issues already tracked in `maintainer.pending_fixes`
+3. **Triage** — classify severity x confidence, route per the matrix:
+
+   | Route | Action |
+   |-------|--------|
+   | Critical x Any | Alert user + spawn hotfix agent + require human merge |
+   | High x High | Spawn coder → test → lint → review → create PR |
+   | High x Medium | Spawn architect to investigate, then fix if found |
+   | Medium/Low x High | Auto-fix, add to release queue for batch |
+   | Medium/Low x Medium | Investigate, add to queue if fixable |
+   | Any x Low | Escalate to user with full context |
+
+4. **Fix** — spawn agents for each routed issue (coder, test-runner, lint-quality, reviewer)
+5. **Release** — when 3+ items in queue or oldest is >24h: batch into patch release with semver bump, changelog, and GitHub release
+6. **Communicate** — post summary to user / Slack channel
+
+### Continuous Monitoring
+
+After activation, the user starts continuous monitoring with:
+- `/loop 30m /superx:maintain-check` — checks every 30 minutes in-session
+- `/schedule` — persistent cron that survives session restarts
+
+### Key Principle
+
+Every maintainer action reflects CTO-level judgment. Don't just mechanically apply fixes — consider:
+- Is this fix actually the right approach, or does it need a different design?
+- Will this fix create tech debt elsewhere?
+- Should this be escalated even if it looks auto-fixable?
+- Is the issue a symptom of a larger problem?
+
+When in doubt, escalate. A false alarm is better than a bad auto-merge.

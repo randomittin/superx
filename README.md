@@ -41,9 +41,10 @@ Change with: `/superx:level <1|2|3>` or cycle with `/superx:level +` / `/superx:
 
 | Command | Description |
 |---------|-------------|
-| `/superx:level <1\|2\|3>` | Set autonomy level |
+| `/superx:level <1\|2\|3\|+\|->` | Set or cycle autonomy level |
 | `/superx:status` | Show project state and quality gates |
-| `/superx:maintain` | Toggle maintainer mode |
+| `/superx:maintain [on\|off\|status]` | Activate maintainer mode (guided setup) |
+| `/superx:maintain-check` | Run one maintenance cycle (triage + fix + release) |
 | `/superx:reflect` | Force conflict reflection pass |
 
 ## Agent Types
@@ -70,14 +71,23 @@ Every push must pass:
 
 ## Maintainer Mode
 
-Opt-in automatic repo maintenance:
-- Watches GitHub issues
-- Triages by severity and confidence
-- Auto-fixes low-risk issues
-- Batches fixes into patch releases
-- Communicates like a colleague, not a bot
+Opt-in autonomous repo maintenance with one-command activation:
 
-Enable: `/superx:maintain`
+```bash
+/superx:maintain
+```
+
+Walks you through setup: issue sources, check frequency, Slack notifications.
+Then runs continuously — triage, fix, test, review, batch release.
+
+| Severity x Confidence | What happens |
+|---|---|
+| Critical x Any | Alert + hotfix + human approval |
+| High x High | Auto-fix + PR + request review |
+| Medium/Low x High | Auto-fix, batch into patch release |
+| Any x Low | Escalate with context |
+
+Communicates like a colleague: "Spotted a regression in v1.2.3 — investigating."
 
 ## Plugin Structure
 

@@ -8,24 +8,37 @@ Maintainer mode turns superx into an autonomous repo maintainer that triages iss
 /superx:maintain
 ```
 
-This toggles `maintainer.enabled` in superx-state.json.
+This runs a guided setup wizard that:
+1. Verifies GitHub CLI is authenticated
+2. Configures issue sources (GitHub, logs, error tracking)
+3. Sets monitoring frequency (15m / 30m / 1h / on-demand)
+4. Optionally configures Slack notifications
+5. Enables maintainer mode and runs the first check immediately
+
+For subsequent activations, `/superx:maintain` remembers your configuration.
+
+## Continuous Monitoring
+
+After activation, keep the monitor running with:
+```
+/loop 30m /superx:maintain-check
+```
+
+Or for persistent monitoring that survives session restarts:
+```
+/schedule maintain-check --cron "*/30 * * * *" --command "/superx:maintain-check"
+```
+
+Each `/superx:maintain-check` invocation runs one full cycle: scan → triage → fix → release.
 
 ## Issue Ingestion
 
 ### Sources
 
-1. **GitHub Issues** (primary): `gh issue list --state open --json number,title,body,labels`
-2. **Error logs** (if configured): Parse log files for error patterns
-3. **Direct reports**: User mentions issues in conversation
-
-### Polling
-
-Use the `/loop` skill for continuous monitoring:
-```
-/loop 30m /superx:maintain-check
-```
-
-Or use Claude Code remote triggers for scheduled runs.
+1. **GitHub Issues** (primary): `gh issue list --state open --json number,title,body,labels,createdAt`
+2. **Error logs** (if configured): Parse log files at paths in `maintainer.log_paths` for ERROR/FATAL patterns
+3. **Error tracking** (if configured): Check Sentry/Elastic endpoints in `maintainer.error_tracking`
+4. **Direct reports**: User mentions issues in conversation
 
 ## Triage Workflow
 
