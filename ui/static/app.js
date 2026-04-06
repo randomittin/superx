@@ -225,15 +225,20 @@ function addTimelineEvent(type, agent, message, useMono, markdown) {
     const html = renderMarkdown(message);
     if (html) {
       msgSpan.className = 'msg md';
-      msgSpan.innerHTML = html;
-      // Add expand hint
-      const hint = document.createElement('div');
-      hint.className = 'expand-hint';
-      hint.textContent = '▼ click to expand';
-      msgSpan.appendChild(hint);
-      // Toggle expand on click
+      // Wrap content in a container for max-height control
+      const contentDiv = document.createElement('div');
+      contentDiv.className = 'md-content';
+      contentDiv.innerHTML = html;
+      msgSpan.appendChild(contentDiv);
+      // Expand/collapse bar
+      const expandBar = document.createElement('div');
+      expandBar.className = 'expand-bar';
+      expandBar.textContent = '▼ click to expand plan';
+      msgSpan.appendChild(expandBar);
+      // Toggle on click anywhere in the event
       msgSpan.addEventListener('click', () => {
-        msgSpan.classList.toggle('expanded');
+        const isExpanded = msgSpan.classList.toggle('expanded');
+        expandBar.textContent = isExpanded ? '▲ click to collapse' : '▼ click to expand plan';
       });
     } else {
       msgSpan.className = 'msg';

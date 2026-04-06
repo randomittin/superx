@@ -197,34 +197,38 @@ body {
   font-family: 'SF Mono', 'Fira Code', monospace;
   font-size: 9px;
   line-height: 1.5;
-  max-height: 60px;
-  overflow: hidden;
-  cursor: pointer;
   position: relative;
-  transition: max-height 0.3s ease;
+  cursor: pointer;
 }
 
-.event .msg.md.expanded {
-  max-height: none;
+.event .msg.md .md-content {
+  max-height: 80px;
+  overflow: hidden;
+  transition: max-height 0.4s ease;
 }
 
-.event .msg.md .expand-hint {
-  position: absolute;
-  bottom: 0;
-  left: 0;
-  right: 0;
-  height: 24px;
-  background: linear-gradient(transparent, var(--bg-panel));
+.event .msg.md.expanded .md-content {
+  max-height: 5000px;
+}
+
+.event .msg.md .expand-bar {
   display: flex;
-  align-items: flex-end;
+  align-items: center;
   justify-content: center;
+  padding: 4px 0;
+  font-family: var(--font-pixel);
   font-size: 7px;
   color: var(--accent);
-  pointer-events: none;
+  background: linear-gradient(transparent, var(--bg-panel) 40%);
+  margin-top: -20px;
+  padding-top: 20px;
+  position: relative;
 }
 
-.event .msg.md.expanded .expand-hint {
-  display: none;
+.event .msg.md.expanded .expand-bar {
+  background: none;
+  margin-top: 4px;
+  padding-top: 0;
 }
 
 .event .msg.md h1, .event .msg.md h2, .event .msg.md h3 {
