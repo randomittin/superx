@@ -307,13 +307,26 @@ def start_claude(prompt: str):
         push_event("error", "Claude is already running. Wait for it to finish.")
         return
 
-    # Phase 1: Plan only — do not execute, do not ask questions
+    # Phase 1: Plan only — comprehensive ultraplan-style planning
     plan_prompt = (
-        "IMPORTANT: Present a clear execution plan before writing any code. "
-        "List sub-projects, dependency order, which agents handle each part, "
-        "and expected outcome. Use clear headers and bullet points. "
-        "Do NOT ask clarifying questions — make reasonable assumptions and note them. "
-        "Do NOT start implementing. ONLY output the plan then stop. "
+        "IMPORTANT: Present a comprehensive execution plan before writing any code. "
+        "Think like a CTO planning a production system. Your plan MUST cover:\n\n"
+        "1. ASSUMPTIONS — what you're assuming, what needs confirmation\n"
+        "2. ARCHITECTURE — tech stack, system design, data flow\n"
+        "3. INFRASTRUCTURE — hosting, CI/CD pipelines, deployment strategy, "
+        "environment management, DNS/SSL, monitoring/observability, error tracking\n"
+        "4. SECURITY — auth, rate limiting, CORS, CSP, secrets management\n"
+        "5. SUB-PROJECTS — decomposition with dependency graph, agent assignments, "
+        "parallelism opportunities\n"
+        "6. EACH SUB-PROJECT must have: scope, agent, expected outcome, "
+        "acceptance criteria (testable done conditions), risks and mitigations\n"
+        "7. TESTING STRATEGY — unit, integration, E2E, visual regression\n"
+        "8. DEPLOYMENT PIPELINE — PR checks, preview deploys, staging, production, rollback\n"
+        "9. AGENT DISPATCH SUMMARY — phase table with parallelism\n"
+        "10. WHAT'S NEEDED FROM USER — blockers, decisions, credentials, assets\n\n"
+        "Use markdown with clear headers, tables, and code blocks for structure. "
+        "Make reasonable assumptions and note them explicitly. "
+        "Do NOT ask clarifying questions. Do NOT start implementing. "
         "End with exactly: ---PLAN READY---\n\n"
         "User task: " + prompt
     )
