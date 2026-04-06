@@ -27,10 +27,11 @@
         <span>TIMELINE</span>
         <span id="event-count" style="color:var(--text-dim)">0</span>
       </div>
+      <div id="loading-bar" class="loading-bar"><div class="bar"></div></div>
       <div id="timeline-events" class="timeline-events"></div>
       <div class="prompt-bar">
-        <input id="prompt-input" class="prompt-input" type="text"
-               placeholder="Type a task for superx..." autocomplete="off">
+        <textarea id="prompt-input" class="prompt-input" rows="1"
+               placeholder="Type a task for superx..." autocomplete="off"></textarea>
         <button id="send-btn" class="btn btn-send">RUN</button>
       </div>
     </div>
@@ -45,7 +46,8 @@
     <div class="right-panel">
       <div class="tab-bar">
         <button class="tab active" data-tab="map">MAP</button>
-        <button class="tab" data-tab="terminal">TERMINAL</button>
+        <button class="btn-fullscreen" id="fullscreen-btn" title="Toggle fullscreen map">[ ]</button>
+        <button class="tab" data-tab="terminal">LOGS</button>
       </div>
 
       <!-- Game Map -->
@@ -55,7 +57,7 @@
 
       <!-- Terminal -->
       <div id="tab-terminal" class="tab-content">
-        <pre id="terminal-output" class="terminal"></pre>
+        <div id="terminal-output" class="terminal"></div>
       </div>
     </div>
 

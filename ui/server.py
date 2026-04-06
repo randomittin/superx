@@ -9,6 +9,7 @@ import sys
 import threading
 import time
 from http.server import HTTPServer, SimpleHTTPRequestHandler
+from socketserver import ThreadingMixIn
 from pathlib import Path
 
 PORT = int(os.environ.get("SUPERX_PORT", 8080))
@@ -61,16 +62,153 @@ def push_event(event_type: str, data):
 
 
 def stream_claude_output(proc: subprocess.Popen):
-    """Read claude stdout line by line and push to terminal + events."""
-    for line in iter(proc.stdout.readline, ""):
-        line = line.rstrip("\n")
-        with terminal_lock:
-            terminal_lines.append(line)
-            if len(terminal_lines) > MAX_TERMINAL_LINES:
-                terminal_lines.pop(0)
-        push_event("terminal", line)
+    """Read claude stdout (stream-json format) and push parsed events.
+
+    Stream-json lines are JSON objects. We extract meaningful content
+    and push it to both the terminal (formatted) and timeline (events).
+    """
+    last_text = ""
+
+    for raw_line in iter(proc.stdout.readline, ""):
+        raw_line = raw_line.rstrip("\n")
+        if not raw_line:
+            continue
+
+        # Try to parse as JSON
+        try:
+            obj = json.loads(raw_line)
+        except (json.JSONDecodeError, TypeError):
+            # Plain text fallback
+            _terminal_append(raw_line)
+            continue
+
+        if not isinstance(obj, dict):
+            _terminal_append(raw_line)
+            continue
+
+        msg_type = obj.get("type", "")
+        msg = obj.get("message", {})
+        content = msg.get("content", []) if isinstance(msg, dict) else []
+
+        # Extract text content from assistant messages
+        if msg_type == "assistant" and content:
+            for block in content:
+                if not isinstance(block, dict):
+                    continue
+                block_type = block.get("type", "")
+
+                if block_type == "text":
+                    text = block.get("text", "")
+                    # Only show new text (stream sends cumulative)
+                    if text and text != last_text:
+                        new_part = text[len(last_text):] if text.startswith(last_text) else text
+                        last_text = text
+                        if new_part.strip():
+                            _terminal_append(new_part.strip())
+                            # Detect plan content and send as rich plan event
+                            lower = new_part.lower()
+                            if any(kw in lower for kw in ["sub-project", "dependency", "wave ", "phase ", "## plan", "decompos"]):
+                                push_event("timeline", {
+                                    "agent": "architect",
+                                    "type": "warning",
+                                    "message": new_part.strip()[:300]
+                                })
+                            elif any(kw in lower for kw in ["quality gate", "test", "lint", "review"]):
+                                push_event("timeline", {
+                                    "agent": "test-runner",
+                                    "type": "info",
+                                    "message": new_part.strip()[:200]
+                                })
+                            elif any(kw in lower for kw in ["design", "ui/ux", "component", "layout", "color"]):
+                                push_event("timeline", {
+                                    "agent": "design",
+                                    "type": "info",
+                                    "message": new_part.strip()[:200]
+                                })
+                            else:
+                                push_event("timeline", {
+                                    "agent": "superx",
+                                    "type": "info",
+                                    "message": new_part.strip()[:200]
+                                })
+
+                elif block_type == "tool_use":
+                    tool_name = block.get("name", "unknown")
+                    tool_input = block.get("input", {})
+                    # Format tool use nicely
+                    if tool_name == "Agent":
+                        desc = tool_input.get("description", tool_input.get("prompt", "")[:60])
+                        _terminal_append(f"[Agent] {desc}")
+                        push_event("timeline", {
+                            "agent": "superx",
+                            "type": "info",
+                            "message": f"Spawning agent: {desc}"
+                        })
+                    elif tool_name == "Bash":
+                        cmd = tool_input.get("command", "")[:80]
+                        _terminal_append(f"$ {cmd}")
+                        push_event("timeline", {
+                            "agent": "coder",
+                            "type": "info",
+                            "message": f"$ {cmd}"
+                        })
+                    elif tool_name in ("Write", "Edit"):
+                        fpath = tool_input.get("file_path", "")
+                        fname = fpath.split("/")[-1] if fpath else "unknown"
+                        _terminal_append(f"[{tool_name}] {fname}")
+                        push_event("timeline", {
+                            "agent": "coder",
+                            "type": "info",
+                            "message": f"{tool_name}: {fname}"
+                        })
+                    elif tool_name == "Read":
+                        fpath = tool_input.get("file_path", "")
+                        fname = fpath.split("/")[-1] if fpath else "unknown"
+                        _terminal_append(f"[Read] {fname}")
+                    elif tool_name == "Skill":
+                        skill = tool_input.get("skill", "unknown")
+                        _terminal_append(f"[Skill] {skill}")
+                        push_event("timeline", {
+                            "agent": "superx",
+                            "type": "info",
+                            "message": f"Using skill: {skill}"
+                        })
+                    elif tool_name in ("TaskCreate", "TaskUpdate"):
+                        subject = tool_input.get("subject", tool_input.get("status", ""))
+                        _terminal_append(f"[Task] {subject}")
+                        push_event("timeline", {
+                            "agent": "superx",
+                            "type": "warning",
+                            "message": f"Task: {subject}"
+                        })
+                    elif tool_name in ("Grep", "Glob"):
+                        pattern = tool_input.get("pattern", "")
+                        _terminal_append(f"[{tool_name}] {pattern}")
+                    else:
+                        _terminal_append(f"[{tool_name}]")
+
+        # Tool results
+        elif msg_type == "result":
+            result_text = obj.get("result", "")
+            if isinstance(result_text, str) and result_text.strip():
+                short = result_text.strip()[:150]
+                _terminal_append(f"  → {short}")
+
+        # Reset text tracking between messages
+        if msg_type != "assistant":
+            last_text = ""
+
     proc.wait()
     push_event("process", {"status": "exited", "code": proc.returncode})
+
+
+def _terminal_append(line: str):
+    """Add a line to the terminal buffer and push to clients."""
+    with terminal_lock:
+        terminal_lines.append(line)
+        if len(terminal_lines) > MAX_TERMINAL_LINES:
+            terminal_lines.pop(0)
+    push_event("terminal", line)
 
 
 def start_claude(prompt: str):
@@ -81,12 +219,22 @@ def start_claude(prompt: str):
         push_event("error", "Claude is already running. Wait for it to finish.")
         return
 
+    plan_first_prompt = (
+        "IMPORTANT: Before writing any code, you MUST first present a clear plan. "
+        "Start by listing the sub-projects you'll create, the dependency order, "
+        "which agents will handle each part, and what the final result will look like. "
+        "Format the plan with clear headers. Wait for implicit approval (continue after presenting), "
+        "then execute.\n\n"
+        "User task: " + prompt
+    )
+
     cmd = [
         "claude",
         "--dangerously-skip-permissions",
-        "-p", prompt,
+        "-p", plan_first_prompt,
         "--plugin-dir", str(PLUGIN_DIR),
-        "--output-format", "text",
+        "--output-format", "stream-json",
+        "--verbose",
     ]
 
     push_event("process", {"status": "starting", "prompt": prompt})
@@ -249,7 +397,10 @@ def main():
     watcher = threading.Thread(target=watch_state_file, daemon=True)
     watcher.start()
 
-    server = HTTPServer(("0.0.0.0", PORT), DashboardHandler)
+    class ThreadedHTTPServer(ThreadingMixIn, HTTPServer):
+        daemon_threads = True
+
+    server = ThreadedHTTPServer(("0.0.0.0", PORT), DashboardHandler)
     print(f"\033[35m")
     print(f"  ╔══════════════════════════════════════╗")
     print(f"  ║   superx dashboard                   ║")

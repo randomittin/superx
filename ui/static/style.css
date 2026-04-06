@@ -3,10 +3,10 @@
 @import url('https://fonts.googleapis.com/css2?family=Press+Start+2P&display=swap');
 
 :root {
-  --bg-dark: #1a1a2e;
-  --bg-panel: #16213e;
-  --bg-card: #0f3460;
-  --bg-input: #1a1a2e;
+  --bg-dark: #0a0a0f;
+  --bg-panel: #111118;
+  --bg-card: #1a1a24;
+  --bg-input: #0a0a0f;
   --border: #533483;
   --border-glow: #e94560;
   --text: #eee;
@@ -158,6 +158,15 @@ body {
   animation: slideIn 0.3s ease;
 }
 
+.event .event-left {
+  display: flex;
+  flex-direction: column;
+  align-items: center;
+  flex-shrink: 0;
+  width: 32px;
+  gap: 2px;
+}
+
 .event .avatar {
   width: 16px;
   height: 16px;
@@ -166,14 +175,45 @@ body {
 }
 
 .event .time {
-  font-size: 7px;
+  font-size: 6px;
   color: var(--text-dim);
-  min-width: 50px;
+  text-align: center;
+  white-space: nowrap;
 }
 
 .event .msg {
   font-size: 8px;
   line-height: 1.4;
+  flex: 1;
+}
+
+.event .msg.mono {
+  font-family: 'SF Mono', 'Fira Code', 'Cascadia Code', 'Consolas', monospace;
+  font-size: 10px;
+}
+
+/* Loading indicator */
+.loading-bar {
+  height: 2px;
+  background: var(--bg-dark);
+  overflow: hidden;
+  display: none;
+}
+
+.loading-bar.active {
+  display: block;
+}
+
+.loading-bar .bar {
+  height: 100%;
+  width: 30%;
+  background: var(--accent);
+  animation: loadSlide 1.2s ease-in-out infinite;
+}
+
+@keyframes loadSlide {
+  0% { transform: translateX(-100%); }
+  100% { transform: translateX(400%); }
 }
 
 .event.success .msg { color: var(--success); }
@@ -192,13 +232,18 @@ body {
 
 .prompt-input {
   flex: 1;
-  font-family: var(--font-pixel);
-  font-size: 10px;
+  font-family: 'SF Mono', 'Fira Code', 'Cascadia Code', 'Consolas', monospace;
+  font-size: 13px;
   padding: 8px 12px;
   background: var(--bg-input);
   border: 2px solid var(--border);
   color: var(--text);
   outline: none;
+  resize: none;
+  overflow-y: hidden;
+  min-height: 36px;
+  max-height: 120px;
+  line-height: 1.4;
 }
 
 .prompt-input:focus {
@@ -360,23 +405,39 @@ body {
   image-rendering: pixelated;
 }
 
-/* Terminal */
+/* Logs */
 .terminal {
   flex: 1;
   background: #0a0a0a;
-  padding: 8px;
+  padding: 4px 0;
   overflow-y: auto;
-  font-family: monospace;
+  font-family: 'SF Mono', 'Fira Code', 'Cascadia Code', 'Consolas', monospace;
   font-size: 10px;
   color: #4ecca3;
-  line-height: 1.5;
-  white-space: pre-wrap;
-  word-break: break-all;
+  line-height: 1;
+  display: flex;
+  flex-direction: column;
 }
 
 .terminal::-webkit-scrollbar { width: 6px; }
 .terminal::-webkit-scrollbar-track { background: #0a0a0a; }
 .terminal::-webkit-scrollbar-thumb { background: #333; }
+
+.log-line {
+  white-space: nowrap;
+  overflow-x: auto;
+  padding: 2px 8px;
+  border-bottom: 1px solid #111;
+  flex-shrink: 0;
+}
+
+.log-line::-webkit-scrollbar { height: 2px; }
+.log-line::-webkit-scrollbar-thumb { background: #333; }
+
+.log-line.tool { color: #6bcbef; }
+.log-line.result { color: #8888aa; }
+.log-line.cmd { color: #f1c40f; }
+.log-line.text { color: #4ecca3; }
 
 /* === ANIMATIONS === */
 
@@ -398,6 +459,39 @@ body {
 @keyframes float {
   0%, 100% { transform: translateY(0); }
   50% { transform: translateY(-4px); }
+}
+
+/* === FULLSCREEN MAP === */
+
+.dashboard.map-fullscreen {
+  grid-template-rows: auto 1fr;
+  grid-template-columns: 1fr;
+}
+
+.dashboard.map-fullscreen .timeline,
+.dashboard.map-fullscreen .warroom {
+  display: none;
+}
+
+.dashboard.map-fullscreen .right-panel {
+  grid-column: 1;
+  grid-row: 2;
+}
+
+.btn-fullscreen {
+  font-size: 7px;
+  padding: 3px 6px;
+  margin-left: 8px;
+  background: var(--bg-card);
+  border: 1px solid var(--border);
+  color: var(--text-dim);
+  cursor: pointer;
+  font-family: var(--font-pixel);
+}
+
+.btn-fullscreen:hover {
+  border-color: var(--accent);
+  color: var(--text);
 }
 
 /* === PIXEL ART HELPERS === */

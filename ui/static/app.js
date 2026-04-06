@@ -51,25 +51,44 @@ function connectSSE() {
     }
   });
 
+  eventSource.addEventListener('timeline', (e) => {
+    try {
+      const payload = JSON.parse(e.data);
+      const data = payload.data || payload;
+      const agent = data.agent || 'superx';
+      const type = data.type || 'info';
+      const msg = data.message || '';
+      if (msg) {
+        const isMono = msg.startsWith('$') || msg.startsWith('Write:') || msg.startsWith('Edit:');
+        addTimelineEvent(type, agent, msg, isMono);
+      }
+    } catch (err) {
+      console.error('Timeline parse error:', err);
+    }
+  });
+
   eventSource.addEventListener('process', (e) => {
     try {
       const payload = JSON.parse(e.data);
       const data = payload.data || payload;
       if (data.status === 'starting') {
-        addTimelineEvent('info', 'superx', 'Starting: ' + data.prompt);
+        addTimelineEvent('info', 'superx', 'Starting: ' + data.prompt, true);
         document.getElementById('status-badge').className = 'status-badge running';
         document.getElementById('status-badge').textContent = 'RUNNING';
         window.terminalAPI.clearTerminal();
+        if (window._showLoading) window._showLoading(true);
       } else if (data.status === 'exited') {
         const success = data.code === 0;
         addTimelineEvent(success ? 'success' : 'error', 'superx',
           success ? 'Task completed successfully' : 'Exited with code ' + data.code);
         document.getElementById('status-badge').className = 'status-badge' + (success ? '' : ' error');
         document.getElementById('status-badge').textContent = success ? 'IDLE' : 'ERROR';
+        if (window._showLoading) window._showLoading(false);
       } else if (data.status === 'stopped') {
         addTimelineEvent('warning', 'superx', 'Process stopped by user');
         document.getElementById('status-badge').className = 'status-badge';
         document.getElementById('status-badge').textContent = 'IDLE';
+        if (window._showLoading) window._showLoading(false);
       }
     } catch (err) {
       console.error('Process parse error:', err);
@@ -92,11 +111,12 @@ function connectSSE() {
 
 // === TIMELINE ===
 
-function addTimelineEvent(type, agent, message) {
+function addTimelineEvent(type, agent, message, useMono) {
   const event = {
     type,
     agent,
     message,
+    useMono: useMono || false,
     time: new Date().toLocaleTimeString('en', { hour12: false, hour: '2-digit', minute: '2-digit', second: '2-digit' }),
   };
 
@@ -107,31 +127,35 @@ function addTimelineEvent(type, agent, message) {
   const el = document.createElement('div');
   el.className = 'event ' + type;
 
-  // Avatar
+  // Left column: avatar + time stacked
+  const leftCol = document.createElement('div');
+  leftCol.className = 'event-left';
+
   const sprite = window.SPRITES[agent];
   if (sprite) {
     const img = document.createElement('img');
     img.className = 'avatar';
     img.src = sprite;
     img.alt = agent;
-    el.appendChild(img);
+    leftCol.appendChild(img);
   } else {
     const dot = document.createElement('div');
     dot.className = 'avatar';
     dot.style.background = 'var(--purple)';
     dot.style.borderRadius = '2px';
-    el.appendChild(dot);
+    leftCol.appendChild(dot);
   }
 
-  // Time
   const timeSpan = document.createElement('span');
   timeSpan.className = 'time';
   timeSpan.textContent = event.time;
-  el.appendChild(timeSpan);
+  leftCol.appendChild(timeSpan);
+
+  el.appendChild(leftCol);
 
   // Message
   const msgSpan = document.createElement('span');
-  msgSpan.className = 'msg';
+  msgSpan.className = 'msg' + (event.useMono ? ' mono' : '');
   msgSpan.textContent = message;
   el.appendChild(msgSpan);
 
@@ -212,13 +236,29 @@ function setupPromptInput() {
   const input = document.getElementById('prompt-input');
   const sendBtn = document.getElementById('send-btn');
   const stopBtn = document.getElementById('stop-btn');
+  const loadingBar = document.getElementById('loading-bar');
+
+  // Auto-grow textarea
+  function autoGrow() {
+    input.style.height = 'auto';
+    input.style.height = Math.min(input.scrollHeight, 120) + 'px';
+  }
+  input.addEventListener('input', autoGrow);
+
+  function showLoading(show) {
+    if (loadingBar) {
+      loadingBar.className = show ? 'loading-bar active' : 'loading-bar';
+    }
+  }
 
   async function sendPrompt() {
     const prompt = input.value.trim();
     if (!prompt) return;
 
     input.value = '';
-    addTimelineEvent('info', 'superx', 'Submitting: ' + prompt);
+    input.style.height = 'auto';
+    addTimelineEvent('info', 'superx', 'Submitting: ' + prompt, true);
+    showLoading(true);
 
     try {
       const res = await fetch('/api/prompt', {
@@ -229,9 +269,11 @@ function setupPromptInput() {
       const data = await res.json();
       if (data.error) {
         addTimelineEvent('error', 'superx', data.error);
+        showLoading(false);
       }
     } catch (err) {
       addTimelineEvent('error', 'superx', 'Failed to send prompt');
+      showLoading(false);
     }
   }
 
@@ -240,6 +282,7 @@ function setupPromptInput() {
       e.preventDefault();
       sendPrompt();
     }
+    // Shift+Enter inserts newline (default textarea behavior)
   });
 
   sendBtn.addEventListener('click', sendPrompt);
@@ -247,10 +290,14 @@ function setupPromptInput() {
   stopBtn.addEventListener('click', async () => {
     try {
       await fetch('/api/stop', { method: 'POST' });
+      showLoading(false);
     } catch (err) {
       addTimelineEvent('error', 'superx', 'Failed to stop process');
     }
   });
+
+  // Store showLoading globally so process events can use it
+  window._showLoading = showLoading;
 }
 
 // === TABS ===
@@ -271,4 +318,24 @@ function setupTabs() {
       }
     });
   });
+
+  // Fullscreen map toggle
+  const fsBtn = document.getElementById('fullscreen-btn');
+  if (fsBtn) {
+    fsBtn.addEventListener('click', () => {
+      const dashboard = document.querySelector('.dashboard');
+      dashboard.classList.toggle('map-fullscreen');
+      fsBtn.textContent = dashboard.classList.contains('map-fullscreen') ? '[x]' : '[ ]';
+
+      // Switch to map tab when entering fullscreen
+      if (dashboard.classList.contains('map-fullscreen')) {
+        tabs.forEach(t => t.classList.remove('active'));
+        document.querySelector('[data-tab="map"]').classList.add('active');
+        document.querySelectorAll('.tab-content').forEach(c => c.classList.remove('active'));
+        document.getElementById('tab-map').classList.add('active');
+      }
+
+      setTimeout(() => gameMap.resize(), 50);
+    });
+  }
 }
