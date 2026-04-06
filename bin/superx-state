@@ -4,6 +4,39 @@
 set -euo pipefail
 
 STATE_FILE="${SUPERX_STATE_FILE:-superx-state.json}"
+LOCK_FILE="${STATE_FILE}.lock"
+LOCK_TIMEOUT=10
+
+# File locking to prevent parallel agent race conditions.
+# Uses mkdir-based locking (atomic on all filesystems, no flock dependency).
+acquire_lock() {
+  local attempts=0
+  while ! mkdir "$LOCK_FILE" 2>/dev/null; do
+    attempts=$((attempts + 1))
+    if [ "$attempts" -ge "$LOCK_TIMEOUT" ]; then
+      # Stale lock detection: if lock is older than 30s, break it
+      if [ -d "$LOCK_FILE" ]; then
+        local lock_age
+        lock_age=$(( $(date +%s) - $(stat -f %m "$LOCK_FILE" 2>/dev/null || stat -c %Y "$LOCK_FILE" 2>/dev/null || echo 0) ))
+        if [ "$lock_age" -gt 30 ]; then
+          echo "Breaking stale lock (${lock_age}s old)" >&2
+          rmdir "$LOCK_FILE" 2>/dev/null
+          mkdir "$LOCK_FILE" 2>/dev/null && return 0
+        fi
+      fi
+      echo "Error: Could not acquire lock on $STATE_FILE after ${LOCK_TIMEOUT}s" >&2
+      exit 1
+    fi
+    sleep 1
+  done
+}
+
+release_lock() {
+  rmdir "$LOCK_FILE" 2>/dev/null
+}
+
+# Ensure lock is released on exit (normal, error, or signal)
+trap release_lock EXIT
 
 usage() {
   cat <<'EOF'
@@ -18,6 +51,10 @@ Commands:
   mark-dirty                    Mark tests as needing re-run
   mark-clean                    Mark all quality gates as passing
   add-agent <id> <type>         Track an agent in agent_history
+  add-tokens <count>            Add tokens to budget tracker (warns if over limit)
+  set-budget <limit>            Set token budget limit
+  budget                        Show token usage summary
+  migrate                       Migrate state file to latest schema version
   status                        Print a formatted status summary
 EOF
 }
@@ -61,7 +98,13 @@ cmd_init() {
     "pending_fixes": [],
     "release_queue": []
   },
-  "communication_log": []
+  "communication_log": [],
+  "budget": {
+    "total_tokens": 0,
+    "total_agents_spawned": 0,
+    "token_limit": null,
+    "warn_at_percent": 80
+  }
 }
 INIT
   echo "Created $STATE_FILE"
@@ -75,19 +118,23 @@ cmd_get() {
 
 cmd_set() {
   ensure_state
+  acquire_lock
   local path="${1:?jq path required}"
   local value="${2:?value required}"
   local tmp
   tmp=$(mktemp)
   jq "$path = $value" "$STATE_FILE" > "$tmp" && mv "$tmp" "$STATE_FILE"
+  release_lock
 }
 
 cmd_add_conflict() {
   ensure_state
+  acquire_lock
   local json="${1:?conflict JSON required}"
   local tmp
   tmp=$(mktemp)
   jq --argjson entry "$json" '.conflict_log += [$entry]' "$STATE_FILE" > "$tmp" && mv "$tmp" "$STATE_FILE"
+  release_lock
   echo "Conflict logged."
 }
 
@@ -126,20 +173,25 @@ cmd_check_quality_gates() {
 
 cmd_mark_dirty() {
   ensure_state
+  acquire_lock
   local tmp
   tmp=$(mktemp)
   jq '.quality_gates.dirty = true | .quality_gates.tests_passing = false' "$STATE_FILE" > "$tmp" && mv "$tmp" "$STATE_FILE"
+  release_lock
 }
 
 cmd_mark_clean() {
   ensure_state
+  acquire_lock
   local tmp
   tmp=$(mktemp)
   jq '.quality_gates.dirty = false | .quality_gates.tests_passing = true | .quality_gates.lint_clean = true' "$STATE_FILE" > "$tmp" && mv "$tmp" "$STATE_FILE"
+  release_lock
 }
 
 cmd_add_agent() {
   ensure_state
+  acquire_lock
   local id="${1:?agent id required}"
   local type="${2:?agent type required}"
   local ts
@@ -149,6 +201,7 @@ cmd_add_agent() {
   jq --arg id "$id" --arg type "$type" --arg ts "$ts" \
     '.agent_history += [{"id": $id, "type": $type, "spawned_at": $ts, "status": "running"}]' \
     "$STATE_FILE" > "$tmp" && mv "$tmp" "$STATE_FILE"
+  release_lock
   echo "Agent $id ($type) tracked."
 }
 
@@ -169,6 +222,102 @@ cmd_status() {
   echo "Conflicts:      $(jq '.conflict_log | length' "$STATE_FILE")"
   echo "Sub-projects:   $(jq '.plan.sub_projects | length' "$STATE_FILE")"
   echo "Maintainer:     $(jq -r '.maintainer.enabled' "$STATE_FILE")"
+  echo ""
+  echo "Budget:"
+  local total_tok limit_tok
+  total_tok=$(jq -r '.budget.total_tokens // 0' "$STATE_FILE")
+  limit_tok=$(jq -r '.budget.token_limit // "unlimited"' "$STATE_FILE")
+  echo "  Tokens used:  ${total_tok}"
+  echo "  Token limit:  ${limit_tok}"
+  echo "  Agents total: $(jq -r '.budget.total_agents_spawned // 0' "$STATE_FILE")"
+}
+
+cmd_add_tokens() {
+  ensure_state
+  acquire_lock
+  local tokens="${1:?token count required}"
+  local tmp
+  tmp=$(mktemp)
+  jq --argjson t "$tokens" '.budget.total_tokens += $t | .budget.total_agents_spawned += 1' "$STATE_FILE" > "$tmp" && mv "$tmp" "$STATE_FILE"
+  release_lock
+
+  # Check budget warning
+  local limit warn_pct
+  limit=$(jq -r '.budget.token_limit // "null"' "$STATE_FILE")
+  if [ "$limit" != "null" ] && [ "$limit" != "0" ]; then
+    warn_pct=$(jq -r '.budget.warn_at_percent // 80' "$STATE_FILE")
+    local total
+    total=$(jq -r '.budget.total_tokens' "$STATE_FILE")
+    local threshold=$(( limit * warn_pct / 100 ))
+    if [ "$total" -ge "$limit" ]; then
+      echo "BUDGET EXCEEDED: ${total} tokens used (limit: ${limit})" >&2
+    elif [ "$total" -ge "$threshold" ]; then
+      echo "BUDGET WARNING: ${total}/${limit} tokens used (${warn_pct}% threshold)" >&2
+    fi
+  fi
+}
+
+cmd_set_budget() {
+  ensure_state
+  acquire_lock
+  local limit="${1:?token limit required}"
+  local tmp
+  tmp=$(mktemp)
+  jq --argjson l "$limit" '.budget.token_limit = $l' "$STATE_FILE" > "$tmp" && mv "$tmp" "$STATE_FILE"
+  release_lock
+  echo "Token budget set to $limit"
+}
+
+cmd_budget_status() {
+  ensure_state
+  local total limit agents
+  total=$(jq -r '.budget.total_tokens' "$STATE_FILE")
+  limit=$(jq -r '.budget.token_limit // "unlimited"' "$STATE_FILE")
+  agents=$(jq -r '.budget.total_agents_spawned' "$STATE_FILE")
+  echo "Token usage:    ${total} tokens"
+  echo "Budget limit:   ${limit}"
+  echo "Agents spawned: ${agents}"
+  if [ "$limit" != "unlimited" ] && [ "$limit" != "null" ] && [ "$limit" != "0" ]; then
+    local pct=$(( total * 100 / limit ))
+    echo "Usage:          ${pct}%"
+  fi
+}
+
+cmd_migrate() {
+  ensure_state
+  acquire_lock
+  local tmp changed=0
+  tmp=$(mktemp)
+  cp "$STATE_FILE" "$tmp"
+
+  # v1.0.0 → v1.1.0: add budget tracking
+  if ! jq -e '.budget' "$tmp" >/dev/null 2>&1; then
+    jq '. + {"budget": {"total_tokens": 0, "total_agents_spawned": 0, "token_limit": null, "warn_at_percent": 80}}' "$tmp" > "${tmp}.new" && mv "${tmp}.new" "$tmp"
+    changed=1
+  fi
+
+  # v1.0.0 → v1.1.0: add communication_log if missing
+  if ! jq -e '.communication_log' "$tmp" >/dev/null 2>&1; then
+    jq '. + {"communication_log": []}' "$tmp" > "${tmp}.new" && mv "${tmp}.new" "$tmp"
+    changed=1
+  fi
+
+  # v1.0.0 → v1.1.0: add maintainer fields if missing
+  if ! jq -e '.maintainer.slack_channel' "$tmp" >/dev/null 2>&1; then
+    jq '.maintainer += {"slack_channel": null, "log_paths": [], "error_tracking": null, "last_check": null}' "$tmp" > "${tmp}.new" && mv "${tmp}.new" "$tmp"
+    changed=1
+  fi
+
+  # Update version
+  if [ "$changed" -eq 1 ]; then
+    jq '.version = "1.1.0"' "$tmp" > "${tmp}.new" && mv "${tmp}.new" "$tmp"
+    mv "$tmp" "$STATE_FILE"
+    echo "Migrated superx-state.json to v1.1.0"
+  else
+    rm "$tmp"
+    echo "State file is already up to date."
+  fi
+  release_lock
 }
 
 # Dispatch
@@ -181,6 +330,10 @@ case "${1:-}" in
   mark-dirty)         cmd_mark_dirty ;;
   mark-clean)         cmd_mark_clean ;;
   add-agent)          cmd_add_agent "${2:-}" "${3:-}" ;;
+  add-tokens)         cmd_add_tokens "${2:-}" ;;
+  set-budget)         cmd_set_budget "${2:-}" ;;
+  budget)             cmd_budget_status ;;
+  migrate)            cmd_migrate ;;
   status)             cmd_status ;;
   *)                  usage; exit 1 ;;
 esac

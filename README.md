@@ -44,7 +44,7 @@ Change with: `/superx:level <1|2|3>` or cycle with `/superx:level +` / `/superx:
 | `/superx:level <1\|2\|3\|+\|->` | Set or cycle autonomy level |
 | `/superx:status` | Show project state and quality gates |
 | `/superx:maintain [on\|off\|status]` | Activate maintainer mode (guided setup) |
-| `/superx:maintain-check` | Run one maintenance cycle (triage + fix + release) |
+| `/superx:maintain-check [--dry-run]` | Run one maintenance cycle (or preview without executing) |
 | `/superx:reflect` | Force conflict reflection pass |
 
 ## Agent Types
@@ -137,12 +137,24 @@ superx
 superx-state init
 superx-state status
 
+# Set a token budget (optional)
+superx-state set-budget 500000
+
+# Migrate older state files to latest schema
+superx-state migrate
+
 # Verify skill detection
 detect-skills | jq .
 
 # Test authenticity checker
 authenticity-check npm express
 authenticity-check github vercel/next.js
+
+# Preview maintainer actions without executing
+/superx:maintain-check --dry-run
+
+# Generate changelog from git commits
+generate-changelog --version 1.3.0
 ```
 
 ## License

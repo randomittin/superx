@@ -1,12 +1,39 @@
 ---
 name: maintain-check
-description: Run one maintainer cycle — scan for issues, triage, fix, and queue releases
+description: Run one maintainer cycle — scan for issues, triage, fix, and queue releases. Use --dry-run to preview without executing.
+argument-hint: [--dry-run]
 disable-model-invocation: true
 ---
 
 # Maintainer Check Cycle
 
 Run a single maintainer cycle. This is the command that `/loop` or `/schedule` calls repeatedly.
+
+## Dry-Run Mode
+
+If `$ARGUMENTS` contains `--dry-run`:
+- Run all scan and triage steps normally
+- Show what would happen for each issue (which agents would spawn, which branches would be created, what severity/confidence classification)
+- Do NOT actually spawn agents, create branches, create PRs, or modify state
+- Format output as a preview:
+
+```
+DRY RUN — Maintainer Check Preview
+=====================================
+
+Issues found: 5
+  #42 Safari login crash        → Critical x High  → WOULD: hotfix agent + human approval
+  #38 Typo in error msg         → Low x High       → WOULD: auto-fix, batch into patch
+  #45 API 500 on empty body     → High x High      → WOULD: fix + PR + request review
+  #47 Missing rate limiting     → High x Medium    → WOULD: investigate then fix
+  #51 Update dependencies       → Medium x Medium  → WOULD: investigate, queue
+
+Release queue: 2 items → WOULD: batch into v1.2.4
+
+No changes made. Run without --dry-run to execute.
+```
+
+This is useful for building trust before enabling full auto-fix.
 
 ## Pre-flight
 
