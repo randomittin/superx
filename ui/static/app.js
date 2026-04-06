@@ -20,9 +20,52 @@ document.addEventListener('DOMContentLoaded', () => {
   setupPromptInput();
   setupPlanApproval();
   setupTabs();
-  window.terminalAPI.loadTerminalBuffer();
+  restoreSession();
   renderWarRoom(null);
 });
+
+// === SESSION RESTORE ===
+
+async function restoreSession() {
+  try {
+    const res = await fetch('/api/session');
+    const session = await res.json();
+
+    // Restore timeline events
+    if (session.timeline && session.timeline.length) {
+      for (const evt of session.timeline) {
+        const agent = evt.agent || 'superx';
+        const type = evt.type || 'info';
+        const msg = evt.message || '';
+        const isMono = evt.useMono || msg.startsWith('$') || msg.startsWith('Task:');
+        if (msg) addTimelineEvent(type, agent, msg, isMono);
+      }
+    }
+
+    // Restore terminal/logs
+    if (session.terminal && session.terminal.length) {
+      for (const line of session.terminal) {
+        window.terminalAPI.appendTerminalLine(line);
+      }
+    }
+
+    // Restore UI state
+    if (session.running) {
+      document.getElementById('status-badge').className = 'status-badge running';
+      document.getElementById('status-badge').textContent = 'RUNNING';
+      if (window._showLoading) window._showLoading(true);
+    }
+
+    if (session.pending_plan && !session.running) {
+      showPlanApproval(true);
+      document.getElementById('status-badge').className = 'status-badge';
+      document.getElementById('status-badge').textContent = 'PLAN READY';
+    }
+  } catch (e) {
+    // First load, no session yet
+    console.log('No session to restore');
+  }
+}
 
 // === SSE CONNECTION ===
 
@@ -301,6 +344,14 @@ function setupPromptInput() {
     try {
       await fetch('/api/stop', { method: 'POST' });
       showLoading(false);
+      showPlanApproval(false);
+      // Clear frontend
+      document.getElementById('timeline-events').textContent = '';
+      document.getElementById('event-count').textContent = '0';
+      timelineEvents.length = 0;
+      window.terminalAPI.clearTerminal();
+      document.getElementById('status-badge').className = 'status-badge';
+      document.getElementById('status-badge').textContent = 'IDLE';
     } catch (err) {
       addTimelineEvent('error', 'superx', 'Failed to stop process');
     }
