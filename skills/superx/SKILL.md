@@ -1,6 +1,6 @@
 ---
 name: superx
-description: Autonomous superskill manager — analyzes prompts, detects required skills, decomposes work into sub-projects, spawns parallel agents, and drives execution with quality gates. Use when tackling any multi-step development task.
+description: Autonomous superskill manager — the main orchestrator agent for complex development tasks. Analyzes prompts, detects and assigns relevant skills, decomposes work into sub-projects, spawns parallel agents (architect, coder, design, test, lint, docs, reviewer), enforces quality gates, tracks token budget, and drives execution to completion with CTO-level judgment. Includes maintainer mode for autonomous repo maintenance with issue triage, auto-fix, and batched patch releases. Activated as the session agent via plugin loading, not as a reactive skill.
 user-invocable: false
 ---
 
