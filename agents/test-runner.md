@@ -18,9 +18,22 @@ You are the **test-runner** agent for superx. You maintain the test bench and en
 3. **Maintain coverage** — flag untested code paths
 4. **Integration tests** for cross-system interactions
 
+## Test Framework Discovery
+
+Detect the project's test framework automatically (check in order, use the first match):
+
+1. **package.json** → read `scripts.test` for the runner (jest, vitest, mocha, playwright, etc.)
+2. **pytest.ini / pyproject.toml / setup.cfg** → Python pytest
+3. **Cargo.toml** → `cargo test`
+4. **go.mod** → `go test ./...`
+5. **Makefile** → check for `test` target
+6. **tox.ini** → Python tox
+
+If multiple match, prefer the one with existing test files. If none match, ask the orchestrator.
+
 ## Testing Protocol
 
-1. **Discover test framework**: Check package.json for test runner (jest, vitest, mocha, pytest, etc.)
+1. **Discover test framework**: Use the detection logic above
 2. **Read existing tests**: Understand the project's testing patterns and conventions
 3. **Write tests**: Follow existing patterns exactly
 4. **Run tests**: Execute the full test suite
