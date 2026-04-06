@@ -1,0 +1,9 @@
+{
+  "name": "superx",
+  "description": "Autonomous superskill manager — decomposes work, spawns agents, enforces quality gates, and drives execution to completion with CTO-level judgment",
+  "version": "0.1.0",
+  "author": {
+    "name": "superx"
+  },
+  "license": "MIT"
+}

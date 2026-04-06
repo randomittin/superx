@@ -1,0 +1,70 @@
+#!/usr/bin/env bash
+# conflict-log — Log and review skill conflicts in superx-state.json
+set -euo pipefail
+
+STATE_FILE="${SUPERX_STATE_FILE:-superx-state.json}"
+
+usage() {
+  cat <<'EOF'
+Usage: conflict-log <command> [args]
+
+Commands:
+  add <skill-a> <skill-b> <conflict> <resolution>   Log a new conflict
+  list                                                List all conflicts
+  unresolved                                          List unresolved conflicts
+  mark-reflected <index>                              Mark a conflict as reflected
+  reflect-all                                         Mark all conflicts as reflected
+EOF
+}
+
+cmd_add() {
+  local skill_a="${1:?skill-a required}"
+  local skill_b="${2:?skill-b required}"
+  local conflict="${3:?conflict description required}"
+  local resolution="${4:?resolution required}"
+  local ts
+  ts=$(date -u +"%Y-%m-%dT%H:%M:%SZ")
+
+  local entry
+  entry=$(jq -n \
+    --arg ts "$ts" \
+    --arg sa "$skill_a" \
+    --arg sb "$skill_b" \
+    --arg c "$conflict" \
+    --arg r "$resolution" \
+    '{timestamp: $ts, skills: [$sa, $sb], conflict: $c, resolution: $r, reflected: false}')
+
+  superx-state add-conflict "$entry"
+}
+
+cmd_list() {
+  jq '.conflict_log[]' "$STATE_FILE"
+}
+
+cmd_unresolved() {
+  jq '[.conflict_log[] | select(.reflected == false)]' "$STATE_FILE"
+}
+
+cmd_mark_reflected() {
+  local idx="${1:?index required}"
+  local tmp
+  tmp=$(mktemp)
+  jq --argjson idx "$idx" '.conflict_log[$idx].reflected = true' "$STATE_FILE" > "$tmp" && mv "$tmp" "$STATE_FILE"
+  echo "Conflict $idx marked as reflected."
+}
+
+cmd_reflect_all() {
+  local tmp
+  tmp=$(mktemp)
+  jq '[.conflict_log[] | .reflected = true] as $updated | .conflict_log = $updated | .quality_gates.conflict_reflection_done = true' "$STATE_FILE" > "$tmp" && mv "$tmp" "$STATE_FILE"
+  echo "All conflicts marked as reflected."
+}
+
+case "${1:-}" in
+  add)              cmd_add "${2:-}" "${3:-}" "${4:-}" "${5:-}" ;;
+  list)             cmd_list ;;
+  unresolved)       cmd_unresolved ;;
+  mark-reflected)   cmd_mark_reflected "${2:-}" ;;
+  reflect-all)      cmd_reflect_all ;;
+  *)                usage; exit 1 ;;
+esac

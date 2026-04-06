@@ -1,0 +1,16 @@
+#!/usr/bin/env bash
+# superx — Launch the superx autonomous orchestrator
+# Usage: superx [prompt]
+#   superx "build a dashboard with auth and real-time charts"
+#   superx  (interactive mode)
+set -euo pipefail
+
+# Resolve the plugin root (bin/superx → superx/)
+PLUGIN_DIR="$(cd "$(dirname "$0")/.." && pwd)"
+
+# Launch Claude Code with superx as the main agent
+exec claude \
+  --agent superx \
+  --dangerously-skip-permissions \
+  --plugin-dir "$PLUGIN_DIR" \
+  "$@"

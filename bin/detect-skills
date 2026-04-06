@@ -1,0 +1,55 @@
+#!/usr/bin/env bash
+# detect-skills — Scan for installed Claude Code skills and plugins
+# Outputs a JSON array of {name, description, path} objects.
+set -euo pipefail
+
+skills=()
+
+scan_dir() {
+  local dir="$1"
+  local prefix="${2:-}"
+  if [ ! -d "$dir" ]; then return; fi
+
+  for skill_dir in "$dir"/*/; do
+    [ -d "$skill_dir" ] || continue
+    local skill_md="$skill_dir/SKILL.md"
+    [ -f "$skill_md" ] || continue
+
+    local name
+    name=$(basename "$skill_dir")
+    [ -n "$prefix" ] && name="${prefix}:${name}"
+
+    # Extract description from frontmatter
+    local desc=""
+    if head -1 "$skill_md" | grep -q '^---'; then
+      desc=$(sed -n '/^---$/,/^---$/p' "$skill_md" | grep -m1 '^description:' | sed 's/^description:\s*//')
+    fi
+
+    skills+=("{\"name\":\"$name\",\"description\":\"$(echo "$desc" | sed 's/"/\\"/g')\",\"path\":\"$skill_md\"}")
+  done
+}
+
+# Scan user-level skills
+scan_dir "$HOME/.claude/skills"
+
+# Scan project-level skills
+scan_dir ".claude/skills"
+
+# Scan plugin skills (look for installed plugins)
+if [ -d "$HOME/.claude/plugins" ]; then
+  for plugin_dir in "$HOME/.claude/plugins"/*/; do
+    [ -d "$plugin_dir" ] || continue
+    local_name=$(basename "$plugin_dir")
+    if [ -d "$plugin_dir/skills" ]; then
+      scan_dir "$plugin_dir/skills" "$local_name"
+    fi
+  done
+fi
+
+# Build JSON array
+echo -n "["
+for i in "${!skills[@]}"; do
+  [ "$i" -gt 0 ] && echo -n ","
+  echo -n "${skills[$i]}"
+done
+echo "]"

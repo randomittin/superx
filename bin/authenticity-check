@@ -1,0 +1,103 @@
+#!/usr/bin/env bash
+# authenticity-check — Validate publisher authenticity for skill/plugin recommendations
+# Checks npm, GitHub, and marketplace signals before recommending external resources.
+set -euo pipefail
+
+usage() {
+  cat <<'EOF'
+Usage: authenticity-check <type> <identifier>
+
+Types:
+  npm <package-name>       Check npm package signals
+  github <owner/repo>      Check GitHub repository signals
+  plugin <plugin-name>     Check Claude Code plugin marketplace
+
+Output: JSON with trust signals and a computed trust score (0-100).
+EOF
+}
+
+check_npm() {
+  local pkg="${1:?package name required}"
+  local info
+  info=$(npm view "$pkg" --json 2>/dev/null) || { echo '{"error":"Package not found","trust_score":0}'; return; }
+
+  local downloads weekly_downloads
+  downloads=$(npm view "$pkg" --json 2>/dev/null | jq -r '.versions | length // 0')
+  weekly_downloads=$(curl -s "https://api.npmjs.org/downloads/point/last-week/$pkg" 2>/dev/null | jq -r '.downloads // 0')
+
+  local license name version description
+  license=$(echo "$info" | jq -r '.license // "unknown"')
+  name=$(echo "$info" | jq -r '.name // "unknown"')
+  version=$(echo "$info" | jq -r '.version // "unknown"')
+  description=$(echo "$info" | jq -r '.description // ""')
+
+  # Compute basic trust score
+  local score=30
+  [ "$weekly_downloads" -gt 100 ] 2>/dev/null && score=$((score + 20))
+  [ "$weekly_downloads" -gt 1000 ] 2>/dev/null && score=$((score + 15))
+  [ "$weekly_downloads" -gt 10000 ] 2>/dev/null && score=$((score + 15))
+  echo "$license" | grep -qiE '^(MIT|Apache|ISC|BSD)' && score=$((score + 10))
+  [ "$downloads" -gt 5 ] 2>/dev/null && score=$((score + 10))
+
+  jq -n \
+    --arg name "$name" \
+    --arg version "$version" \
+    --arg license "$license" \
+    --arg desc "$description" \
+    --argjson weekly "$weekly_downloads" \
+    --argjson score "$score" \
+    '{name: $name, version: $version, license: $license, description: $desc, weekly_downloads: $weekly, trust_score: $score}'
+}
+
+check_github() {
+  local repo="${1:?owner/repo required}"
+  local info
+  info=$(gh api "repos/$repo" 2>/dev/null) || { echo '{"error":"Repo not found","trust_score":0}'; return; }
+
+  local stars forks license updated_at archived
+  stars=$(echo "$info" | jq -r '.stargazers_count // 0')
+  forks=$(echo "$info" | jq -r '.forks_count // 0')
+  license=$(echo "$info" | jq -r '.license.spdx_id // "unknown"')
+  updated_at=$(echo "$info" | jq -r '.updated_at // "unknown"')
+  archived=$(echo "$info" | jq -r '.archived // false')
+
+  local score=20
+  [ "$archived" = "true" ] && score=5
+  [ "$stars" -gt 10 ] 2>/dev/null && score=$((score + 15))
+  [ "$stars" -gt 100 ] 2>/dev/null && score=$((score + 15))
+  [ "$stars" -gt 1000 ] 2>/dev/null && score=$((score + 15))
+  echo "$license" | grep -qiE '^(MIT|Apache|ISC|BSD)' && score=$((score + 10))
+  [ "$forks" -gt 10 ] 2>/dev/null && score=$((score + 10))
+
+  # Check recency (updated in last 6 months)
+  if command -v date &>/dev/null; then
+    local six_months_ago
+    six_months_ago=$(date -u -d "6 months ago" +%Y-%m-%dT%H:%M:%SZ 2>/dev/null || date -u -v-6m +%Y-%m-%dT%H:%M:%SZ 2>/dev/null || echo "")
+    if [ -n "$six_months_ago" ] && [[ "$updated_at" > "$six_months_ago" ]]; then
+      score=$((score + 15))
+    fi
+  fi
+
+  jq -n \
+    --arg repo "$repo" \
+    --argjson stars "$stars" \
+    --argjson forks "$forks" \
+    --arg license "$license" \
+    --arg updated "$updated_at" \
+    --arg archived "$archived" \
+    --argjson score "$score" \
+    '{repo: $repo, stars: $stars, forks: $forks, license: $license, updated_at: $updated, archived: ($archived == "true"), trust_score: $score}'
+}
+
+check_plugin() {
+  local name="${1:?plugin name required}"
+  # Plugin marketplace check — delegates to gh if available
+  echo "{\"name\":\"$name\",\"note\":\"Plugin marketplace validation not yet implemented. Use github or npm checks.\",\"trust_score\":0}"
+}
+
+case "${1:-}" in
+  npm)      check_npm "${2:-}" ;;
+  github)   check_github "${2:-}" ;;
+  plugin)   check_plugin "${2:-}" ;;
+  *)        usage; exit 1 ;;
+esac

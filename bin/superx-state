@@ -1,0 +1,186 @@
+#!/usr/bin/env bash
+# superx-state — CRUD operations on superx-state.json
+# Used by the superx orchestrator and hooks to manage project state.
+set -euo pipefail
+
+STATE_FILE="${SUPERX_STATE_FILE:-superx-state.json}"
+
+usage() {
+  cat <<'EOF'
+Usage: superx-state <command> [args]
+
+Commands:
+  init                          Create initial state file
+  get <jq-path>                 Read a value (e.g. '.project.phase')
+  set <jq-path> <value>         Set a value (e.g. '.project.phase' '"implementing"')
+  add-conflict <json>           Append a conflict entry to conflict_log
+  check-quality-gates           Exit 0 if all gates pass, exit 2 if not
+  mark-dirty                    Mark tests as needing re-run
+  mark-clean                    Mark all quality gates as passing
+  add-agent <id> <type>         Track an agent in agent_history
+  status                        Print a formatted status summary
+EOF
+}
+
+ensure_state() {
+  if [ ! -f "$STATE_FILE" ]; then
+    echo "No superx-state.json found. Run 'superx-state init' first." >&2
+    exit 1
+  fi
+}
+
+cmd_init() {
+  if [ -f "$STATE_FILE" ]; then
+    echo "superx-state.json already exists. Skipping init." >&2
+    return 0
+  fi
+  cat > "$STATE_FILE" <<'INIT'
+{
+  "version": "1.0.0",
+  "project": {
+    "name": "",
+    "phase": "idle",
+    "autonomy_level": 2
+  },
+  "plan": {
+    "sub_projects": [],
+    "dependency_graph": {}
+  },
+  "conflict_log": [],
+  "agent_history": [],
+  "quality_gates": {
+    "tests_passing": false,
+    "lint_clean": false,
+    "last_review": null,
+    "conflict_reflection_done": true,
+    "dirty": false
+  },
+  "maintainer": {
+    "enabled": false,
+    "issue_sources": [],
+    "pending_fixes": [],
+    "release_queue": []
+  },
+  "communication_log": []
+}
+INIT
+  echo "Created $STATE_FILE"
+}
+
+cmd_get() {
+  ensure_state
+  local path="${1:?jq path required}"
+  jq -r "$path" "$STATE_FILE"
+}
+
+cmd_set() {
+  ensure_state
+  local path="${1:?jq path required}"
+  local value="${2:?value required}"
+  local tmp
+  tmp=$(mktemp)
+  jq "$path = $value" "$STATE_FILE" > "$tmp" && mv "$tmp" "$STATE_FILE"
+}
+
+cmd_add_conflict() {
+  ensure_state
+  local json="${1:?conflict JSON required}"
+  local tmp
+  tmp=$(mktemp)
+  jq --argjson entry "$json" '.conflict_log += [$entry]' "$STATE_FILE" > "$tmp" && mv "$tmp" "$STATE_FILE"
+  echo "Conflict logged."
+}
+
+cmd_check_quality_gates() {
+  ensure_state
+  local tests lint reflection dirty
+  tests=$(jq -r '.quality_gates.tests_passing' "$STATE_FILE")
+  lint=$(jq -r '.quality_gates.lint_clean' "$STATE_FILE")
+  reflection=$(jq -r '.quality_gates.conflict_reflection_done' "$STATE_FILE")
+  dirty=$(jq -r '.quality_gates.dirty // false' "$STATE_FILE")
+
+  local failed=0
+  if [ "$tests" != "true" ]; then
+    echo "GATE FAILED: Tests not passing" >&2
+    failed=1
+  fi
+  if [ "$lint" != "true" ]; then
+    echo "GATE FAILED: Lint not clean" >&2
+    failed=1
+  fi
+  if [ "$reflection" != "true" ]; then
+    echo "GATE FAILED: Conflict reflection not done" >&2
+    failed=1
+  fi
+  if [ "$dirty" = "true" ]; then
+    echo "GATE FAILED: Changes pending re-test" >&2
+    failed=1
+  fi
+
+  if [ "$failed" -eq 1 ]; then
+    echo "Quality gates not met. Push blocked." >&2
+    exit 2
+  fi
+  echo "All quality gates pass."
+}
+
+cmd_mark_dirty() {
+  ensure_state
+  local tmp
+  tmp=$(mktemp)
+  jq '.quality_gates.dirty = true | .quality_gates.tests_passing = false' "$STATE_FILE" > "$tmp" && mv "$tmp" "$STATE_FILE"
+}
+
+cmd_mark_clean() {
+  ensure_state
+  local tmp
+  tmp=$(mktemp)
+  jq '.quality_gates.dirty = false | .quality_gates.tests_passing = true | .quality_gates.lint_clean = true' "$STATE_FILE" > "$tmp" && mv "$tmp" "$STATE_FILE"
+}
+
+cmd_add_agent() {
+  ensure_state
+  local id="${1:?agent id required}"
+  local type="${2:?agent type required}"
+  local ts
+  ts=$(date -u +"%Y-%m-%dT%H:%M:%SZ")
+  local tmp
+  tmp=$(mktemp)
+  jq --arg id "$id" --arg type "$type" --arg ts "$ts" \
+    '.agent_history += [{"id": $id, "type": $type, "spawned_at": $ts, "status": "running"}]' \
+    "$STATE_FILE" > "$tmp" && mv "$tmp" "$STATE_FILE"
+  echo "Agent $id ($type) tracked."
+}
+
+cmd_status() {
+  ensure_state
+  echo "=== superx status ==="
+  echo "Project: $(jq -r '.project.name // "(unnamed)"' "$STATE_FILE")"
+  echo "Phase:   $(jq -r '.project.phase' "$STATE_FILE")"
+  echo "Level:   $(jq -r '.project.autonomy_level' "$STATE_FILE") (1=Guided, 2=Checkpoint, 3=Full Auto)"
+  echo ""
+  echo "Quality Gates:"
+  echo "  Tests passing:      $(jq -r '.quality_gates.tests_passing' "$STATE_FILE")"
+  echo "  Lint clean:         $(jq -r '.quality_gates.lint_clean' "$STATE_FILE")"
+  echo "  Reflection done:    $(jq -r '.quality_gates.conflict_reflection_done' "$STATE_FILE")"
+  echo "  Dirty (needs test): $(jq -r '.quality_gates.dirty // false' "$STATE_FILE")"
+  echo ""
+  echo "Active agents:  $(jq '[.agent_history[] | select(.status == "running")] | length' "$STATE_FILE")"
+  echo "Conflicts:      $(jq '.conflict_log | length' "$STATE_FILE")"
+  echo "Sub-projects:   $(jq '.plan.sub_projects | length' "$STATE_FILE")"
+  echo "Maintainer:     $(jq -r '.maintainer.enabled' "$STATE_FILE")"
+}
+
+# Dispatch
+case "${1:-}" in
+  init)               cmd_init ;;
+  get)                cmd_get "${2:-}" ;;
+  set)                cmd_set "${2:-}" "${3:-}" ;;
+  add-conflict)       cmd_add_conflict "${2:-}" ;;
+  check-quality-gates) cmd_check_quality_gates ;;
+  mark-dirty)         cmd_mark_dirty ;;
+  mark-clean)         cmd_mark_clean ;;
+  add-agent)          cmd_add_agent "${2:-}" "${3:-}" ;;
+  status)             cmd_status ;;
+  *)                  usage; exit 1 ;;
+esac
