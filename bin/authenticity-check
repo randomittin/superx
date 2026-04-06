@@ -91,8 +91,78 @@ check_github() {
 
 check_plugin() {
   local name="${1:?plugin name required}"
-  # Plugin marketplace check — delegates to gh if available
-  echo "{\"name\":\"$name\",\"note\":\"Plugin marketplace validation not yet implemented. Use github or npm checks.\",\"trust_score\":0}"
+
+  # Check installed plugins registry for metadata
+  local registry="$HOME/.claude/plugins/installed_plugins.json"
+  local marketplace_dir="$HOME/.claude/plugins/marketplaces"
+
+  local score=20
+  local source="unknown"
+  local version="unknown"
+  local install_path=""
+  local verified=false
+
+  # Check if the plugin is installed locally
+  if [ -f "$registry" ]; then
+    local entry
+    entry=$(jq -r --arg name "$name" '.[] | select(.name == $name)' "$registry" 2>/dev/null || echo "")
+    if [ -n "$entry" ]; then
+      source=$(echo "$entry" | jq -r '.source // "unknown"')
+      version=$(echo "$entry" | jq -r '.version // "unknown"')
+      install_path=$(echo "$entry" | jq -r '.path // ""')
+      score=$((score + 10))  # installed = some trust
+    fi
+  fi
+
+  # Check if it comes from the official marketplace
+  if [ -d "$marketplace_dir/claude-plugins-official/plugins/$name" ]; then
+    verified=true
+    score=$((score + 30))  # official marketplace = high trust
+  fi
+
+  # Check for plugin.json manifest
+  local plugin_json=""
+  if [ -n "$install_path" ] && [ -f "$install_path/.claude-plugin/plugin.json" ]; then
+    plugin_json="$install_path/.claude-plugin/plugin.json"
+  elif [ -d "$marketplace_dir/claude-plugins-official/plugins/$name/.claude-plugin" ]; then
+    plugin_json="$marketplace_dir/claude-plugins-official/plugins/$name/.claude-plugin/plugin.json"
+  fi
+
+  if [ -n "$plugin_json" ] && [ -f "$plugin_json" ]; then
+    local has_license has_author
+    has_license=$(jq -r '.license // ""' "$plugin_json" 2>/dev/null)
+    has_author=$(jq -r '.author.name // ""' "$plugin_json" 2>/dev/null)
+
+    [ -n "$has_license" ] && score=$((score + 10))
+    [ -n "$has_author" ] && score=$((score + 10))
+  fi
+
+  # Check if there's a corresponding GitHub repo for deeper validation
+  if command -v gh &>/dev/null; then
+    # Try common patterns: author/plugin-name, author/claude-plugin-name
+    local gh_result
+    for prefix in "" "claude-" "claude-code-"; do
+      gh_result=$(gh search repos "${prefix}${name}" --json fullName,stargazersCount --limit 1 2>/dev/null || echo "")
+      if [ -n "$gh_result" ] && [ "$gh_result" != "[]" ]; then
+        local gh_stars
+        gh_stars=$(echo "$gh_result" | jq -r '.[0].stargazersCount // 0')
+        [ "$gh_stars" -gt 10 ] 2>/dev/null && score=$((score + 10))
+        [ "$gh_stars" -gt 100 ] 2>/dev/null && score=$((score + 10))
+        break
+      fi
+    done
+  fi
+
+  # Cap score at 100
+  [ "$score" -gt 100 ] && score=100
+
+  jq -n \
+    --arg name "$name" \
+    --arg source "$source" \
+    --arg version "$version" \
+    --argjson verified "$verified" \
+    --argjson score "$score" \
+    '{name: $name, source: $source, version: $version, official_marketplace: $verified, trust_score: $score}'
 }
 
 case "${1:-}" in

@@ -124,6 +124,7 @@ Spawn the right agent for each sub-project:
 |---|---|---|
 | Architecture/planning | `architect` | Read-only, designs before building |
 | Feature implementation | `coder` | Full tools, git worktree isolation |
+| UI/UX design | `design` | Visual design, components, accessibility, design systems |
 | Test writing/running | `test-runner` | Focused on test bench maintenance |
 | Lint/style enforcement | `lint-quality` | Fast (Haiku), mechanical checks |
 | Documentation | `docs-writer` | Focused on docs, no code changes |
@@ -266,9 +267,18 @@ Read current level: `superx-state get '.project.autonomy_level'`
   - Security-sensitive decisions (never auto-approve these)
 - Log all decisions to superx-state.json for post-hoc review
 
+### Quick Cycling
+
+The fastest way to change levels mid-task:
+- `/superx:level +` — cycle up (1→2→3→1)
+- `/superx:level -` — cycle down (3→2→1→3)
+- `/superx:level 2` — set directly
+
+Claude Code doesn't support custom keybindings for non-built-in actions, so the slash command with `+`/`-` is the arrow-key equivalent. Tab-completion makes this fast: `/s` → tab → `level +`.
+
 ### Adaptive Suggestions
-- If user approves everything without changes at Level 1 for 5+ actions → suggest: "You've approved everything so far. Want to bump to Level 2 (Checkpoint) for faster flow?"
-- If user keeps rejecting/modifying at Level 3 → suggest: "I notice you're making frequent adjustments. Want to step down to Level 2 for more checkpoints?"
+- If user approves everything without changes at Level 1 for 5+ actions → suggest: "You've approved everything so far. Want to bump to Level 2? (`/superx:level +`)"
+- If user keeps rejecting/modifying at Level 3 → suggest: "I notice you're making frequent adjustments. Want to step down to Level 2? (`/superx:level -`)"
 
 ---
 
@@ -322,7 +332,7 @@ You have persistent memory at `.claude/agent-memory/superx/`. Use it to:
 
 ## 10. Communication Style
 
-Communicate like a colleague, not a bot:
+Communicate like a colleague, not a bot. Use the templates in `${CLAUDE_SKILL_DIR}/references/communication-templates.md` for consistent tone.
 
 - **Starting work**: "I'll break this into 4 sub-projects. Auth and DB can run in parallel, then API, then frontend. Starting now."
 - **Progress update**: "Auth module is done and tested. Moving to API endpoints. 2 of 4 sub-projects complete."
@@ -330,6 +340,20 @@ Communicate like a colleague, not a bot:
 - **Complete**: "All done. 4 sub-projects complete, 47 tests passing, lint clean. PR #12 is ready for review."
 
 Keep updates concise. No fluff. Lead with what matters.
+
+### Team Communication via Slack
+
+When Slack skills are available (`slack:draft-announcement`, `slack:channel-digest`, `slack:standup`), use them proactively:
+
+- **Project kickoff**: Draft an announcement to the team channel summarizing the plan and sub-projects
+- **Milestone updates**: Post progress summaries at major checkpoints (sub-project completion, PR creation)
+- **Blockers**: Alert the team channel when stuck on something that needs external input
+- **Completion**: Post a summary with PR links, test counts, and what shipped
+- **Maintainer mode**: Post issue detection, fix progress, and release notes to the configured channel
+
+To send updates, use `Skill(skill: "slack:draft-announcement")` with the appropriate content. For finding relevant discussions or context, use `Skill(skill: "slack:find-discussions")`.
+
+Only use Slack when the user has confirmed they want team notifications. Ask once during setup: "Want me to post updates to a Slack channel as I work?"
 
 ---
 

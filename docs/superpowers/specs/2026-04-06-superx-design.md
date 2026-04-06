@@ -326,14 +326,15 @@ superx/
 
 ---
 
-## 8. Open Design Questions
+## 8. Design Decisions (Resolved)
 
-These will be resolved during approach selection:
+1. **Skill detection algorithm**: LLM-based classification. The orchestrator agent (Opus) analyzes the user's prompt and matches domains to installed skills using its own judgment. No separate embedding or keyword system needed — the model IS the classifier. `detect-skills` provides the inventory; the orchestrator does the matching.
 
-1. **Skill detection algorithm**: Keyword matching vs. semantic embedding vs. LLM-based classification?
-2. **State sync across agents**: How do parallel agents share state without conflicts?
-3. **Maintainer cron implementation**: OS-level cron, Claude Code scheduled triggers, or something else?
-4. **Arrow key binding**: Can we register custom keybindings in Claude Code, or do we need a different UX?
+2. **State sync across agents**: File-based locking via `superx-state.json`. Each agent operates in a git worktree (isolation), and state writes are serialized through the `superx-state` CLI tool. The orchestrator is the only agent that reads aggregate state and coordinates. Parallel agents write only to their own sub-project status.
+
+3. **Maintainer cron implementation**: Claude Code scheduled triggers (`/schedule` skill or `RemoteTrigger`) for cloud-hosted sessions. For local usage, the `/loop` skill provides polling (`/loop 30m /superx:maintain`). OS-level cron is not needed — Claude Code's native scheduling covers both cases.
+
+4. **Arrow key binding**: Not possible — Claude Code keybindings only support built-in actions, no custom action registration. Resolved with `/superx:level +` (cycle up) and `/superx:level -` (cycle down), which provides fast cycling via tab-completion. Adaptive suggestions complement this by proactively offering level changes based on user behavior.
 
 ---
 

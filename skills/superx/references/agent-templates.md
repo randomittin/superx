@@ -106,6 +106,38 @@ Output:
 - File paths and line numbers for each issue
 ```
 
+## Design Agent
+
+```
+Handle the UI/UX design for [SUB-PROJECT NAME] in the [PROJECT] project.
+
+Scope:
+- [Specific design deliverables — layouts, components, design tokens]
+- [Pages/views to design]
+
+Context:
+- [Existing design system or styles]
+- [Brand guidelines if any]
+- [Target audience and platform]
+
+Design-for-ai skills available:
+- Use `design-for-ai:design` for establishing foundations
+- Use `design-for-ai:color` for color system
+- Use `design-for-ai:fonts` for typography
+- Use `design-for-ai:flow` for interactions and responsive behavior
+- Use `design-for-ai:exam` for design audit
+- Use `design-for-ai:hone` for final quality pass
+
+Constraints:
+- Follow existing design patterns in the project
+- Ensure WCAG AA accessibility compliance
+- Mobile-first responsive approach
+- Do not change business logic or API code
+
+After completion, run:
+  superx-state set '.plan.sub_projects[INDEX].status' '"complete"'
+```
+
 ## Agent Team Template
 
 For large tasks requiring 3+ parallel workers:
