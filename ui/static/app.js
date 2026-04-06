@@ -73,10 +73,8 @@ function connectSSE() {
       const payload = JSON.parse(e.data);
       const data = payload.data || payload;
       if (data.status === 'starting') {
-        addTimelineEvent('info', 'superx', 'Starting: ' + data.prompt, true);
         document.getElementById('status-badge').className = 'status-badge running';
         document.getElementById('status-badge').textContent = 'RUNNING';
-        window.terminalAPI.clearTerminal();
         if (window._showLoading) window._showLoading(true);
       } else if (data.status === 'exited') {
         const success = data.code === 0;
@@ -167,11 +165,14 @@ function addTimelineEvent(type, agent, message, useMono) {
   msgSpan.textContent = message;
   el.appendChild(msgSpan);
 
-  container.insertBefore(el, container.firstChild);
+  container.appendChild(el);
 
   while (container.children.length > MAX_EVENTS) {
-    container.removeChild(container.lastChild);
+    container.removeChild(container.firstChild);
   }
+
+  // Auto-scroll to bottom
+  container.scrollTop = container.scrollHeight;
 
   document.getElementById('event-count').textContent = timelineEvents.length;
 }
@@ -265,7 +266,8 @@ function setupPromptInput() {
 
     input.value = '';
     input.style.height = 'auto';
-    addTimelineEvent('info', 'superx', 'Submitting: ' + prompt, true);
+    const shortPrompt = prompt.length > 80 ? prompt.substring(0, 80) + '...' : prompt;
+    addTimelineEvent('info', 'superx', 'Task: ' + shortPrompt, true);
     showLoading(true);
 
     try {
