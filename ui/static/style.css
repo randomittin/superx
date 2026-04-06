@@ -461,6 +461,81 @@ body {
   50% { transform: translateY(-4px); }
 }
 
+/* === PLAN APPROVAL === */
+
+.plan-approval {
+  padding: 8px 12px;
+  border-top: 2px solid var(--border);
+  background: var(--bg-card);
+  display: none;
+  flex-direction: column;
+  gap: 6px;
+  animation: slideIn 0.3s ease;
+}
+
+.plan-approval.visible {
+  display: flex;
+}
+
+.plan-approval .label {
+  font-size: 8px;
+  color: var(--warning);
+}
+
+.plan-approval .actions {
+  display: flex;
+  gap: 8px;
+  align-items: flex-start;
+}
+
+.plan-approval .feedback-input {
+  flex: 1;
+  font-family: 'SF Mono', 'Fira Code', 'Cascadia Code', 'Consolas', monospace;
+  font-size: 11px;
+  padding: 6px 10px;
+  background: var(--bg-input);
+  border: 2px solid var(--border);
+  color: var(--text);
+  outline: none;
+  resize: none;
+  min-height: 28px;
+  max-height: 80px;
+}
+
+.plan-approval .feedback-input::placeholder {
+  color: var(--text-dim);
+}
+
+.plan-approval .feedback-input:focus {
+  border-color: var(--warning);
+}
+
+.btn-approve {
+  background: var(--success);
+  border-color: var(--success);
+  color: var(--bg-dark);
+  font-size: 9px;
+  padding: 6px 14px;
+  white-space: nowrap;
+}
+
+.btn-approve:hover {
+  background: #3ba88a;
+}
+
+.btn-revise {
+  background: var(--warning);
+  border-color: var(--warning);
+  color: var(--bg-dark);
+  font-size: 9px;
+  padding: 6px 14px;
+  white-space: nowrap;
+}
+
+.btn-revise:hover {
+  background: #d4b42d;
+}
+
 /* === FULLSCREEN MAP === */
 
 .dashboard.map-fullscreen {

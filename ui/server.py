@@ -23,6 +23,7 @@ claude_process: subprocess.Popen | None = None
 terminal_lines: list[str] = []
 terminal_lock = threading.Lock()
 MAX_TERMINAL_LINES = 500
+pending_prompts: dict[int, str] = {}  # stores original prompt awaiting approval
 
 
 def watch_state_file():
@@ -199,6 +200,9 @@ def stream_claude_output(proc: subprocess.Popen):
             last_text = ""
 
     proc.wait()
+    # If there's a pending prompt, this was a plan phase — show approval UI
+    if pending_prompts.get(0):
+        push_event("plan_ready", {"status": "awaiting_approval"})
     push_event("process", {"status": "exited", "code": proc.returncode})
 
 
@@ -219,19 +223,24 @@ def start_claude(prompt: str):
         push_event("error", "Claude is already running. Wait for it to finish.")
         return
 
-    plan_first_prompt = (
+    # Phase 1: Plan only — do not execute
+    plan_prompt = (
         "IMPORTANT: Before writing any code, you MUST first present a clear plan. "
         "Start by listing the sub-projects you'll create, the dependency order, "
         "which agents will handle each part, and what the final result will look like. "
-        "Format the plan with clear headers. Wait for implicit approval (continue after presenting), "
-        "then execute.\n\n"
+        "Format the plan with clear headers and bullet points. "
+        "DO NOT start implementing. ONLY present the plan, then stop. "
+        "End your response with: ---PLAN READY---\n\n"
         "User task: " + prompt
     )
+
+    # Store the original prompt for execution after approval
+    pending_prompts[0] = prompt
 
     cmd = [
         "claude",
         "--dangerously-skip-permissions",
-        "-p", plan_first_prompt,
+        "-p", plan_prompt,
         "--plugin-dir", str(PLUGIN_DIR),
         "--output-format", "stream-json",
         "--verbose",
@@ -252,6 +261,86 @@ def start_claude(prompt: str):
         cwd=os.getcwd(),
     )
 
+    t = threading.Thread(target=stream_claude_output, args=(claude_process,), daemon=True)
+    t.start()
+
+
+def execute_approved_plan(original_prompt: str):
+    """Execute after user approves the plan."""
+    global claude_process
+
+    if claude_process and claude_process.poll() is None:
+        push_event("error", "Claude is already running.")
+        return
+
+    exec_prompt = (
+        "The user has approved your plan. Now execute it fully. "
+        "The original task was: " + original_prompt
+    )
+
+    cmd = [
+        "claude",
+        "--dangerously-skip-permissions",
+        "-p", exec_prompt,
+        "--plugin-dir", str(PLUGIN_DIR),
+        "--output-format", "stream-json",
+        "--verbose",
+    ]
+
+    push_event("process", {"status": "starting", "prompt": "Executing approved plan..."})
+
+    with terminal_lock:
+        terminal_lines.append("")
+        terminal_lines.append("=== PLAN APPROVED — EXECUTING ===")
+        terminal_lines.append("")
+
+    claude_process = subprocess.Popen(
+        cmd, stdout=subprocess.PIPE, stderr=subprocess.STDOUT,
+        text=True, cwd=os.getcwd(),
+    )
+    t = threading.Thread(target=stream_claude_output, args=(claude_process,), daemon=True)
+    t.start()
+
+
+def revise_plan(original_prompt: str, feedback: str):
+    """Re-run planning with user feedback."""
+    global claude_process
+
+    if claude_process and claude_process.poll() is None:
+        push_event("error", "Claude is already running.")
+        return
+
+    revise_prompt = (
+        "The user reviewed your plan and wants changes. Here's their feedback:\n\n"
+        f'"{feedback}"\n\n'
+        "Please revise the plan based on this feedback. "
+        "Present the updated plan. DO NOT start implementing. "
+        "End your response with: ---PLAN READY---\n\n"
+        "Original task: " + original_prompt
+    )
+
+    pending_prompts[0] = original_prompt
+
+    cmd = [
+        "claude",
+        "--dangerously-skip-permissions",
+        "-p", revise_prompt,
+        "--plugin-dir", str(PLUGIN_DIR),
+        "--output-format", "stream-json",
+        "--verbose",
+    ]
+
+    push_event("process", {"status": "starting", "prompt": "Revising plan..."})
+
+    with terminal_lock:
+        terminal_lines.append("")
+        terminal_lines.append("=== REVISING PLAN ===")
+        terminal_lines.append("")
+
+    claude_process = subprocess.Popen(
+        cmd, stdout=subprocess.PIPE, stderr=subprocess.STDOUT,
+        text=True, cwd=os.getcwd(),
+    )
     t = threading.Thread(target=stream_claude_output, args=(claude_process,), daemon=True)
     t.start()
 
@@ -299,6 +388,10 @@ class DashboardHandler(SimpleHTTPRequestHandler):
     def do_POST(self):
         if self.path == "/api/prompt":
             self.handle_prompt()
+        elif self.path == "/api/approve":
+            self.handle_approve()
+        elif self.path == "/api/revise":
+            self.handle_revise()
         elif self.path == "/api/stop":
             self.handle_stop()
         else:
@@ -367,6 +460,35 @@ class DashboardHandler(SimpleHTTPRequestHandler):
                 return
             start_claude(prompt)
             self.send_json(200, {"status": "started", "prompt": prompt})
+        except json.JSONDecodeError:
+            self.send_json(400, {"error": "Invalid JSON"})
+
+    def handle_approve(self):
+        """User approved the plan — execute it."""
+        original = pending_prompts.get(0, "")
+        if not original:
+            self.send_json(400, {"error": "No pending plan to approve"})
+            return
+        execute_approved_plan(original)
+        pending_prompts.pop(0, None)
+        self.send_json(200, {"status": "executing"})
+
+    def handle_revise(self):
+        """User wants to revise the plan."""
+        length = int(self.headers.get("Content-Length", 0))
+        body = self.rfile.read(length).decode()
+        try:
+            data = json.loads(body)
+            feedback = data.get("feedback", "").strip()
+            if not feedback:
+                self.send_json(400, {"error": "Provide feedback for revision"})
+                return
+            original = pending_prompts.get(0, "")
+            if not original:
+                self.send_json(400, {"error": "No pending plan to revise"})
+                return
+            revise_plan(original, feedback)
+            self.send_json(200, {"status": "revising"})
         except json.JSONDecodeError:
             self.send_json(400, {"error": "Invalid JSON"})
 
