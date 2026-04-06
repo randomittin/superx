@@ -18,6 +18,7 @@ document.addEventListener('DOMContentLoaded', () => {
   gameMap = new GameMap('map-canvas');
   connectSSE();
   setupPromptInput();
+  setupPlanApproval();
   setupTabs();
   window.terminalAPI.loadTerminalBuffer();
   renderWarRoom(null);
@@ -93,6 +94,13 @@ function connectSSE() {
     } catch (err) {
       console.error('Process parse error:', err);
     }
+  });
+
+  eventSource.addEventListener('plan_ready', (e) => {
+    showPlanApproval(true);
+    if (window._showLoading) window._showLoading(false);
+    document.getElementById('status-badge').className = 'status-badge';
+    document.getElementById('status-badge').textContent = 'PLAN READY';
   });
 
   eventSource.addEventListener('error', (e) => {
@@ -298,6 +306,58 @@ function setupPromptInput() {
 
   // Store showLoading globally so process events can use it
   window._showLoading = showLoading;
+}
+
+// === PLAN APPROVAL ===
+
+function showPlanApproval(visible) {
+  const el = document.getElementById('plan-approval');
+  if (el) el.className = visible ? 'plan-approval visible' : 'plan-approval';
+}
+
+function setupPlanApproval() {
+  const approveBtn = document.getElementById('btn-approve');
+  const reviseBtn = document.getElementById('btn-revise');
+  const feedbackInput = document.getElementById('plan-feedback');
+
+  approveBtn.addEventListener('click', async () => {
+    showPlanApproval(false);
+    addTimelineEvent('success', 'superx', 'Plan approved — executing...');
+    try {
+      await fetch('/api/approve', { method: 'POST' });
+    } catch (err) {
+      addTimelineEvent('error', 'superx', 'Failed to start execution');
+    }
+  });
+
+  reviseBtn.addEventListener('click', async () => {
+    const feedback = feedbackInput.value.trim();
+    if (!feedback) {
+      feedbackInput.focus();
+      feedbackInput.style.borderColor = 'var(--error)';
+      setTimeout(() => { feedbackInput.style.borderColor = ''; }, 1500);
+      return;
+    }
+    showPlanApproval(false);
+    addTimelineEvent('warning', 'superx', 'Revising plan: ' + feedback, true);
+    feedbackInput.value = '';
+    try {
+      await fetch('/api/revise', {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({ feedback }),
+      });
+    } catch (err) {
+      addTimelineEvent('error', 'superx', 'Failed to revise plan');
+    }
+  });
+
+  feedbackInput.addEventListener('keydown', (e) => {
+    if (e.key === 'Enter' && !e.shiftKey) {
+      e.preventDefault();
+      reviseBtn.click();
+    }
+  });
 }
 
 // === TABS ===
