@@ -1,0 +1,13 @@
+#!/usr/bin/env bash
+# superx-ui — Launch the pixel art dashboard
+set -euo pipefail
+
+SCRIPT_DIR="$(cd "$(dirname "$0")" && pwd)"
+UI_DIR="$SCRIPT_DIR/../ui"
+PORT="${SUPERX_PORT:-8080}"
+
+echo ""
+echo "  Starting superx pixel art dashboard..."
+echo ""
+
+python3 "$UI_DIR/server.py"
