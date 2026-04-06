@@ -1,0 +1,117 @@
+#!/usr/bin/env bash
+# generate-changelog — Auto-generate changelog entries from git commits
+# Groups commits by conventional commit type and formats as Keep a Changelog.
+set -euo pipefail
+
+usage() {
+  cat <<'EOF'
+Usage: generate-changelog [--since <tag|commit>] [--version <version>]
+
+Options:
+  --since <ref>       Generate from this tag/commit (default: last tag)
+  --version <ver>     Version label for the new entry (default: "Unreleased")
+  --append            Append to CHANGELOG.md instead of printing to stdout
+
+Reads git log using conventional commits (feat:, fix:, docs:, etc.)
+and formats entries grouped by type in Keep a Changelog format.
+EOF
+}
+
+SINCE=""
+VERSION="Unreleased"
+APPEND=false
+
+while [ $# -gt 0 ]; do
+  case "$1" in
+    --since)  SINCE="$2"; shift 2 ;;
+    --version) VERSION="$2"; shift 2 ;;
+    --append) APPEND=true; shift ;;
+    --help|-h) usage; exit 0 ;;
+    *) echo "Unknown option: $1" >&2; usage; exit 1 ;;
+  esac
+done
+
+# Find the starting point
+if [ -z "$SINCE" ]; then
+  SINCE=$(git describe --tags --abbrev=0 2>/dev/null || echo "")
+  if [ -z "$SINCE" ]; then
+    # No tags — use the first commit
+    SINCE=$(git rev-list --max-parents=0 HEAD 2>/dev/null || echo "HEAD~50")
+  fi
+fi
+
+DATE=$(date +%Y-%m-%d)
+
+# Collect commits grouped by type
+declare -A GROUPS
+GROUPS=(
+  [feat]=""
+  [fix]=""
+  [docs]=""
+  [refactor]=""
+  [test]=""
+  [chore]=""
+  [perf]=""
+  [other]=""
+)
+
+TYPE_LABELS=(
+  [feat]="Added"
+  [fix]="Fixed"
+  [docs]="Documentation"
+  [refactor]="Changed"
+  [test]="Tests"
+  [chore]="Maintenance"
+  [perf]="Performance"
+  [other]="Other"
+)
+
+while IFS= read -r line; do
+  # Extract conventional commit type
+  if [[ "$line" =~ ^([a-z]+)(\(.+\))?:\ (.+) ]]; then
+    type="${BASH_REMATCH[1]}"
+    scope="${BASH_REMATCH[2]}"
+    msg="${BASH_REMATCH[3]}"
+    # Clean scope
+    scope="${scope#(}"
+    scope="${scope%)}"
+
+    entry="- ${msg}"
+    [ -n "$scope" ] && entry="- **${scope}**: ${msg}"
+
+    if [ -n "${GROUPS[$type]+x}" ]; then
+      GROUPS[$type]+="${entry}"$'\n'
+    else
+      GROUPS[other]+="${entry}"$'\n'
+    fi
+  else
+    # Non-conventional commit
+    [ -n "$line" ] && GROUPS[other]+="- ${line}"$'\n'
+  fi
+done < <(git log "${SINCE}..HEAD" --pretty=format:"%s" --no-merges 2>/dev/null)
+
+# Build output
+OUTPUT=""
+OUTPUT+="## [${VERSION}] - ${DATE}"$'\n'$'\n'
+
+for type in feat fix refactor perf docs test chore other; do
+  if [ -n "${GROUPS[$type]}" ]; then
+    OUTPUT+="### ${TYPE_LABELS[$type]}"$'\n'
+    OUTPUT+="${GROUPS[$type]}"$'\n'
+  fi
+done
+
+if [ "$APPEND" = true ] && [ -f "CHANGELOG.md" ]; then
+  # Insert after the first "# Changelog" header line
+  tmp=$(mktemp)
+  awk -v entry="$OUTPUT" '
+    /^## \[/ && !inserted {
+      print entry
+      inserted = 1
+    }
+    { print }
+  ' CHANGELOG.md > "$tmp" && mv "$tmp" CHANGELOG.md
+  echo "Appended ${VERSION} entry to CHANGELOG.md"
+else
+  echo "$OUTPUT"
+fi

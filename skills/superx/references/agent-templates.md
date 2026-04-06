@@ -146,14 +146,24 @@ For large tasks requiring 3+ parallel workers:
 Create an agent team to build [PROJECT DESCRIPTION].
 
 Team structure:
+- architect: Analyze codebase and create decomposition plan (use architect agent type)
+- designer: Handle UI/UX design, component design, design tokens (use design agent type)
 - coder-auth: Handle authentication module (use coder agent type)
 - coder-api: Handle API endpoints (use coder agent type)
 - coder-frontend: Handle UI components (use coder agent type)
 - test-runner: Continuous testing as code lands (use test-runner agent type)
+- lint-quality: Enforce code standards after each coder completes (use lint-quality agent type)
+- reviewer: Review all changes before merge (use reviewer agent type)
+- docs-writer: Keep docs in sync with implementation (use docs-writer agent type)
 
 Coordination:
+- Architect produces plan first, then other agents begin
+- Designer works in parallel with backend coders (no file overlap)
 - Auth and API can work in parallel (no file overlap)
-- Frontend depends on API being complete
+- Frontend depends on API and designer being complete
 - Test runner watches for completed sub-projects
+- Lint-quality runs after each coder finishes
+- Reviewer runs after all coders + test-runner complete
+- Docs-writer runs last with full context
 - Require plan approval for each teammate before implementation
 ```

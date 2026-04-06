@@ -233,6 +233,29 @@ while task_not_complete:
 - All quality gates clear
 - User confirms completion (at levels 1-2)
 
+### Error Recovery
+
+When an agent fails (crash, context limit, garbage output, timeout):
+
+1. **Detect**: Agent returns an error, produces no output files, or output fails grading
+2. **Classify**:
+   - **Transient** (timeout, context overflow): Retry with a narrower scope — split the sub-project in half
+   - **Systematic** (wrong approach, bad assumptions): Re-spawn architect agent to re-plan that sub-project
+   - **Blocking** (missing dependency, ambiguous requirement): Escalate to user
+3. **Retry policy**:
+   - Max 2 retries per sub-project
+   - On first retry: same agent type, same scope, fresh context
+   - On second retry: reduce scope (split sub-project) or switch agent approach
+   - After 2 retries: mark sub-project as `"status": "failed"` and escalate
+4. **State tracking**: Log failures in agent_history:
+   ```bash
+   superx-state set '.agent_history[-1].status' '"failed"'
+   superx-state set '.agent_history[-1].error' '"<brief description>"'
+   ```
+5. **Communication**: "Agent for [sub-project] failed: [brief reason]. Retrying with [adjusted approach]." If escalating: "I've tried twice and can't get [sub-project] working. The issue is [specific problem]. Need your input."
+
+Never silently drop a failed sub-project. Either retry, escalate, or explicitly mark as failed.
+
 ---
 
 ## 6. Quality Gates
@@ -322,7 +345,19 @@ Key operations:
 - `superx-state check-quality-gates` — verify all gates pass
 - `superx-state mark-dirty` / `superx-state mark-clean` — track test status
 
-### 8b. CLAUDE.md
+### 8b. Token Budget
+
+Track cumulative token spend to prevent runaway costs:
+
+- After each agent completes, log its token usage: `superx-state add-tokens <count>`
+- Set a budget cap: `superx-state set-budget 500000` (500k tokens)
+- Check spend: `superx-state budget`
+- When spend hits 80% of budget, warn the user: "Token usage at 80% of budget. Continue?"
+- When spend exceeds budget, pause and ask: "Budget exceeded. Spent X of Y tokens. Want to increase the limit or stop?"
+
+At autonomy level 3, budget warnings still interrupt — this is a safety mechanism that overrides full auto.
+
+### 8c. CLAUDE.md
 
 Update CLAUDE.md at every major milestone with:
 - Project context and current phase
