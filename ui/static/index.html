@@ -1,0 +1,69 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+  <meta charset="UTF-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1.0">
+  <title>superx — pixel art dashboard</title>
+  <link rel="stylesheet" href="style.css">
+</head>
+<body>
+  <div class="dashboard">
+
+    <!-- HEADER -->
+    <div class="header">
+      <div class="header-left">
+        <h1>SUPERX</h1>
+        <span id="status-badge" class="status-badge">IDLE</span>
+        <span id="phase-info" style="font-size:7px;color:var(--text-dim)">idle | L2</span>
+      </div>
+      <div class="header-right">
+        <button id="stop-btn" class="btn">STOP</button>
+      </div>
+    </div>
+
+    <!-- TIMELINE (top left) -->
+    <div class="timeline">
+      <div class="timeline-header">
+        <span>TIMELINE</span>
+        <span id="event-count" style="color:var(--text-dim)">0</span>
+      </div>
+      <div id="timeline-events" class="timeline-events"></div>
+      <div class="prompt-bar">
+        <input id="prompt-input" class="prompt-input" type="text"
+               placeholder="Type a task for superx..." autocomplete="off">
+        <button id="send-btn" class="btn btn-send">RUN</button>
+      </div>
+    </div>
+
+    <!-- WAR ROOM (bottom left) -->
+    <div class="warroom">
+      <div class="warroom-header">WAR ROOM</div>
+      <div id="agent-grid" class="agent-grid"></div>
+    </div>
+
+    <!-- RIGHT PANEL (Game Map + Terminal tabs) -->
+    <div class="right-panel">
+      <div class="tab-bar">
+        <button class="tab active" data-tab="map">MAP</button>
+        <button class="tab" data-tab="terminal">TERMINAL</button>
+      </div>
+
+      <!-- Game Map -->
+      <div id="tab-map" class="tab-content active">
+        <canvas id="map-canvas"></canvas>
+      </div>
+
+      <!-- Terminal -->
+      <div id="tab-terminal" class="tab-content">
+        <pre id="terminal-output" class="terminal"></pre>
+      </div>
+    </div>
+
+  </div>
+
+  <script src="sprites.js"></script>
+  <script src="terminal.js"></script>
+  <script src="map.js"></script>
+  <script src="app.js"></script>
+</body>
+</html>
