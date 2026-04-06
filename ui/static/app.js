@@ -39,7 +39,8 @@ async function restoreSession() {
         const type = evt.type || 'info';
         const msg = evt.message || '';
         const isMono = evt.useMono || msg.startsWith('$') || msg.startsWith('Task:');
-        if (msg) addTimelineEvent(type, agent, msg, isMono);
+        const md = evt.markdown || false;
+        if (msg) addTimelineEvent(type, agent, msg, isMono, md);
       }
     }
 
@@ -103,9 +104,10 @@ function connectSSE() {
       const agent = data.agent || 'superx';
       const type = data.type || 'info';
       const msg = data.message || '';
+      const md = data.markdown || false;
       if (msg) {
         const isMono = msg.startsWith('$') || msg.startsWith('Write:') || msg.startsWith('Edit:');
-        addTimelineEvent(type, agent, msg, isMono);
+        addTimelineEvent(type, agent, msg, isMono, md);
       }
     } catch (err) {
       console.error('Timeline parse error:', err);
@@ -161,12 +163,24 @@ function connectSSE() {
 
 // === TIMELINE ===
 
-function addTimelineEvent(type, agent, message, useMono) {
+function isMarkdown(text) {
+  return /^#{1,3}\s|^\*\*|\n-\s|\n\d+\.\s|\n#{1,3}\s|\|.*\|/.test(text);
+}
+
+function renderMarkdown(text) {
+  if (typeof marked !== 'undefined' && typeof DOMPurify !== 'undefined') {
+    return DOMPurify.sanitize(marked.parse(text));
+  }
+  return null;
+}
+
+function addTimelineEvent(type, agent, message, useMono, markdown) {
   const event = {
     type,
     agent,
     message,
     useMono: useMono || false,
+    markdown: markdown || false,
     time: new Date().toLocaleTimeString('en', { hour12: false, hour: '2-digit', minute: '2-digit', second: '2-digit' }),
   };
 
@@ -203,10 +217,32 @@ function addTimelineEvent(type, agent, message, useMono) {
 
   el.appendChild(leftCol);
 
-  // Message
-  const msgSpan = document.createElement('span');
-  msgSpan.className = 'msg' + (event.useMono ? ' mono' : '');
-  msgSpan.textContent = message;
+  // Message — render as markdown if flagged or auto-detected
+  const msgSpan = document.createElement('div');
+  const hasMd = event.markdown || (isMarkdown(message) && message.length > 80);
+
+  if (hasMd) {
+    const html = renderMarkdown(message);
+    if (html) {
+      msgSpan.className = 'msg md';
+      msgSpan.innerHTML = html;
+      // Add expand hint
+      const hint = document.createElement('div');
+      hint.className = 'expand-hint';
+      hint.textContent = '▼ click to expand';
+      msgSpan.appendChild(hint);
+      // Toggle expand on click
+      msgSpan.addEventListener('click', () => {
+        msgSpan.classList.toggle('expanded');
+      });
+    } else {
+      msgSpan.className = 'msg';
+      msgSpan.textContent = message;
+    }
+  } else {
+    msgSpan.className = 'msg' + (event.useMono ? ' mono' : '');
+    msgSpan.textContent = message;
+  }
   el.appendChild(msgSpan);
 
   container.appendChild(el);

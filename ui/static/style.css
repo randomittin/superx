@@ -192,6 +192,105 @@ body {
   font-size: 10px;
 }
 
+/* Markdown-rendered plan content */
+.event .msg.md {
+  font-family: 'SF Mono', 'Fira Code', monospace;
+  font-size: 9px;
+  line-height: 1.5;
+  max-height: 60px;
+  overflow: hidden;
+  cursor: pointer;
+  position: relative;
+  transition: max-height 0.3s ease;
+}
+
+.event .msg.md.expanded {
+  max-height: none;
+}
+
+.event .msg.md .expand-hint {
+  position: absolute;
+  bottom: 0;
+  left: 0;
+  right: 0;
+  height: 24px;
+  background: linear-gradient(transparent, var(--bg-panel));
+  display: flex;
+  align-items: flex-end;
+  justify-content: center;
+  font-size: 7px;
+  color: var(--accent);
+  pointer-events: none;
+}
+
+.event .msg.md.expanded .expand-hint {
+  display: none;
+}
+
+.event .msg.md h1, .event .msg.md h2, .event .msg.md h3 {
+  font-family: var(--font-pixel);
+  color: var(--accent);
+  margin: 6px 0 3px 0;
+}
+
+.event .msg.md h1 { font-size: 11px; }
+.event .msg.md h2 { font-size: 10px; color: var(--warning); }
+.event .msg.md h3 { font-size: 9px; color: var(--info); }
+
+.event .msg.md p {
+  margin: 3px 0;
+}
+
+.event .msg.md ul, .event .msg.md ol {
+  padding-left: 16px;
+  margin: 3px 0;
+}
+
+.event .msg.md li {
+  margin: 2px 0;
+}
+
+.event .msg.md strong {
+  color: var(--warning);
+}
+
+.event .msg.md code {
+  background: var(--bg-dark);
+  padding: 1px 4px;
+  border-radius: 2px;
+  font-size: 8px;
+}
+
+.event .msg.md pre {
+  background: var(--bg-dark);
+  padding: 6px 8px;
+  margin: 4px 0;
+  border-radius: 2px;
+  overflow-x: auto;
+  font-size: 8px;
+}
+
+.event .msg.md pre code {
+  background: none;
+  padding: 0;
+}
+
+.event .msg.md table {
+  border-collapse: collapse;
+  margin: 4px 0;
+  font-size: 8px;
+}
+
+.event .msg.md th, .event .msg.md td {
+  border: 1px solid var(--border);
+  padding: 2px 6px;
+}
+
+.event .msg.md th {
+  background: var(--bg-card);
+  color: var(--accent);
+}
+
 /* Loading indicator */
 .loading-bar {
   height: 2px;

@@ -180,38 +180,12 @@ def stream_claude_output(proc: subprocess.Popen):
 
                 if block_type == "text":
                     text = block.get("text", "")
-                    # Only show new text (stream sends cumulative)
+                    # Track the full cumulative text
                     if text and text != last_text:
                         new_part = text[len(last_text):] if text.startswith(last_text) else text
                         last_text = text
                         if new_part.strip():
                             _terminal_append(new_part.strip())
-                            # Detect plan content and send as rich plan event
-                            lower = new_part.lower()
-                            if any(kw in lower for kw in ["sub-project", "dependency", "wave ", "phase ", "## plan", "decompos"]):
-                                add_timeline_event({
-                                    "agent": "architect",
-                                    "type": "warning",
-                                    "message": new_part.strip()[:300]
-                                })
-                            elif any(kw in lower for kw in ["quality gate", "test", "lint", "review"]):
-                                add_timeline_event({
-                                    "agent": "test-runner",
-                                    "type": "info",
-                                    "message": new_part.strip()[:200]
-                                })
-                            elif any(kw in lower for kw in ["design", "ui/ux", "component", "layout", "color"]):
-                                add_timeline_event({
-                                    "agent": "design",
-                                    "type": "info",
-                                    "message": new_part.strip()[:200]
-                                })
-                            else:
-                                add_timeline_event({
-                                    "agent": "superx",
-                                    "type": "info",
-                                    "message": new_part.strip()[:200]
-                                })
 
                 elif block_type == "tool_use":
                     tool_name = block.get("name", "unknown")
@@ -278,6 +252,15 @@ def stream_claude_output(proc: subprocess.Popen):
         # Reset text tracking between messages
         if msg_type != "assistant":
             last_text = ""
+
+    # Send full accumulated text as a single timeline event
+    if last_text.strip():
+        add_timeline_event({
+            "agent": "superx",
+            "type": "info",
+            "message": last_text.strip(),
+            "markdown": True,
+        })
 
     proc.wait()
     # If there's a pending prompt, this was a plan phase — show approval UI
