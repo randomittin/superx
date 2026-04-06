@@ -231,27 +231,34 @@ body {
   padding-top: 0;
 }
 
+.event .msg.md, .event .msg.md p, .event .msg.md li, .event .msg.md td {
+  font-family: 'SF Mono', 'Fira Code', 'Cascadia Code', 'Consolas', monospace;
+  font-size: 11px;
+}
+
 .event .msg.md h1, .event .msg.md h2, .event .msg.md h3 {
   font-family: var(--font-pixel);
   color: var(--accent);
-  margin: 6px 0 3px 0;
+  margin: 8px 0 4px 0;
 }
 
-.event .msg.md h1 { font-size: 11px; }
+.event .msg.md h1 { font-size: 12px; }
 .event .msg.md h2 { font-size: 10px; color: var(--warning); }
 .event .msg.md h3 { font-size: 9px; color: var(--info); }
 
 .event .msg.md p {
-  margin: 3px 0;
+  margin: 4px 0;
+  line-height: 1.6;
 }
 
 .event .msg.md ul, .event .msg.md ol {
-  padding-left: 16px;
-  margin: 3px 0;
+  padding-left: 20px;
+  margin: 4px 0;
 }
 
 .event .msg.md li {
-  margin: 2px 0;
+  margin: 3px 0;
+  line-height: 1.6;
 }
 
 .event .msg.md strong {
