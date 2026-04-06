@@ -539,10 +539,11 @@ body {
 }
 
 .agent-card .sprite {
-  width: 28px;
-  height: 28px;
+  width: 48px;
+  height: 48px;
   image-rendering: pixelated;
   flex-shrink: 0;
+  border-radius: 4px;
 }
 
 .agent-card.active .sprite {
