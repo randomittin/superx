@@ -205,6 +205,7 @@ def stream_claude_output(proc: subprocess.Popen):
                             "type": "info",
                             "message": f"Spawning agent: {desc}"
                         })
+                        push_event("agent_status", {"agent": "architect", "status": "running"})
                     elif tool_name == "Bash":
                         cmd = tool_input.get("command", "")[:80]
                         _terminal_append(f"$ {cmd}")
@@ -213,6 +214,7 @@ def stream_claude_output(proc: subprocess.Popen):
                             "type": "info",
                             "message": f"$ {cmd}"
                         })
+                        push_event("agent_status", {"agent": "coder", "status": "running"})
                     elif tool_name in ("Write", "Edit"):
                         fpath = tool_input.get("file_path", "")
                         fname = fpath.split("/")[-1] if fpath else "unknown"
@@ -222,6 +224,7 @@ def stream_claude_output(proc: subprocess.Popen):
                             "type": "info",
                             "message": f"{tool_name}: {fname}"
                         })
+                        push_event("agent_status", {"agent": "coder", "status": "running"})
                     elif tool_name == "Read":
                         fpath = tool_input.get("file_path", "")
                         fname = fpath.split("/")[-1] if fpath else "unknown"
@@ -234,6 +237,7 @@ def stream_claude_output(proc: subprocess.Popen):
                             "type": "info",
                             "message": f"Using skill: {skill}"
                         })
+                        push_event("agent_status", {"agent": "superx", "status": "running"})
                     elif tool_name in ("TaskCreate", "TaskUpdate"):
                         subject = tool_input.get("subject", tool_input.get("status", ""))
                         _terminal_append(f"[Task] {subject}")
@@ -274,6 +278,7 @@ def stream_claude_output(proc: subprocess.Popen):
     # If there's a pending prompt, this was a plan phase — show approval UI
     if pending_prompts.get(0):
         push_event("plan_ready", {"status": "awaiting_approval"})
+    push_event("agent_status", {"agent": "superx", "status": "idle"})
     push_event("process", {"status": "exited", "code": proc.returncode})
 
 
@@ -326,6 +331,7 @@ def start_claude(prompt: str):
     ]
 
     push_event("process", {"status": "starting", "prompt": prompt})
+    push_event("agent_status", {"agent": "superx", "status": "running"})
 
     with terminal_lock:
         terminal_lines.clear()

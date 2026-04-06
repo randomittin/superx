@@ -140,6 +140,14 @@ function connectSSE() {
     }
   });
 
+  eventSource.addEventListener('agent_status', (e) => {
+    try {
+      const payload = JSON.parse(e.data);
+      const data = payload.data || payload;
+      updateAgentCard(data.agent, data.status);
+    } catch (err) {}
+  });
+
   eventSource.addEventListener('plan_ready', (e) => {
     showPlanApproval(true);
     if (window._showLoading) window._showLoading(false);
@@ -247,6 +255,18 @@ function addTimelineEvent(type, agent, message, useMono, markdown) {
   } else {
     msgSpan.className = 'msg' + (event.useMono ? ' mono' : '');
     msgSpan.textContent = message;
+    // Make long text collapsible
+    if (message.length > 100) {
+      msgSpan.classList.add('collapsible');
+      const hint = document.createElement('span');
+      hint.className = 'collapse-hint';
+      hint.textContent = ' ▼';
+      msgSpan.appendChild(hint);
+      msgSpan.addEventListener('click', () => {
+        const isExpanded = msgSpan.classList.toggle('expanded');
+        hint.textContent = isExpanded ? ' ▲' : ' ▼';
+      });
+    }
   }
   el.appendChild(msgSpan);
 
@@ -299,17 +319,21 @@ function renderWarRoom(state) {
       card.appendChild(placeholder);
     }
 
-    // Name
+    // Info column
+    const info = document.createElement('div');
+    info.className = 'card-info';
+
     const nameEl = document.createElement('div');
     nameEl.className = 'name';
     nameEl.textContent = type;
-    card.appendChild(nameEl);
+    info.appendChild(nameEl);
 
-    // Task
     const taskEl = document.createElement('div');
     taskEl.className = 'task';
     taskEl.textContent = isActive ? (agent?.id || 'working...') : 'idle';
-    card.appendChild(taskEl);
+    info.appendChild(taskEl);
+
+    card.appendChild(info);
 
     grid.appendChild(card);
   }
@@ -401,6 +425,22 @@ function setupPromptInput() {
 
   // Store showLoading globally so process events can use it
   window._showLoading = showLoading;
+}
+
+// === AGENT STATUS ===
+
+function updateAgentCard(agentType, status) {
+  const cards = document.querySelectorAll('.agent-card');
+  for (const card of cards) {
+    const nameEl = card.querySelector('.name');
+    if (nameEl && nameEl.textContent === agentType) {
+      card.className = 'agent-card ' + (status === 'running' ? 'active' : 'idle') + ' pixel-border';
+      const dot = card.querySelector('.status-dot');
+      if (dot) dot.className = 'status-dot ' + (status === 'running' ? 'running' : 'idle');
+      const taskEl = card.querySelector('.task');
+      if (taskEl) taskEl.textContent = status === 'running' ? 'working...' : 'idle';
+    }
+  }
 }
 
 // === HISTORY DRAWER ===
