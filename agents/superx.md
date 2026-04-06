@@ -31,7 +31,8 @@ On every session start:
 2. Read `superx-state.json` to understand current project state
 3. Read `CLAUDE.md` if it exists for project context
 4. Run `detect-skills` to inventory all available skills
-5. Greet the user with a concise status summary:
+5. **For new projects**: Use `claude-code-setup:claude-automation-recommender` to analyze the codebase and recommend optimal Claude Code automations (hooks, subagents, skills). This gives superx the best foundation before any work begins.
+6. Greet the user with a concise status summary:
    - Project name and phase
    - Autonomy level
    - Quality gate status
@@ -60,8 +61,28 @@ Analyze the prompt to identify required domains. Common domains include:
 
 ### 2b. Skill Matching
 
-Match identified domains against the installed skill inventory from `detect-skills`. For each domain:
-1. Check if an installed skill covers it
+Match identified domains against the FULL installed skill inventory from `detect-skills`. Scan ALL plugins, not just superpowers. The skill ecosystem is rich — use it aggressively.
+
+**Common skill-to-domain mappings:**
+
+| Domain | Skills to check |
+|---|---|
+| Project setup | `claude-code-setup:claude-automation-recommender` |
+| UI/UX design | `design-for-ai:design`, `design-for-ai:color`, `design-for-ai:fonts`, `design-for-ai:flow`, `design-for-ai:exam`, `design-for-ai:hone`, `design-for-ai:brand` |
+| SEO | `seo:*`, `seo-technical`, `seo-content`, `seo-schema`, `seo-local`, `seo-sitemap`, `seo-hreflang`, `seo-geo`, `seo-page`, `seo-images` |
+| Code implementation | `superpowers:test-driven-development`, `superpowers:systematic-debugging` |
+| Planning | `superpowers:writing-plans`, `superpowers:brainstorming` |
+| Parallel work | `superpowers:dispatching-parallel-agents`, `superpowers:subagent-driven-development` |
+| Code review | `pr-review-toolkit:review-pr`, `pr-review-toolkit:code-reviewer`, `pr-review-toolkit:silent-failure-hunter`, `pr-review-toolkit:type-design-analyzer`, `pr-review-toolkit:comment-analyzer` |
+| Testing | `superpowers:test-driven-development`, `pr-review-toolkit:pr-test-analyzer` |
+| Git workflow | `superpowers:using-git-worktrees`, `superpowers:finishing-a-development-branch`, `superpowers:verification-before-completion` |
+| Context persistence | `claude-md-management:claude-md-improver` |
+| Team comms | `slack:draft-announcement`, `slack:channel-digest`, `slack:standup`, `slack:find-discussions` |
+| API development | `claude-api` (when building Claude/Anthropic integrations) |
+| MCP servers | `mcp-server-dev:build-mcp-server`, `mcp-server-dev:build-mcp-app` |
+
+For each domain:
+1. Check if an installed skill covers it — use the table above as a starting point, but also scan `detect-skills` output for any skill whose description matches
 2. If yes, note which skill to load for which agent
 3. If no, identify the gap
 
@@ -142,10 +163,16 @@ Spawn the right agent for each sub-project:
 
 When spawning an agent, provide:
 1. **Specific scope**: exactly what to build/test/review
-2. **Relevant context**: files to read, patterns to follow
-3. **Constraints**: what NOT to do (prevent overlap with other agents)
-4. **Quality expectations**: tests required, lint standards, etc.
-5. **State file path**: so they can update superx-state.json
+2. **Skills to invoke**: tell the agent which skills to use via `Skill(skill: "name")`. Don't assume agents will discover skills on their own — be explicit:
+   - Coder agents: `superpowers:test-driven-development`, `superpowers:systematic-debugging`, and any domain-specific skills (e.g., `claude-api` for Anthropic integrations, `seo-schema` for structured data)
+   - Design agents: `design-for-ai:design`, `design-for-ai:color`, `design-for-ai:fonts`, etc.
+   - Review agents: `pr-review-toolkit:review-pr`, `pr-review-toolkit:silent-failure-hunter`, `pr-review-toolkit:type-design-analyzer`
+   - Test agents: `superpowers:test-driven-development`, `pr-review-toolkit:pr-test-analyzer`
+   - Docs agents: `claude-md-management:claude-md-improver`
+3. **Relevant context**: files to read, patterns to follow
+4. **Constraints**: what NOT to do (prevent overlap with other agents)
+5. **Quality expectations**: tests required, lint standards, etc.
+6. **State file path**: so they can update superx-state.json
 
 Example spawn prompt:
 ```

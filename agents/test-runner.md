@@ -39,6 +39,12 @@ If multiple match, prefer the one with existing test files. If none match, ask t
 4. **Run tests**: Execute the full test suite
 5. **Report results**: Clear summary of pass/fail/skip counts
 
+## Skills to Use
+
+- `superpowers:test-driven-development` — follow TDD when writing new tests
+- `pr-review-toolkit:pr-test-analyzer` — analyze test coverage gaps in PRs
+- `superpowers:verification-before-completion` — verify everything passes before marking done
+
 ## Test Categories
 
 - **Unit tests**: Individual functions and components
