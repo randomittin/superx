@@ -186,23 +186,22 @@ function renderMarkdown(text) {
 }
 
 function addFileTreeIcons(html) {
-  // Replace folder patterns in <code> blocks within <pre>
+  // Replace folder patterns — use colored text markers instead of emojis
   // Folders end with /
   html = html.replace(/(├──|└──|│\s+├──|│\s+└──)(\s*)([a-zA-Z0-9._-]+\/)/g,
-    '$1$2<span style="color:#f1c40f">&#128193;</span> <span style="color:#f1c40f">$3</span>');
+    '$1$2<span style="color:#f1c40f;font-weight:bold">[+]</span> <span style="color:#f1c40f">$3</span>');
   // Files with extensions
   html = html.replace(/(├──|└──|│\s+├──|│\s+└──)(\s*)([a-zA-Z0-9._-]+\.\w+)/g, (match, tree, space, file) => {
-    // Already processed (has folder icon)?
-    if (match.includes('&#128193;')) return match;
+    if (match.includes('[+]')) return match;
     const ext = file.split('.').pop().toLowerCase();
-    let icon = '&#128196;'; // default: page
+    let marker = '*';
     let color = '#6bcbef';
-    if (['ts', 'tsx', 'js', 'jsx'].includes(ext)) { icon = '&#9889;'; color = '#f1c40f'; }
-    else if (['json', 'yaml', 'yml', 'toml'].includes(ext)) { icon = '&#9881;'; color = '#e67e22'; }
-    else if (['md', 'mdx', 'txt'].includes(ext)) { icon = '&#128221;'; color = '#4ecca3'; }
-    else if (['css', 'scss'].includes(ext)) { icon = '&#127912;'; color = '#e056a0'; }
-    else if (['png', 'jpg', 'svg', 'ico'].includes(ext)) { icon = '&#128247;'; color = '#9b59b6'; }
-    return tree + space + '<span style="color:' + color + '">' + icon + '</span> <span style="color:' + color + '">' + file + '</span>';
+    if (['ts', 'tsx', 'js', 'jsx'].includes(ext)) { marker = '>'; color = '#f1c40f'; }
+    else if (['json', 'yaml', 'yml', 'toml'].includes(ext)) { marker = '#'; color = '#e67e22'; }
+    else if (['md', 'mdx', 'txt'].includes(ext)) { marker = '~'; color = '#4ecca3'; }
+    else if (['css', 'scss'].includes(ext)) { marker = '@'; color = '#e056a0'; }
+    else if (['png', 'jpg', 'svg', 'ico'].includes(ext)) { marker = '%'; color = '#9b59b6'; }
+    return tree + space + '<span style="color:' + color + '">[' + marker + ']</span> <span style="color:' + color + '">' + file + '</span>';
   });
   return html;
 }
