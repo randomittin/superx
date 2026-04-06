@@ -149,6 +149,7 @@ def stream_claude_output(proc: subprocess.Popen):
     and push it to both the terminal (formatted) and timeline (events).
     """
     last_text = ""
+    all_texts = []  # accumulate all assistant text blocks across messages
 
     for raw_line in iter(proc.stdout.readline, ""):
         raw_line = raw_line.rstrip("\n")
@@ -180,10 +181,15 @@ def stream_claude_output(proc: subprocess.Popen):
 
                 if block_type == "text":
                     text = block.get("text", "")
-                    # Track the full cumulative text
+                    # Stream sends cumulative text — extract new portion for terminal
                     if text and text != last_text:
                         new_part = text[len(last_text):] if text.startswith(last_text) else text
                         last_text = text
+                        # Keep the latest full text as the authoritative version
+                        if all_texts and all_texts[-1] != text:
+                            all_texts[-1] = text
+                        elif not all_texts:
+                            all_texts.append(text)
                         if new_part.strip():
                             _terminal_append(new_part.strip())
 
@@ -249,18 +255,21 @@ def stream_claude_output(proc: subprocess.Popen):
                 short = result_text.strip()[:150]
                 _terminal_append(f"  → {short}")
 
-        # Reset text tracking between messages
-        if msg_type != "assistant":
+        # When we see a non-assistant message after text, the text block is complete
+        # Start a new accumulator for the next assistant message
+        if msg_type != "assistant" and last_text:
+            all_texts.append("")
             last_text = ""
 
-    # Send full accumulated text as a single timeline event
-    if last_text.strip():
-        add_timeline_event({
-            "agent": "superx",
-            "type": "info",
-            "message": last_text.strip(),
-            "markdown": True,
-        })
+    # Send all accumulated text as timeline events
+    for full_text in all_texts:
+        if full_text and full_text.strip():
+            add_timeline_event({
+                "agent": "superx",
+                "type": "info",
+                "message": full_text.strip(),
+                "markdown": True,
+            })
 
     proc.wait()
     # If there's a pending prompt, this was a plan phase — show approval UI
