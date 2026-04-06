@@ -255,21 +255,20 @@ def stream_claude_output(proc: subprocess.Popen):
                 short = result_text.strip()[:150]
                 _terminal_append(f"  → {short}")
 
-        # When we see a non-assistant message after text, the text block is complete
-        # Start a new accumulator for the next assistant message
-        if msg_type != "assistant" and last_text:
-            all_texts.append("")
-            last_text = ""
+        # Capture the authoritative final result (contains full text)
+        if msg_type == "result" and obj.get("subtype") == "success":
+            result_text = obj.get("result", "")
+            if result_text and result_text.strip():
+                add_timeline_event({
+                    "agent": "superx",
+                    "type": "info",
+                    "message": result_text.strip(),
+                    "markdown": True,
+                })
 
-    # Send all accumulated text as timeline events
-    for full_text in all_texts:
-        if full_text and full_text.strip():
-            add_timeline_event({
-                "agent": "superx",
-                "type": "info",
-                "message": full_text.strip(),
-                "markdown": True,
-            })
+        # Reset text tracking between assistant turns
+        if msg_type != "assistant" and last_text:
+            last_text = ""
 
     proc.wait()
     # If there's a pending prompt, this was a plan phase — show approval UI
