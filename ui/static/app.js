@@ -335,6 +335,12 @@ function renderWarRoom(state) {
 
     card.appendChild(info);
 
+    // Gradient background per agent
+    const grad = window.GRADIENTS[type];
+    if (grad) {
+      card.style.background = 'linear-gradient(135deg, ' + grad[0] + ', ' + grad[1] + '44)';
+    }
+
     grid.appendChild(card);
   }
 }
