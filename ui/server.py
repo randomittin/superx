@@ -27,7 +27,9 @@ pending_prompts: dict[int, str] = {}  # stores original prompt awaiting approval
 timeline_events: list[dict] = []  # persisted timeline events
 MAX_TIMELINE_EVENTS = 200
 SESSION_FILE = Path("superx-session.json")
+HISTORY_FILE = Path("superx-history.json")
 session_lock = threading.Lock()
+MAX_HISTORY_SESSIONS = 50
 
 
 def save_session():
@@ -40,6 +42,40 @@ def save_session():
             "saved_at": time.time(),
         }
         SESSION_FILE.write_text(json.dumps(data))
+
+
+def archive_session():
+    """Save current session to history before clearing."""
+    if not timeline_events:
+        return
+    # Find the first user task message for summary
+    task_summary = ""
+    for evt in timeline_events:
+        msg = evt.get("message", "")
+        if msg.startswith("Task:"):
+            task_summary = msg[5:].strip()
+            break
+    if not task_summary and timeline_events:
+        task_summary = timeline_events[0].get("message", "")[:100]
+
+    entry = {
+        "timestamp": time.time(),
+        "task": task_summary,
+        "event_count": len(timeline_events),
+        "timeline": timeline_events[-MAX_TIMELINE_EVENTS:],
+        "terminal": terminal_lines[-MAX_TERMINAL_LINES:],
+    }
+
+    history = []
+    if HISTORY_FILE.exists():
+        try:
+            history = json.loads(HISTORY_FILE.read_text())
+        except (json.JSONDecodeError, TypeError):
+            history = []
+
+    history.insert(0, entry)
+    history = history[:MAX_HISTORY_SESSIONS]
+    HISTORY_FILE.write_text(json.dumps(history))
 
 
 def load_session():
@@ -433,6 +469,10 @@ class DashboardHandler(SimpleHTTPRequestHandler):
             self.handle_terminal()
         elif self.path == "/api/session":
             self.handle_session()
+        elif self.path == "/api/history":
+            self.handle_history()
+        elif self.path.startswith("/api/history/"):
+            self.handle_history_detail()
         elif self.path == "/":
             self.path = "/index.html"
             super().do_GET()
@@ -530,6 +570,42 @@ class DashboardHandler(SimpleHTTPRequestHandler):
         except json.JSONDecodeError:
             self.send_json(400, {"error": "Invalid JSON"})
 
+    def handle_history(self):
+        """Return list of past sessions (summary only)."""
+        history = []
+        if HISTORY_FILE.exists():
+            try:
+                full = json.loads(HISTORY_FILE.read_text())
+                for i, entry in enumerate(full):
+                    history.append({
+                        "index": i,
+                        "timestamp": entry.get("timestamp", 0),
+                        "task": entry.get("task", ""),
+                        "event_count": entry.get("event_count", 0),
+                    })
+            except (json.JSONDecodeError, TypeError):
+                pass
+        self.send_json(200, {"sessions": history})
+
+    def handle_history_detail(self):
+        """Return a specific past session by index."""
+        try:
+            idx = int(self.path.split("/")[-1])
+        except ValueError:
+            self.send_json(400, {"error": "Invalid index"})
+            return
+        if not HISTORY_FILE.exists():
+            self.send_json(404, {"error": "No history"})
+            return
+        try:
+            full = json.loads(HISTORY_FILE.read_text())
+            if 0 <= idx < len(full):
+                self.send_json(200, full[idx])
+            else:
+                self.send_json(404, {"error": "Session not found"})
+        except (json.JSONDecodeError, TypeError):
+            self.send_json(500, {"error": "Corrupt history"})
+
     def handle_approve(self):
         """User approved the plan — execute it."""
         original = pending_prompts.get(0, "")
@@ -560,10 +636,12 @@ class DashboardHandler(SimpleHTTPRequestHandler):
             self.send_json(400, {"error": "Invalid JSON"})
 
     def handle_stop(self):
-        """Stop the running claude process and clear the session."""
+        """Stop the running claude process, archive, and clear the session."""
         global claude_process
         if claude_process and claude_process.poll() is None:
             claude_process.terminate()
+        # Archive before clearing
+        archive_session()
         # Clear session
         timeline_events.clear()
         with terminal_lock:

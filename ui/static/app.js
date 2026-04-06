@@ -20,6 +20,7 @@ document.addEventListener('DOMContentLoaded', () => {
   setupPromptInput();
   setupPlanApproval();
   setupTabs();
+  setupHistory();
   restoreSession();
   renderWarRoom(null);
 });
@@ -359,6 +360,114 @@ function setupPromptInput() {
 
   // Store showLoading globally so process events can use it
   window._showLoading = showLoading;
+}
+
+// === HISTORY DRAWER ===
+
+function setupHistory() {
+  const btn = document.getElementById('history-btn');
+  const overlay = document.getElementById('history-overlay');
+  const closeBtn = document.getElementById('history-close');
+
+  btn.addEventListener('click', () => {
+    overlay.classList.add('open');
+    loadHistory();
+  });
+
+  closeBtn.addEventListener('click', () => {
+    overlay.classList.remove('open');
+  });
+
+  // Close on overlay click (outside drawer)
+  overlay.addEventListener('click', (e) => {
+    if (e.target === overlay) overlay.classList.remove('open');
+  });
+}
+
+async function loadHistory() {
+  const list = document.getElementById('history-list');
+  list.textContent = '';
+
+  try {
+    const res = await fetch('/api/history');
+    const data = await res.json();
+    const sessions = data.sessions || [];
+
+    if (sessions.length === 0) {
+      const empty = document.createElement('div');
+      empty.className = 'history-empty';
+      empty.textContent = 'No past sessions yet';
+      list.appendChild(empty);
+      return;
+    }
+
+    for (const session of sessions) {
+      const card = document.createElement('div');
+      card.className = 'history-session';
+
+      const time = document.createElement('div');
+      time.className = 'session-time';
+      time.textContent = new Date(session.timestamp * 1000)
+        .toLocaleString('en', { month: 'short', day: 'numeric', hour: '2-digit', minute: '2-digit' });
+      card.appendChild(time);
+
+      const task = document.createElement('div');
+      task.className = 'session-task';
+      task.textContent = session.task || 'Untitled session';
+      card.appendChild(task);
+
+      const count = document.createElement('div');
+      count.className = 'session-count';
+      count.textContent = session.event_count + ' events';
+      card.appendChild(count);
+
+      card.addEventListener('click', () => viewPastSession(session.index));
+      list.appendChild(card);
+    }
+  } catch (err) {
+    const errEl = document.createElement('div');
+    errEl.className = 'history-empty';
+    errEl.textContent = 'Failed to load history';
+    list.appendChild(errEl);
+  }
+}
+
+async function viewPastSession(index) {
+  try {
+    const res = await fetch('/api/history/' + index);
+    const session = await res.json();
+
+    // Clear current timeline and logs
+    const container = document.getElementById('timeline-events');
+    container.textContent = '';
+    timelineEvents.length = 0;
+    window.terminalAPI.clearTerminal();
+    document.getElementById('event-count').textContent = '0';
+
+    // Populate with past session
+    if (session.timeline) {
+      for (const evt of session.timeline) {
+        const agent = evt.agent || 'superx';
+        const type = evt.type || 'info';
+        const msg = evt.message || '';
+        if (msg) addTimelineEvent(type, agent, msg, evt.useMono || false);
+      }
+    }
+    if (session.terminal) {
+      for (const line of session.terminal) {
+        window.terminalAPI.appendTerminalLine(line);
+      }
+    }
+
+    // Close drawer
+    document.getElementById('history-overlay').classList.remove('open');
+
+    // Mark as viewing history
+    document.getElementById('status-badge').className = 'status-badge';
+    document.getElementById('status-badge').textContent = 'HISTORY';
+  } catch (err) {
+    console.error('Failed to load session:', err);
+  }
 }
 
 // === PLAN APPROVAL ===
