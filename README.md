@@ -96,8 +96,44 @@ superx/
 ## Requirements
 
 - Claude Code (latest)
-- `jq` (for state management)
-- `gh` CLI (for GitHub integration, optional)
+- `jq` (for state management): `brew install jq` (macOS) / `apt-get install jq` (Linux)
+- `gh` CLI (for GitHub integration, optional): `brew install gh`
+
+## Setup
+
+```bash
+# Clone
+git clone git@github.com:randomittin/superx.git
+cd superx
+
+# Add bin to PATH (add to your .zshrc / .bashrc for persistence)
+export PATH="$PATH:$(pwd)/bin"
+
+# Load as a Claude Code plugin
+claude --plugin-dir ./superx
+
+# Or use the launcher directly
+superx "build a dashboard with auth and real-time charts"
+```
+
+## Testing Locally
+
+```bash
+# Start superx in any project directory
+cd /path/to/your/project
+superx
+
+# Check state management works
+superx-state init
+superx-state status
+
+# Verify skill detection
+detect-skills | jq .
+
+# Test authenticity checker
+authenticity-check npm express
+authenticity-check github vercel/next.js
+```
 
 ## License
 

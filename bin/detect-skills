@@ -3,6 +3,23 @@
 # Outputs a JSON array of {name, description, path} objects.
 set -euo pipefail
 
+usage() {
+  cat <<'EOF'
+Usage: detect-skills [--help]
+
+Scans for installed Claude Code skills and plugins across three locations:
+  1. User-level skills (~/.claude/skills/)
+  2. Project-level skills (.claude/skills/)
+  3. Plugin skills (~/.claude/plugins/*/skills/)
+
+Outputs a JSON array of {name, description, path} objects to stdout.
+EOF
+}
+
+case "${1:-}" in
+  --help|-h) usage; exit 0 ;;
+esac
+
 skills=()
 
 scan_dir() {

@@ -32,6 +32,6 @@ For detailed guidance on specific topics:
 
 ## Full Specification
 
-For the complete design specification:
-- `docs/superpowers/specs/2026-04-06-superx-design.md`
-- `docs/conversation-context.md`
+For the complete design specification (paths relative to plugin root, use `${CLAUDE_SKILL_DIR}/../..` to resolve):
+- [Design spec](../../docs/superpowers/specs/2026-04-06-superx-design.md)
+- [Conversation context](../../docs/conversation-context.md)

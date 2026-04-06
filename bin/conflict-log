@@ -4,6 +4,14 @@ set -euo pipefail
 
 STATE_FILE="${SUPERX_STATE_FILE:-superx-state.json}"
 
+# Verify dependencies
+for cmd in jq superx-state; do
+  if ! command -v "$cmd" &>/dev/null; then
+    echo "Error: '$cmd' not found in PATH. Add superx/bin to your PATH." >&2
+    exit 1
+  fi
+done
+
 usage() {
   cat <<'EOF'
 Usage: conflict-log <command> [args]
