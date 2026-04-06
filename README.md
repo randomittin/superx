@@ -35,7 +35,7 @@ superx
 | 2 | Checkpoint | Runs autonomously, pauses at milestones (default) |
 | 3 | Full Auto | Runs until complete or blocked |
 
-Change with: `/superx:level <1|2|3>`
+Change with: `/superx:level <1|2|3>` or cycle with `/superx:level +` / `/superx:level -`
 
 ## Commands
 
@@ -53,6 +53,7 @@ Change with: `/superx:level <1|2|3>`
 | `superx` | Main orchestrator | Opus |
 | `architect` | Task decomposition, planning | Opus |
 | `coder` | Feature implementation | Opus |
+| `design` | UI/UX design, accessibility, design systems | Opus |
 | `test-runner` | Test writing and execution | Sonnet |
 | `lint-quality` | Lint and formatting checks | Haiku |
 | `docs-writer` | Documentation maintenance | Sonnet |
