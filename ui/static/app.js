@@ -14,13 +14,21 @@ const MAX_EVENTS = 100;
 
 // === INITIALIZATION ===
 
+// Pending image paths for prompt and plan areas
+const pendingImages = { prompt: [], plan: [] };
+
 document.addEventListener('DOMContentLoaded', () => {
   gameMap = new GameMap('map-canvas');
   connectSSE();
   setupPromptInput();
   setupPlanApproval();
+  setupImageAttach('attach-btn', 'attach-input', 'prompt-images', 'prompt');
+  setupImageAttach('plan-attach-btn', 'plan-attach-input', 'plan-images', 'plan');
+  setupContinueButton();
   setupTabs();
   setupHistory();
+  setupGitHub();
+  drawPixelIcons();
   restoreSession();
   renderWarRoom(null);
 });
@@ -32,6 +40,7 @@ async function restoreSession() {
     const res = await fetch('/api/session');
     const session = await res.json();
 
+    resetGrouping();
     // Restore timeline events
     if (session.timeline && session.timeline.length) {
       for (const evt of session.timeline) {
@@ -148,8 +157,17 @@ function connectSSE() {
     } catch (err) {}
   });
 
+  eventSource.addEventListener('prompt_refined', (e) => {
+    window._currentPhase = 'refining';
+    showPlanApproval(true, 'refining');
+    if (window._showLoading) window._showLoading(false);
+    document.getElementById('status-badge').className = 'status-badge';
+    document.getElementById('status-badge').textContent = 'PROMPT READY';
+  });
+
   eventSource.addEventListener('plan_ready', (e) => {
-    showPlanApproval(true);
+    window._currentPhase = 'planning';
+    showPlanApproval(true, 'planning');
     if (window._showLoading) window._showLoading(false);
     document.getElementById('status-badge').className = 'status-badge';
     document.getElementById('status-badge').textContent = 'PLAN READY';
@@ -206,27 +224,19 @@ function addFileTreeIcons(html) {
   return html;
 }
 
-function addTimelineEvent(type, agent, message, useMono, markdown) {
-  const event = {
-    type,
-    agent,
-    message,
-    useMono: useMono || false,
-    markdown: markdown || false,
-    time: new Date().toLocaleTimeString('en', { hour12: false, hour: '2-digit', minute: '2-digit', second: '2-digit' }),
-  };
+// Grouping state for consecutive same-agent events
+let _group = null; // { agent, el, count, hiddenEl, toggleEl }
 
-  timelineEvents.unshift(event);
-  if (timelineEvents.length > MAX_EVENTS) timelineEvents.pop();
+function resetGrouping() { _group = null; }
 
-  const container = document.getElementById('timeline-events');
+function _createEventEl(type, agent, message, useMono, markdown) {
+  const time = new Date().toLocaleTimeString('en', { hour12: false, hour: '2-digit', minute: '2-digit', second: '2-digit' });
+
   const el = document.createElement('div');
   el.className = 'event ' + type;
 
-  // Left column: avatar + time stacked
   const leftCol = document.createElement('div');
   leftCol.className = 'event-left';
-
   const sprite = window.SPRITES[agent];
   if (sprite) {
     const img = document.createElement('img');
@@ -241,45 +251,44 @@ function addTimelineEvent(type, agent, message, useMono, markdown) {
     dot.style.borderRadius = '2px';
     leftCol.appendChild(dot);
   }
-
-  const timeSpan = document.createElement('span');
-  timeSpan.className = 'time';
-  timeSpan.textContent = event.time;
-  leftCol.appendChild(timeSpan);
-
   el.appendChild(leftCol);
+  // Timestamp stored as data attribute, rendered on right side of message
+  el.dataset.time = time;
 
-  // Message — render as markdown if flagged or auto-detected
   const msgSpan = document.createElement('div');
-  const hasMd = event.markdown || (isMarkdown(message) && message.length > 80);
+  const hasMd = markdown || (isMarkdown(message) && message.length > 80);
 
   if (hasMd) {
     const html = renderMarkdown(message);
     if (html) {
       msgSpan.className = 'msg md';
-      // Wrap content in a container for max-height control
       const contentDiv = document.createElement('div');
       contentDiv.className = 'md-content';
       contentDiv.innerHTML = html;
       msgSpan.appendChild(contentDiv);
-      // Expand/collapse bar
       const expandBar = document.createElement('div');
       expandBar.className = 'expand-bar';
-      expandBar.textContent = '▼ click to expand plan';
+      expandBar.textContent = '▼ click to expand';
       msgSpan.appendChild(expandBar);
-      // Toggle on click anywhere in the event
+      // Only show expand bar if content overflows
+      requestAnimationFrame(() => {
+        if (contentDiv.scrollHeight <= contentDiv.clientHeight + 2) {
+          expandBar.style.display = 'none';
+          msgSpan.style.cursor = 'default';
+        }
+      });
       msgSpan.addEventListener('click', () => {
+        if (expandBar.style.display === 'none') return;
         const isExpanded = msgSpan.classList.toggle('expanded');
-        expandBar.textContent = isExpanded ? '▲ click to collapse' : '▼ click to expand plan';
+        expandBar.textContent = isExpanded ? '▲ click to collapse' : '▼ click to expand';
       });
     } else {
       msgSpan.className = 'msg';
       msgSpan.textContent = message;
     }
   } else {
-    msgSpan.className = 'msg' + (event.useMono ? ' mono' : '');
+    msgSpan.className = 'msg' + (useMono ? ' mono' : '');
     msgSpan.textContent = message;
-    // Make long text collapsible
     if (message.length > 100) {
       msgSpan.classList.add('collapsible');
       const hint = document.createElement('span');
@@ -294,15 +303,92 @@ function addTimelineEvent(type, agent, message, useMono, markdown) {
   }
   el.appendChild(msgSpan);
 
-  container.appendChild(el);
+  // Timestamp on the right
+  const timeEl = document.createElement('span');
+  timeEl.className = 'msg-time';
+  timeEl.textContent = time;
+  el.appendChild(timeEl);
+
+  return el;
+}
+
+function addTimelineEvent(type, agent, message, useMono, markdown) {
+  const event = {
+    type, agent, message,
+    useMono: useMono || false,
+    markdown: markdown || false,
+    time: new Date().toLocaleTimeString('en', { hour12: false, hour: '2-digit', minute: '2-digit', second: '2-digit' }),
+  };
+  timelineEvents.unshift(event);
+  if (timelineEvents.length > MAX_EVENTS) timelineEvents.pop();
+
+  const container = document.getElementById('timeline-events');
+  const el = _createEventEl(type, agent, message, useMono, markdown);
+
+  // Markdown events always break grouping (they're major events)
+  const isMajor = markdown || (isMarkdown(message) && message.length > 80);
+
+  if (!isMajor && _group && _group.agent === agent) {
+    // Continue current group — rolling window of 3 visible
+    _group.count++;
+    el.classList.add('grouped');
+
+    // All events go into the allEvents list
+    if (!_group.allEvents) _group.allEvents = [];
+    _group.allEvents.push(el);
+
+    // The visible area holds the latest 3
+    if (!_group.visibleEl) {
+      _group.visibleEl = document.createElement('div');
+      _group.visibleEl.className = 'group-visible';
+      _group.el.appendChild(_group.visibleEl);
+    }
+    _group.visibleEl.appendChild(el);
+
+    // If more than 3 visible, move oldest to hidden
+    while (_group.visibleEl.children.length > 3) {
+      const oldest = _group.visibleEl.firstChild;
+      if (!_group.hiddenEl) {
+        _group.hiddenEl = document.createElement('div');
+        _group.hiddenEl.className = 'group-hidden';
+        // Insert hidden container before visible
+        _group.el.insertBefore(_group.hiddenEl, _group.visibleEl);
+      }
+      _group.hiddenEl.appendChild(oldest);
+    }
+
+    // Update or create the "see all" toggle
+    if (_group.count > 3) {
+      if (!_group.toggleEl) {
+        const toggle = document.createElement('div');
+        toggle.className = 'group-toggle';
+        _group.toggleEl = toggle;
+        // Insert toggle before visible area
+        _group.el.insertBefore(toggle, _group.visibleEl);
+        const grp = _group;
+        toggle.addEventListener('click', () => {
+          const expanded = grp.hiddenEl.classList.toggle('expanded');
+          grp.toggleEl.textContent = expanded
+            ? '- collapse'
+            : '+ see all ' + grp.count + ' actions';
+        });
+      }
+      _group.toggleEl.textContent = '+ see all ' + _group.count + ' actions';
+    }
+  } else {
+    // Start new group
+    const groupEl = document.createElement('div');
+    groupEl.className = 'event-group';
+    groupEl.appendChild(el);
+    container.appendChild(groupEl);
+    _group = { agent, el: groupEl, count: 1, hiddenEl: null, toggleEl: null };
+  }
 
   while (container.children.length > MAX_EVENTS) {
     container.removeChild(container.firstChild);
   }
 
-  // Auto-scroll to bottom
   container.scrollTop = container.scrollHeight;
-
   document.getElementById('event-count').textContent = timelineEvents.length;
 }
 
@@ -401,19 +487,25 @@ function setupPromptInput() {
 
   async function sendPrompt() {
     const prompt = input.value.trim();
-    if (!prompt) return;
+    const images = pendingImages.prompt.slice();
+    if (!prompt && images.length === 0) return;
 
     input.value = '';
     input.style.height = 'auto';
     const shortPrompt = prompt.length > 80 ? prompt.substring(0, 80) + '...' : prompt;
-    addTimelineEvent('info', 'superx', 'Task: ' + shortPrompt, true);
+    const imgNote = images.length ? ' [' + images.length + ' img]' : '';
+    addTimelineEvent('info', 'superx', 'Task: ' + shortPrompt + imgNote, true);
     showLoading(true);
+
+    // Clear images
+    pendingImages.prompt = [];
+    updateImagePreview('prompt-images', 'prompt');
 
     try {
       const res = await fetch('/api/prompt', {
         method: 'POST',
         headers: { 'Content-Type': 'application/json' },
-        body: JSON.stringify({ prompt }),
+        body: JSON.stringify({ prompt, images }),
       });
       const data = await res.json();
       if (data.error) {
@@ -445,6 +537,7 @@ function setupPromptInput() {
       document.getElementById('timeline-events').textContent = '';
       document.getElementById('event-count').textContent = '0';
       timelineEvents.length = 0;
+      resetGrouping();
       window.terminalAPI.clearTerminal();
       document.getElementById('status-badge').className = 'status-badge';
       document.getElementById('status-badge').textContent = 'IDLE';
@@ -497,7 +590,7 @@ function setupHistory() {
 
 async function loadHistory() {
   const list = document.getElementById('history-list');
-  list.textContent = '';
+  list.innerHTML = '';
 
   try {
     const res = await fetch('/api/history');
@@ -505,41 +598,29 @@ async function loadHistory() {
     const sessions = data.sessions || [];
 
     if (sessions.length === 0) {
-      const empty = document.createElement('div');
-      empty.className = 'history-empty';
-      empty.textContent = 'No past sessions yet';
-      list.appendChild(empty);
+      list.innerHTML = '<div class="history-empty">No past sessions yet</div>';
       return;
     }
 
     for (const session of sessions) {
+      const ts = new Date(session.timestamp * 1000)
+        .toLocaleString('en', { month: 'short', day: 'numeric', hour: '2-digit', minute: '2-digit' });
+      const taskText = session.task || 'Untitled session';
+      const evtCount = session.event_count || 0;
+      const idx = session.index;
+
       const card = document.createElement('div');
       card.className = 'history-session';
-
-      const time = document.createElement('div');
-      time.className = 'session-time';
-      time.textContent = new Date(session.timestamp * 1000)
-        .toLocaleString('en', { month: 'short', day: 'numeric', hour: '2-digit', minute: '2-digit' });
-      card.appendChild(time);
-
-      const task = document.createElement('div');
-      task.className = 'session-task';
-      task.textContent = session.task || 'Untitled session';
-      card.appendChild(task);
-
-      const count = document.createElement('div');
-      count.className = 'session-count';
-      count.textContent = session.event_count + ' events';
-      card.appendChild(count);
-
-      card.addEventListener('click', () => viewPastSession(session.index));
+      card.dataset.index = idx;
+      card.innerHTML =
+        '<div class="session-time">' + ts + '</div>' +
+        '<div class="session-task">' + taskText.substring(0, 120) + '</div>' +
+        '<div class="session-count">' + evtCount + ' events</div>';
+      card.addEventListener('click', () => viewPastSession(idx));
       list.appendChild(card);
     }
   } catch (err) {
-    const errEl = document.createElement('div');
-    errEl.className = 'history-empty';
-    errEl.textContent = 'Failed to load history';
-    list.appendChild(errEl);
+    list.innerHTML = '<div class="history-empty">Failed to load history: ' + err.message + '</div>';
   }
 }
 
@@ -552,6 +633,7 @@ async function viewPastSession(index) {
     const container = document.getElementById('timeline-events');
     container.textContent = '';
     timelineEvents.length = 0;
+    resetGrouping();
     window.terminalAPI.clearTerminal();
     document.getElementById('event-count').textContent = '0';
 
@@ -583,9 +665,82 @@ async function viewPastSession(index) {
 
 // === PLAN APPROVAL ===
 
-function showPlanApproval(visible) {
+function showPlanApproval(visible, phase) {
   const el = document.getElementById('plan-approval');
   if (el) el.className = visible ? 'plan-approval visible' : 'plan-approval';
+  if (visible) {
+    const label = document.getElementById('plan-label');
+    const approveBtn = document.getElementById('btn-approve');
+    const feedback = document.getElementById('plan-feedback');
+    if (phase === 'refining') {
+      label.textContent = 'REFINED PROMPT — APPROVE OR EDIT';
+      approveBtn.textContent = 'APPROVE';
+      feedback.placeholder = 'Edit instructions for the refined prompt...';
+    } else {
+      label.textContent = 'PLAN READY — APPROVE OR REVISE';
+      approveBtn.textContent = 'APPROVE';
+      feedback.placeholder = 'Comments to revise the plan...';
+    }
+    detectAndShowOptions();
+  }
+}
+
+function detectAndShowOptions() {
+  // Look at the latest markdown timeline event to detect multiple-choice options
+  const lastMdEvent = timelineEvents.find(e => e.markdown || (e.message && e.message.length > 200));
+  if (!lastMdEvent) return;
+
+  const text = lastMdEvent.message || '';
+  // Match patterns: (A), (B), (C), (D) or **(A)**, **(B)** etc.
+  const optionRegex = /\*{0,2}\(([A-Z])\)\*{0,2}/g;
+  const matches = [];
+  const seen = new Set();
+  let result;
+  while ((result = optionRegex.exec(text)) !== null) {
+    if (!seen.has(result[1])) {
+      seen.add(result[1]);
+      // Extract short description after the option letter
+      const afterMatch = text.substring(result.index + result[0].length, result.index + result[0].length + 80);
+      const desc = afterMatch.replace(/^\s*[-:.]?\s*/, '').split(/\n/)[0].trim().substring(0, 50);
+      matches.push({ letter: result[1], desc: desc });
+    }
+  }
+
+  const container = document.getElementById('option-buttons');
+  const label = document.getElementById('plan-label');
+  container.textContent = '';
+
+  if (matches.length >= 2) {
+    label.textContent = 'CHOOSE AN OPTION OR TYPE RESPONSE';
+    for (const opt of matches) {
+      const btn = document.createElement('button');
+      btn.className = 'btn btn-option';
+      btn.textContent = opt.letter;
+      btn.title = opt.desc;
+      btn.addEventListener('click', () => sendOptionChoice(opt.letter));
+      container.appendChild(btn);
+    }
+  } else {
+    label.textContent = 'PLAN READY — APPROVE OR REVISE';
+  }
+}
+
+async function sendOptionChoice(letter) {
+  showPlanApproval(false);
+  const images = pendingImages.plan.slice();
+  pendingImages.plan = [];
+  updateImagePreview('plan-images', 'plan');
+  addTimelineEvent('success', 'superx', 'Selected option: ' + letter, true);
+  document.getElementById('option-buttons').textContent = '';
+  try {
+    await fetch('/api/revise', {
+      method: 'POST',
+      headers: { 'Content-Type': 'application/json' },
+      body: JSON.stringify({ feedback: letter, images }),
+    });
+  } catch (err) {
+    addTimelineEvent('error', 'superx', 'Failed to send choice');
+  }
 }
 
 function setupPlanApproval() {
@@ -595,6 +750,7 @@ function setupPlanApproval() {
 
   approveBtn.addEventListener('click', async () => {
     showPlanApproval(false);
+    document.getElementById('option-buttons').textContent = '';
     addTimelineEvent('success', 'superx', 'Plan approved — executing...');
     try {
       await fetch('/api/approve', { method: 'POST' });
@@ -605,20 +761,25 @@ function setupPlanApproval() {
 
   reviseBtn.addEventListener('click', async () => {
     const feedback = feedbackInput.value.trim();
-    if (!feedback) {
+    const images = pendingImages.plan.slice();
+    if (!feedback && images.length === 0) {
       feedbackInput.focus();
       feedbackInput.style.borderColor = 'var(--error)';
       setTimeout(() => { feedbackInput.style.borderColor = ''; }, 1500);
       return;
     }
     showPlanApproval(false);
-    addTimelineEvent('warning', 'superx', 'Revising plan: ' + feedback, true);
+    document.getElementById('option-buttons').textContent = '';
+    pendingImages.plan = [];
+    updateImagePreview('plan-images', 'plan');
+    const imgNote = images.length ? ' [' + images.length + ' img]' : '';
+    addTimelineEvent('warning', 'superx', 'Revising plan: ' + feedback + imgNote, true);
     feedbackInput.value = '';
     try {
       await fetch('/api/revise', {
         method: 'POST',
         headers: { 'Content-Type': 'application/json' },
-        body: JSON.stringify({ feedback }),
+        body: JSON.stringify({ feedback, images }),
       });
     } catch (err) {
       addTimelineEvent('error', 'superx', 'Failed to revise plan');
@@ -671,4 +832,150 @@ function setupTabs() {
       setTimeout(() => gameMap.resize(), 50);
     });
   }
+}
+
+// === IMAGE ATTACHMENTS ===
+
+function setupImageAttach(buttonId, inputId, previewId, key) {
+  const btn = document.getElementById(buttonId);
+  const input = document.getElementById(inputId);
+  if (!btn || !input) return;
+
+  btn.addEventListener('click', () => input.click());
+
+  input.addEventListener('change', () => {
+    for (const file of input.files) {
+      const reader = new FileReader();
+      reader.onload = async (e) => {
+        const dataUrl = e.target.result;
+        try {
+          const res = await fetch('/api/upload', {
+            method: 'POST',
+            headers: { 'Content-Type': 'application/json' },
+            body: JSON.stringify({ name: file.name, data: dataUrl }),
+          });
+          const data = await res.json();
+          if (data.path) {
+            pendingImages[key].push(data.path);
+            updateImagePreview(previewId, key, dataUrl);
+          }
+        } catch (err) {
+          console.error('Upload failed:', err);
+        }
+      };
+      reader.readAsDataURL(file);
+    }
+    input.value = '';
+  });
+}
+
+function updateImagePreview(previewId, key, newDataUrl) {
+  const container = document.getElementById(previewId);
+  if (!container) return;
+
+  // If called without newDataUrl, rebuild from scratch (after removal)
+  if (!newDataUrl) {
+    container.textContent = '';
+    return;
+  }
+
+  // Add new thumbnail
+  const thumb = document.createElement('div');
+  thumb.className = 'image-thumb';
+  const img = document.createElement('img');
+  img.src = newDataUrl;
+  thumb.appendChild(img);
+
+  const removeBtn = document.createElement('div');
+  removeBtn.className = 'remove-img';
+  removeBtn.textContent = 'x';
+  const idx = pendingImages[key].length - 1;
+  removeBtn.addEventListener('click', () => {
+    pendingImages[key].splice(idx, 1);
+    thumb.remove();
+  });
+  thumb.appendChild(removeBtn);
+  container.appendChild(thumb);
+}
+
+// === CONTINUE ON TERMINAL ===
+
+function setupContinueButton() {
+  const btn = document.getElementById('continue-btn');
+  if (!btn) return;
+
+  btn.addEventListener('click', async () => {
+    addTimelineEvent('info', 'superx', 'Opening terminal...', true);
+    try {
+      await fetch('/api/continue', { method: 'POST' });
+    } catch (err) {
+      addTimelineEvent('error', 'superx', 'Failed to open terminal');
+    }
+  });
+}
+
+// === PIXEL ART ICONS ===
+
+function drawPixelIcons() {
+  // Icons are now SVG/text — no canvas drawing needed
+}
+
+// === GITHUB REMOTE ===
+
+function setupGitHub() {
+  const btn = document.getElementById('github-btn');
+  const modal = document.getElementById('github-modal');
+  const closeBtn = document.getElementById('github-modal-close');
+  const saveBtn = document.getElementById('github-save');
+  const urlInput = document.getElementById('github-url');
+  const status = document.getElementById('github-status');
+
+  if (!btn || !modal) return;
+
+  btn.addEventListener('click', () => modal.classList.add('open'));
+  closeBtn.addEventListener('click', () => modal.classList.remove('open'));
+  modal.addEventListener('click', (e) => {
+    if (e.target === modal) modal.classList.remove('open');
+  });
+
+  saveBtn.addEventListener('click', async () => {
+    const url = urlInput.value.trim();
+    if (!url) {
+      status.textContent = 'Enter a GitHub repo URL';
+      status.style.color = 'var(--error)';
+      return;
+    }
+    status.textContent = 'Committing and pushing...';
+    status.style.color = 'var(--warning)';
+    saveBtn.disabled = true;
+
+    try {
+      const res = await fetch('/api/github', {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({ url }),
+      });
+      const data = await res.json();
+      if (data.error) {
+        status.textContent = data.error;
+        status.style.color = 'var(--error)';
+      } else if (data.status === 'pushed') {
+        status.textContent = 'Pushed successfully!';
+        status.style.color = 'var(--success)';
+        addTimelineEvent('success', 'superx', 'Code pushed to ' + url);
+        setTimeout(() => modal.classList.remove('open'), 1500);
+      } else {
+        status.textContent = data.error || data.steps.join(' | ');
+        status.style.color = 'var(--error)';
+      }
+    } catch (err) {
+      status.textContent = 'Network error';
+      status.style.color = 'var(--error)';
+    }
+    saveBtn.disabled = false;
+  });
+
+  urlInput.addEventListener('keydown', (e) => {
+    if (e.key === 'Enter') saveBtn.click();
+  });
 }

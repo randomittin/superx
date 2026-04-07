@@ -1,0 +1,38 @@
+{
+  "eval_id": 3,
+  "eval_name": "skill-gap-detection",
+  "run_type": "without_skill",
+  "expectations": [
+    {
+      "text": "Output identifies 4+ distinct domains from the prompt (frontend, design, SEO, i18n, social/OG)",
+      "passed": false,
+      "evidence": "The output does not have an explicit domain identification section. It implicitly covers multiple areas (SEO, i18n, OG images, animations, frontend) through its implementation sections, but it never identifies or names distinct domains as an analysis step. The domains are addressed as implementation topics (sections 2-7) rather than being identified as separate skill domains requiring different expertise."
+    },
+    {
+      "text": "Output maps identified domains to specific installed skills (seo:*, design-for-ai:*, etc.)",
+      "passed": false,
+      "evidence": "The output never references any installed skills such as 'seo:*', 'design-for-ai:*', or any other skill names. It provides a monolithic implementation guide using Next.js without any mention of skill detection, skill matching, or skill-based orchestration. There is no concept of skills anywhere in the output."
+    },
+    {
+      "text": "Output identifies at least one skill gap where no installed skill covers the need",
+      "passed": false,
+      "evidence": "The output contains no gap analysis whatsoever. It presents a complete implementation plan as if all capabilities are available through general knowledge. There is no mention of missing skills, gaps in coverage, or areas where additional tools/packages would be needed."
+    },
+    {
+      "text": "Output mentions validating publisher authenticity or trust score for recommended packages",
+      "passed": false,
+      "evidence": "The output never mentions publisher authenticity, trust scores, package validation, or any security/trust assessment for dependencies or tools. The only external references are to validation tools (Twitter Card Validator, LinkedIn Post Inspector, etc.) for testing OG previews, with no trust/authenticity evaluation."
+    },
+    {
+      "text": "Output assigns a design agent for UI/UX work (not just coders for everything)",
+      "passed": false,
+      "evidence": "The output does not use an agent-based model at all. There is no mention of agents, agent types, or role specialization. The entire output reads as a single implementation guide authored by one generalist, covering everything from design decisions to SEO configuration to animation code. No design agent is assigned or even conceptualized."
+    },
+    {
+      "text": "Output decomposes into sub-projects that reflect the multi-domain nature (not a monolithic approach)",
+      "passed": false,
+      "evidence": "The output is structured as a single monolithic implementation guide with numbered sections (File Structure, i18n Architecture, SEO Meta Tags, OG Image Strategy, Animations, Hreflang, Sitemap, Landing Page Assembly, Validation Checklist, Performance). While it covers multiple topics, it is presented as one linear implementation plan without decomposition into independent sub-projects, parallel work streams, or domain-specific deliverables with dependencies."
+    }
+  ],
+  "overall_pass_rate": 0.0
+}

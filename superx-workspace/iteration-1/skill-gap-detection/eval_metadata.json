@@ -1,0 +1,37 @@
+{
+  "eval_id": 3,
+  "eval_name": "skill-gap-detection",
+  "prompt": "Build me a marketing landing page with great SEO, nice animations, and make sure the OG image previews look good on Twitter and LinkedIn. Oh and I need hreflang tags because we're launching in 3 languages.",
+  "assertions": [
+    {
+      "id": "domain_identification",
+      "text": "Output identifies 4+ distinct domains from the prompt (frontend, design, SEO, i18n, social/OG)",
+      "type": "content_check"
+    },
+    {
+      "id": "skill_matching",
+      "text": "Output maps identified domains to specific installed skills (seo:*, design-for-ai:*, etc.)",
+      "type": "content_check"
+    },
+    {
+      "id": "gap_detection",
+      "text": "Output identifies at least one skill gap where no installed skill covers the need",
+      "type": "content_check"
+    },
+    {
+      "id": "authenticity_check",
+      "text": "Output mentions validating publisher authenticity or trust score for recommended packages",
+      "type": "content_check"
+    },
+    {
+      "id": "design_agent",
+      "text": "Output assigns a design agent for UI/UX work (not just coders for everything)",
+      "type": "content_check"
+    },
+    {
+      "id": "multi_domain_decomposition",
+      "text": "Output decomposes into sub-projects that reflect the multi-domain nature (not a monolithic approach)",
+      "type": "content_check"
+    }
+  ]
+}

@@ -1,0 +1,38 @@
+{
+  "eval_id": 1,
+  "eval_name": "multi-step-feature-build",
+  "run_type": "with_skill",
+  "expectations": [
+    {
+      "text": "Output includes a clear decomposition into 3+ sub-projects with dependency ordering",
+      "passed": true,
+      "evidence": "Phase 2a lists 8 sub-projects (project-setup, database, auth, todos-api, testing, lint-quality, docs, review) with explicit dependency ordering, e.g. 'auth (depends on: database)', 'todos-api (depends on: auth, database)', and a full dependency_graph in the state JSON."
+    },
+    {
+      "text": "Output identifies which sub-projects can run in parallel vs sequential",
+      "passed": true,
+      "evidence": "Phase 2b 'Parallel Execution Strategy' explicitly defines 5 waves: 'Wave 1 (parallel): project-setup, database', 'Wave 2 (sequential): auth (needs database)', 'Wave 3 (sequential): todos-api (needs auth + database)', 'Wave 4 (parallel): testing, lint-quality', 'Wave 5 (parallel): docs, review'."
+    },
+    {
+      "text": "Output assigns specific agent types (coder, test-runner, lint-quality, reviewer) to sub-projects",
+      "passed": true,
+      "evidence": "Phase 3 assigns agents with explicit types: 'Agent 1: Coder (project-setup)', 'Agent 2: Coder (database)', 'Agent 5: Test Runner (testing)', 'Agent 6: Lint Quality (lint-quality)', 'Agent 8: Reviewer (review)'. The superx-state.json also records agent_type for each: 'coder', 'test-runner', 'lint-quality', 'docs-writer', 'reviewer'."
+    },
+    {
+      "text": "Output explicitly mentions running quality gates (tests, lint, review) before completion",
+      "passed": true,
+      "evidence": "Phase 4 'Quality Gate Checks' runs 5 explicit gates before declaring complete: Gate 1 (Tests Pass: '~20 passed'), Gate 2 (Lint Clean: '0 errors, 0 warnings'), Gate 3 (Conflict Reflection), Gate 4 (Code Review: 'APPROVE'), Gate 5 (No Dirty State). Summary states 'ALL GATES PASS -- ready for git push'."
+    },
+    {
+      "text": "Output includes state updates to superx-state.json or equivalent progress tracking",
+      "passed": true,
+      "evidence": "Phase 5 includes a complete superx-state.json with plan status tracking (all sub_projects with 'status: complete'), agent_history with timestamps, quality_gates object (tests_passing: true, lint_clean: true, etc.), and a communication_log tracking progress messages like '2 of 8 complete', '4 of 8 complete', 'All done. 8 sub-projects complete'."
+    },
+    {
+      "text": "Output addresses auth security (password hashing, JWT, protected routes) not just CRUD",
+      "passed": true,
+      "evidence": "Auth security is addressed in detail: bcrypt hashing with 12 salt rounds in src/utils/password.js, JWT sign/verify in src/utils/token.js, authenticate middleware that verifies Bearer tokens and attaches req.user, all todo routes protected via 'router.use(authenticate)', review checklist includes 'No hardcoded secrets', 'Passwords never returned in API responses', 'SQL injection prevented (parameterized queries)', and same 'Invalid credentials' error for both wrong email and wrong password to prevent user enumeration."
+    }
+  ],
+  "overall_pass_rate": 1.0
+}

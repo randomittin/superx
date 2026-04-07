@@ -1,11 +1,13 @@
 #!/usr/bin/env python3
 """superx pixel art dashboard — local web server with SSE and process management."""
 
+import base64
 import json
 import os
 import queue
 import subprocess
 import sys
+import tempfile
 import threading
 import time
 from http.server import HTTPServer, SimpleHTTPRequestHandler
@@ -16,6 +18,8 @@ PORT = int(os.environ.get("SUPERX_PORT", 8080))
 STATIC_DIR = Path(__file__).parent / "static"
 STATE_FILE = Path(os.environ.get("SUPERX_STATE_FILE", "superx-state.json"))
 PLUGIN_DIR = Path(__file__).parent.parent
+UPLOAD_DIR = Path(tempfile.gettempdir()) / "superx-uploads"
+UPLOAD_DIR.mkdir(exist_ok=True)
 
 # Shared state
 event_queues: list[queue.Queue] = []
@@ -24,6 +28,12 @@ terminal_lines: list[str] = []
 terminal_lock = threading.Lock()
 MAX_TERMINAL_LINES = 500
 pending_prompts: dict[int, str] = {}  # stores original prompt awaiting approval
+# Phase tracking: idle → refining → planning → executing
+current_phase = "idle"
+original_prompt_text = ""
+refined_prompt_text = ""
+prompt_images_list: list[str] = []
+last_response_text = ""  # latest full text from claude (set at end of streaming)
 timeline_events: list[dict] = []  # persisted timeline events
 MAX_TIMELINE_EVENTS = 200
 SESSION_FILE = Path("superx-session.json")
@@ -168,9 +178,29 @@ def stream_claude_output(proc: subprocess.Popen):
 
     Stream-json lines are JSON objects. We extract meaningful content
     and push it to both the terminal (formatted) and timeline (events).
+
+    Claude's conversational text is shown in the timeline as superx speaking,
+    not just tool actions. Text is flushed to timeline when Claude transitions
+    from speaking to using a tool, or at the end of a turn.
     """
     last_text = ""
-    all_texts = []  # accumulate all assistant text blocks across messages
+    current_turn_text = ""  # full text of the current assistant turn
+    flushed_text = ""  # what we already pushed to timeline
+    last_seen_text = ""  # survives turn resets — the latest text from any turn
+
+    def flush_text_to_timeline():
+        """Push accumulated assistant text to the timeline if it's new."""
+        nonlocal flushed_text
+        text = current_turn_text.strip()
+        if text and text != flushed_text and len(text) > 20:
+            is_long = len(text) > 100 or "\n" in text
+            add_timeline_event({
+                "agent": "superx",
+                "type": "info",
+                "message": text,
+                "markdown": is_long,
+            })
+            flushed_text = text
 
     for raw_line in iter(proc.stdout.readline, ""):
         raw_line = raw_line.rstrip("\n")
@@ -181,7 +211,6 @@ def stream_claude_output(proc: subprocess.Popen):
         try:
             obj = json.loads(raw_line)
         except (json.JSONDecodeError, TypeError):
-            # Plain text fallback
             _terminal_append(raw_line)
             continue
 
@@ -206,15 +235,15 @@ def stream_claude_output(proc: subprocess.Popen):
                     if text and text != last_text:
                         new_part = text[len(last_text):] if text.startswith(last_text) else text
                         last_text = text
-                        # Keep the latest full text as the authoritative version
-                        if all_texts and all_texts[-1] != text:
-                            all_texts[-1] = text
-                        elif not all_texts:
-                            all_texts.append(text)
+                        current_turn_text = text
+                        last_seen_text = text  # always keep latest across turns
                         if new_part.strip():
                             _terminal_append(new_part.strip())
 
                 elif block_type == "tool_use":
+                    # Flush any pending text to timeline before the tool action
+                    flush_text_to_timeline()
+
                     tool_name = block.get("name", "unknown")
                     tool_input = block.get("input", {})
                     # Format tool use nicely
@@ -278,27 +307,37 @@ def stream_claude_output(proc: subprocess.Popen):
             result_text = obj.get("result", "")
             if isinstance(result_text, str) and result_text.strip():
                 short = result_text.strip()[:150]
-                _terminal_append(f"  → {short}")
-
-        # Capture the authoritative final result (contains full text)
-        if msg_type == "result" and obj.get("subtype") == "success":
-            result_text = obj.get("result", "")
-            if result_text and result_text.strip():
-                add_timeline_event({
-                    "agent": "superx",
-                    "type": "info",
-                    "message": result_text.strip(),
-                    "markdown": True,
-                })
+                _terminal_append(f"  -> {short}")
 
         # Reset text tracking between assistant turns
         if msg_type != "assistant" and last_text:
             last_text = ""
 
     proc.wait()
-    # If there's a pending prompt, this was a plan phase — show approval UI
-    if pending_prompts.get(0):
+
+    global last_response_text
+
+    # Flush the final text block to timeline
+    # Use last_seen_text (survives turn resets) if current_turn_text was cleared
+    final_text = current_turn_text.strip() or last_seen_text.strip()
+    if final_text and final_text != flushed_text and len(final_text) > 20:
+        is_long = len(final_text) > 100 or "\n" in final_text
+        add_timeline_event({
+            "agent": "superx",
+            "type": "info",
+            "message": final_text,
+            "markdown": is_long,
+        })
+
+    # Store the last response for phase transitions
+    last_response_text = last_seen_text.strip()
+
+    # Phase-aware completion events
+    if current_phase == "refining":
+        push_event("prompt_refined", {"status": "awaiting_approval"})
+    elif current_phase == "planning":
         push_event("plan_ready", {"status": "awaiting_approval"})
+
     push_event("agent_status", {"agent": "superx", "status": "idle"})
     push_event("process", {"status": "exited", "code": proc.returncode})
 
@@ -320,15 +359,89 @@ def _terminal_append(line: str):
         threading.Thread(target=save_session, daemon=True).start()
 
 
-def start_claude(prompt: str):
-    """Spawn claude with superx plugin and all permissions."""
+def _build_image_note(images: list) -> str:
+    """Build prompt suffix for attached images."""
+    if not images:
+        return ""
+    note = "\n\nAttached images (use Read tool to view):\n"
+    for img in images:
+        note += f"- {img}\n"
+    return note
+
+
+def _spawn_claude(prompt: str, images: list = None):
+    """Low-level: spawn claude process with given prompt and optional images."""
     global claude_process
+    prompt += _build_image_note(images or [])
+
+    cmd = [
+        "claude",
+        "--dangerously-skip-permissions",
+        "-p", prompt,
+        "--plugin-dir", str(PLUGIN_DIR),
+        "--output-format", "stream-json",
+        "--verbose",
+    ]
+
+    claude_process = subprocess.Popen(
+        cmd, stdout=subprocess.PIPE, stderr=subprocess.STDOUT,
+        text=True, cwd=os.getcwd(),
+    )
+    t = threading.Thread(target=stream_claude_output, args=(claude_process,), daemon=True)
+    t.start()
+
+
+def start_claude(prompt: str, images: list = None):
+    """Start with prompt refinement phase."""
+    global current_phase, original_prompt_text, prompt_images_list
 
     if claude_process and claude_process.poll() is None:
         push_event("error", "Claude is already running. Wait for it to finish.")
         return
 
-    # Phase 1: Plan only — comprehensive ultraplan-style planning
+    current_phase = "refining"
+    original_prompt_text = prompt
+    prompt_images_list = images or []
+
+    refine_prompt = (
+        "You are a senior prompt engineer. Improve the following user prompt that "
+        "will be given to a CTO-level coding assistant. Make it:\n\n"
+        "1. CLEARER — remove ambiguity, be specific about what to build\n"
+        "2. STRUCTURED — use markdown with sections, bullet points\n"
+        "3. COMPLETE — fill reasonable gaps (tech stack preferences, deployment, testing)\n"
+        "4. ACTIONABLE — explicit requirements with acceptance criteria\n"
+        "5. CONCISE — no fluff, every sentence adds value\n\n"
+        "Return ONLY the improved prompt. No preamble like 'Here is the improved prompt'. "
+        "No explanations. Just the refined prompt in clean markdown.\n\n"
+        "---\n"
+        "Original prompt:\n" + prompt
+    )
+
+    push_event("process", {"status": "starting", "prompt": prompt})
+    push_event("agent_status", {"agent": "superx", "status": "running"})
+
+    with terminal_lock:
+        terminal_lines.clear()
+        terminal_lines.append(f"$ superx: {prompt}")
+        if images:
+            terminal_lines.append(f"  [{len(images)} image(s) attached]")
+        terminal_lines.append("")
+        terminal_lines.append("=== REFINING PROMPT ===")
+        terminal_lines.append("")
+
+    _spawn_claude(refine_prompt, images)
+
+
+def start_planning(prompt: str, images: list = None):
+    """Run the planning phase with the refined prompt."""
+    global current_phase
+
+    if claude_process and claude_process.poll() is None:
+        push_event("error", "Claude is already running.")
+        return
+
+    current_phase = "planning"
+
     plan_prompt = (
         "IMPORTANT: Present a comprehensive execution plan before writing any code. "
         "Think like a CTO planning a production system. Your plan MUST cover:\n\n"
@@ -352,42 +465,19 @@ def start_claude(prompt: str):
         "User task: " + prompt
     )
 
-    # Store the original prompt for execution after approval
-    pending_prompts[0] = prompt
-
-    cmd = [
-        "claude",
-        "--dangerously-skip-permissions",
-        "-p", plan_prompt,
-        "--plugin-dir", str(PLUGIN_DIR),
-        "--output-format", "stream-json",
-        "--verbose",
-    ]
-
-    push_event("process", {"status": "starting", "prompt": prompt})
+    push_event("process", {"status": "starting", "prompt": "Planning..."})
     push_event("agent_status", {"agent": "superx", "status": "running"})
 
     with terminal_lock:
-        terminal_lines.clear()
-        terminal_lines.append(f"$ superx: {prompt}")
+        terminal_lines.append("")
+        terminal_lines.append("=== PLANNING ===")
         terminal_lines.append("")
 
-    claude_process = subprocess.Popen(
-        cmd,
-        stdout=subprocess.PIPE,
-        stderr=subprocess.STDOUT,
-        text=True,
-        cwd=os.getcwd(),
-    )
-
-    t = threading.Thread(target=stream_claude_output, args=(claude_process,), daemon=True)
-    t.start()
+    _spawn_claude(plan_prompt, images)
 
 
 def execute_approved_plan(original_prompt: str):
     """Execute after user approves the plan."""
-    global claude_process
-
     if claude_process and claude_process.poll() is None:
         push_event("error", "Claude is already running.")
         return
@@ -397,15 +487,6 @@ def execute_approved_plan(original_prompt: str):
         "The original task was: " + original_prompt
     )
 
-    cmd = [
-        "claude",
-        "--dangerously-skip-permissions",
-        "-p", exec_prompt,
-        "--plugin-dir", str(PLUGIN_DIR),
-        "--output-format", "stream-json",
-        "--verbose",
-    ]
-
     push_event("process", {"status": "starting", "prompt": "Executing approved plan..."})
 
     with terminal_lock:
@@ -413,18 +494,54 @@ def execute_approved_plan(original_prompt: str):
         terminal_lines.append("=== PLAN APPROVED — EXECUTING ===")
         terminal_lines.append("")
 
-    claude_process = subprocess.Popen(
-        cmd, stdout=subprocess.PIPE, stderr=subprocess.STDOUT,
-        text=True, cwd=os.getcwd(),
+    _spawn_claude(exec_prompt)
+
+
+def revise_refinement(original_prompt: str, feedback: str, images: list = None):
+    """Re-run prompt refinement with user feedback."""
+    global current_phase
+
+    if claude_process and claude_process.poll() is None:
+        push_event("error", "Claude is already running.")
+        return
+
+    current_phase = "refining"
+
+    # Include the previous refined version so Claude can update it
+    prev_refined = last_response_text or original_prompt
+    revise_prompt = (
+        "You previously refined a user prompt into this version:\n\n"
+        "---BEGIN REFINED PROMPT---\n"
+        f"{prev_refined}\n"
+        "---END REFINED PROMPT---\n\n"
+        "The user reviewed it and wants these changes:\n\n"
+        f'"{feedback}"\n\n'
+        "Return ONLY the updated refined prompt with the user's changes applied. "
+        "No preamble, no explanations — just the prompt."
     )
-    t = threading.Thread(target=stream_claude_output, args=(claude_process,), daemon=True)
-    t.start()
+
+    add_timeline_event({
+        "agent": "superx",
+        "type": "warning",
+        "message": f"Revising prompt: {feedback}",
+        "useMono": True,
+    })
+
+    push_event("process", {"status": "starting", "prompt": "Revising prompt..."})
+    push_event("agent_status", {"agent": "superx", "status": "running"})
+
+    with terminal_lock:
+        terminal_lines.append("")
+        terminal_lines.append(f"=== REVISING PROMPT: {feedback} ===")
+        terminal_lines.append("")
+
+    _spawn_claude(revise_prompt, images)
 
 
-def revise_plan(original_prompt: str, feedback: str):
+def revise_plan(original_prompt: str, feedback: str, images: list = None):
     """Re-run planning with user feedback."""
-    global claude_process
-
+    global current_phase
+    current_phase = "planning"
     if claude_process and claude_process.poll() is None:
         push_event("error", "Claude is already running.")
         return
@@ -440,28 +557,24 @@ def revise_plan(original_prompt: str, feedback: str):
 
     pending_prompts[0] = original_prompt
 
-    cmd = [
-        "claude",
-        "--dangerously-skip-permissions",
-        "-p", revise_prompt,
-        "--plugin-dir", str(PLUGIN_DIR),
-        "--output-format", "stream-json",
-        "--verbose",
-    ]
-
     push_event("process", {"status": "starting", "prompt": "Revising plan..."})
 
     with terminal_lock:
         terminal_lines.append("")
         terminal_lines.append("=== REVISING PLAN ===")
+        if images:
+            terminal_lines.append(f"  [{len(images)} image(s) attached]")
         terminal_lines.append("")
 
-    claude_process = subprocess.Popen(
-        cmd, stdout=subprocess.PIPE, stderr=subprocess.STDOUT,
-        text=True, cwd=os.getcwd(),
-    )
-    t = threading.Thread(target=stream_claude_output, args=(claude_process,), daemon=True)
-    t.start()
+    _spawn_claude(revise_prompt, images)
+
+
+def continue_on_terminal():
+    """Open the system terminal with claude --continue."""
+    cwd = os.getcwd()
+    # macOS: open Terminal.app with claude --continue
+    script = f'tell application "Terminal" to do script "cd {cwd} && claude --continue"'
+    subprocess.Popen(["osascript", "-e", script])
 
 
 def init_state_if_needed():
@@ -519,6 +632,12 @@ class DashboardHandler(SimpleHTTPRequestHandler):
             self.handle_revise()
         elif self.path == "/api/stop":
             self.handle_stop()
+        elif self.path == "/api/upload":
+            self.handle_upload()
+        elif self.path == "/api/continue":
+            self.handle_continue()
+        elif self.path == "/api/github":
+            self.handle_github()
         else:
             self.send_error(404)
 
@@ -593,10 +712,11 @@ class DashboardHandler(SimpleHTTPRequestHandler):
         try:
             data = json.loads(body)
             prompt = data.get("prompt", "").strip()
+            images = data.get("images", [])
             if not prompt:
                 self.send_json(400, {"error": "Empty prompt"})
                 return
-            start_claude(prompt)
+            start_claude(prompt, images)
             self.send_json(200, {"status": "started", "prompt": prompt})
         except json.JSONDecodeError:
             self.send_json(400, {"error": "Invalid JSON"})
@@ -638,33 +758,119 @@ class DashboardHandler(SimpleHTTPRequestHandler):
             self.send_json(500, {"error": "Corrupt history"})
 
     def handle_approve(self):
-        """User approved the plan — execute it."""
-        original = pending_prompts.get(0, "")
-        if not original:
-            self.send_json(400, {"error": "No pending plan to approve"})
-            return
-        execute_approved_plan(original)
-        pending_prompts.pop(0, None)
-        self.send_json(200, {"status": "executing"})
+        """Phase-aware approve: refined prompt → plan, plan → execute."""
+        global current_phase, refined_prompt_text
+        if current_phase == "refining":
+            # Approved the refined prompt — move to planning
+            refined_prompt_text = last_response_text or original_prompt_text
+            add_timeline_event({
+                "agent": "superx", "type": "success",
+                "message": "Refined prompt approved"
+            })
+            start_planning(refined_prompt_text, prompt_images_list)
+            self.send_json(200, {"status": "planning"})
+        elif current_phase == "planning":
+            # Approved the plan — execute
+            prompt = refined_prompt_text or original_prompt_text
+            execute_approved_plan(prompt)
+            self.send_json(200, {"status": "executing"})
+        else:
+            self.send_json(400, {"error": "Nothing to approve"})
 
     def handle_revise(self):
-        """User wants to revise the plan."""
+        """Phase-aware revise: re-refine prompt or revise plan."""
         length = int(self.headers.get("Content-Length", 0))
         body = self.rfile.read(length).decode()
         try:
             data = json.loads(body)
             feedback = data.get("feedback", "").strip()
+            images = data.get("images", [])
             if not feedback:
-                self.send_json(400, {"error": "Provide feedback for revision"})
+                self.send_json(400, {"error": "Provide feedback"})
                 return
-            original = pending_prompts.get(0, "")
-            if not original:
-                self.send_json(400, {"error": "No pending plan to revise"})
-                return
-            revise_plan(original, feedback)
-            self.send_json(200, {"status": "revising"})
+            if current_phase == "refining":
+                # Re-refine with feedback
+                revise_refinement(original_prompt_text, feedback, images)
+                self.send_json(200, {"status": "re-refining"})
+            elif current_phase == "planning":
+                prompt = refined_prompt_text or original_prompt_text
+                revise_plan(prompt, feedback, images)
+                self.send_json(200, {"status": "revising"})
+            else:
+                self.send_json(400, {"error": "Nothing to revise"})
         except json.JSONDecodeError:
             self.send_json(400, {"error": "Invalid JSON"})
+
+    def handle_github(self):
+        """Set GitHub remote and commit+push."""
+        length = int(self.headers.get("Content-Length", 0))
+        body = self.rfile.read(length).decode()
+        try:
+            data = json.loads(body)
+            url = data.get("url", "").strip()
+            if not url:
+                self.send_json(400, {"error": "No URL provided"})
+                return
+
+            cwd = os.getcwd()
+            steps = []
+
+            # Init git if needed
+            if not os.path.isdir(os.path.join(cwd, ".git")):
+                r = subprocess.run(["git", "init"], capture_output=True, text=True, cwd=cwd)
+                steps.append(f"git init: {r.returncode}")
+
+            # Set remote
+            subprocess.run(["git", "remote", "remove", "origin"],
+                           capture_output=True, text=True, cwd=cwd)
+            r = subprocess.run(["git", "remote", "add", "origin", url],
+                               capture_output=True, text=True, cwd=cwd)
+            steps.append(f"remote set: {url}")
+
+            # Stage all, commit, push
+            subprocess.run(["git", "add", "-A"], capture_output=True, text=True, cwd=cwd)
+            r = subprocess.run(["git", "commit", "-m", "superx: commit via dashboard"],
+                               capture_output=True, text=True, cwd=cwd)
+            steps.append(f"commit: {r.stdout.strip()[:80] or r.stderr.strip()[:80]}")
+
+            r = subprocess.run(["git", "push", "-u", "origin", "HEAD"],
+                               capture_output=True, text=True, cwd=cwd)
+            if r.returncode == 0:
+                steps.append("push: success")
+                self.send_json(200, {"status": "pushed", "steps": steps})
+            else:
+                steps.append(f"push failed: {r.stderr.strip()[:120]}")
+                self.send_json(200, {"status": "push_failed", "steps": steps,
+                                     "error": r.stderr.strip()[:200]})
+        except Exception as e:
+            self.send_json(500, {"error": str(e)})
+
+    def handle_upload(self):
+        """Accept image upload as base64 JSON, save to temp dir."""
+        length = int(self.headers.get("Content-Length", 0))
+        body = self.rfile.read(length).decode()
+        try:
+            data = json.loads(body)
+            name = data.get("name", "image.png")
+            b64 = data.get("data", "")
+            if not b64:
+                self.send_json(400, {"error": "No image data"})
+                return
+            if "," in b64:
+                b64 = b64.split(",", 1)[1]
+            img_bytes = base64.b64decode(b64)
+            safe_name = "".join(c for c in name if c.isalnum() or c in "._-")
+            fname = f"{int(time.time())}_{safe_name}"
+            fpath = UPLOAD_DIR / fname
+            fpath.write_bytes(img_bytes)
+            self.send_json(200, {"path": str(fpath)})
+        except Exception as e:
+            self.send_json(400, {"error": str(e)})
+
+    def handle_continue(self):
+        """Open system terminal with claude --continue."""
+        continue_on_terminal()
+        self.send_json(200, {"status": "opening_terminal"})
 
     def handle_stop(self):
         """Stop the running claude process, archive, and clear the session."""

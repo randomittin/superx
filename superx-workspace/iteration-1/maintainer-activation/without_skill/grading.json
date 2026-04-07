@@ -1,0 +1,43 @@
+{
+  "eval_id": 2,
+  "eval_name": "maintainer-activation",
+  "run_type": "without_skill",
+  "expectations": [
+    {
+      "text": "Output walks through a structured activation/setup flow before diving into issues",
+      "passed": false,
+      "evidence": "Step 1 'Pre-flight Checks and Setup' covers gh auth status, git remote, and codebase scanning, but this is a minimal pre-flight check, not a structured activation/setup wizard. There is no configuration of issue sources, monitoring frequency, notification channels, or enablement state. The output itself acknowledges this gap in the final section: 'No guided setup wizard -- I jumped straight into scanning. A framework like superx's /superx:maintain would first walk through source configuration, frequency, and notification preferences.'"
+    },
+    {
+      "text": "Each issue is classified by severity (critical/high/medium/low)",
+      "passed": true,
+      "evidence": "All 5 issues have explicit severity classifications: #12 = Critical, #18 = High, #23 = Low, #31 = Medium, #27 = Medium. Each includes reasoning for the classification."
+    },
+    {
+      "text": "Each issue is classified by fix confidence (high/medium/low) or equivalent",
+      "passed": true,
+      "evidence": "All 5 issues have explicit confidence classifications: #12 = High, #18 = Medium, #23 = High, #31 = Medium, #27 = Low. Each includes reasoning. The summary table also has a 'Confidence' column."
+    },
+    {
+      "text": "Issues are routed to different actions based on severity x confidence (not all treated the same)",
+      "passed": true,
+      "evidence": "Each issue has a distinct 'Route' combining severity x confidence: Critical x High = 'Alert user immediately, spawn hotfix agent, require human approval', High x Medium = 'Investigate auth code first, then write fix, create PR', Low x High = 'Auto-fix immediately, add to batch release queue', Medium x Medium = 'Investigate, if clear fix add to release queue, else escalate', Any x Low = 'Escalate to user with proposal, do not implement without approval'. Issue #27 (Low confidence) is explicitly not fixed at all -- just escalated."
+    },
+    {
+      "text": "Output describes spawning specialized agents for different fix types",
+      "passed": true,
+      "evidence": "Step 4 describes specific agent types per fix: #12 uses coder, test-runner, lint-quality, reviewer agents; #18 uses architect (investigation first), then coder, test-runner, lint-quality, reviewer; #23 uses only coder and lint-quality; #31 uses architect then coder, test-runner, lint-quality. The summary states '4 coder, 2 architect, 3 test-runner, 4 lint-quality, 2 reviewer (15 total)'."
+    },
+    {
+      "text": "Output includes natural-language status updates (not just technical logs)",
+      "passed": true,
+      "evidence": "Each fix section includes a quoted natural-language status update. Examples: 'Found the crash -- there's no guard when config.json is missing. Writing a fix that auto-generates a default config...' for #12, 'Root cause found: the password was being URL-decoded before hashing, which mangled special characters...' for #18, 'Safari issue traced to a bad fallback in the chart color palette...' for #31, and the escalation message for #27 with structured requirements questions."
+    },
+    {
+      "text": "Output mentions batching low-severity fixes into a patch release",
+      "passed": true,
+      "evidence": "Step 5 'Batch Release' explicitly describes batching: 'the remaining fixes (#23 and #31) are in the release queue. With 2 items queued: The batch release threshold is 3 items or oldest > 24 hours.' It then describes the full patch release process: merge into release/v0.2.1, run tests, bump version, generate changelog, create tag and GitHub release. The triage for #23 (Low x High) explicitly states 'Auto-fix immediately. Add to a batch release queue for the next patch version.'"
+    }
+  ],
+  "overall_pass_rate": 0.86
+}
