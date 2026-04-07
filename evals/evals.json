@@ -1,0 +1,26 @@
+{
+  "skill_name": "superx",
+  "evals": [
+    {
+      "id": 1,
+      "name": "multi-step-feature-build",
+      "prompt": "I need a simple REST API for a todo app with user auth. Use Express and SQLite. Should have signup, login, CRUD for todos, and each user can only see their own todos. Make sure there are tests and everything is linted.",
+      "expected_output": "superx should decompose this into sub-projects (auth, database, API routes, tests), spawn parallel agents where possible, produce working code with tests and lint passing, and enforce quality gates before any commit.",
+      "files": []
+    },
+    {
+      "id": 2,
+      "name": "maintainer-activation",
+      "prompt": "I've got this repo with a bunch of open GitHub issues piling up. Can you start maintaining it for me? Check what's open and handle what you can.",
+      "expected_output": "superx should recognize this as a maintainer mode request, run the /superx:maintain activation wizard (check gh auth, configure sources, set frequency), then execute the first maintain-check cycle to scan and triage open issues.",
+      "files": []
+    },
+    {
+      "id": 3,
+      "name": "skill-gap-detection",
+      "prompt": "Build me a marketing landing page with great SEO, nice animations, and make sure the OG image previews look good on Twitter and LinkedIn. Oh and I need hreflang tags because we're launching in 3 languages.",
+      "expected_output": "superx should detect multiple skill domains (frontend/design, SEO, i18n), match installed skills (seo:*, design-for-ai:*), identify any gaps, suggest skills to install if needed with authenticity checks, then decompose into sub-projects with a design agent for the UI and appropriate SEO skills.",
+      "files": []
+    }
+  ]
+}
