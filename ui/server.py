@@ -127,13 +127,23 @@ def load_session():
             pass
 
 
+_recent_event_hashes: set = set()
+
 def add_timeline_event(event: dict):
-    """Add a timeline event and persist."""
+    """Add a timeline event and persist. Deduplicates exact content."""
+    msg = event.get("message", "")
+    content_hash = hash(msg[:300]) if msg else 0
+    if content_hash in _recent_event_hashes and len(msg) > 30:
+        return  # skip duplicate
+    _recent_event_hashes.add(content_hash)
+    # Keep set bounded
+    if len(_recent_event_hashes) > 200:
+        _recent_event_hashes.clear()
+
     timeline_events.append(event)
     if len(timeline_events) > MAX_TIMELINE_EVENTS:
         timeline_events.pop(0)
     push_event("timeline", event)
-    # Save async to avoid blocking
     threading.Thread(target=save_session, daemon=True).start()
 
 
@@ -249,13 +259,20 @@ def stream_claude_output(proc: subprocess.Popen):
                     # Format tool use nicely
                     if tool_name == "Agent":
                         desc = tool_input.get("description", tool_input.get("prompt", "")[:60])
+                        agent_type = tool_input.get("subagent_type", "general")
                         _terminal_append(f"[Agent] {desc}")
                         add_timeline_event({
                             "agent": "superx",
                             "type": "info",
                             "message": f"Spawning agent: {desc}"
                         })
-                        push_event("agent_status", {"agent": "architect", "status": "running"})
+                        # Create a unique agent ID and push spawn event
+                        import hashlib
+                        agent_id = f"agent-{hashlib.md5(desc.encode()).hexdigest()[:6]}"
+                        short_name = desc[:20] if len(desc) > 20 else desc
+                        push_event("agent_spawn", {"id": agent_id, "name": short_name, "desc": desc, "type": agent_type})
+                        push_event("agent_status", {"agent": agent_id, "status": "running"})
+                        push_event("agent_status", {"agent": "superx", "status": "running"})
                     elif tool_name == "Bash":
                         cmd = tool_input.get("command", "")[:80]
                         _terminal_append(f"$ {cmd}")
@@ -331,6 +348,30 @@ def stream_claude_output(proc: subprocess.Popen):
 
     # Store the last response for phase transitions
     last_response_text = last_seen_text.strip()
+
+    # If planning phase, check if a plan .md file was written but only a summary shown
+    if current_phase == "planning" and last_response_text:
+        # If the response is just a summary (mentions "saved to" but plan not inline),
+        # try to read the actual plan file and show it
+        if "saved to" in last_response_text.lower() and len(last_response_text) < 2000:
+            import glob
+            plan_files = sorted(
+                glob.glob(os.path.join(os.getcwd(), "docs/superpowers/plans/*.md")),
+                key=os.path.getmtime, reverse=True
+            )
+            if plan_files:
+                try:
+                    plan_content = Path(plan_files[0]).read_text()
+                    if len(plan_content) > 100:
+                        add_timeline_event({
+                            "agent": "superx",
+                            "type": "info",
+                            "message": plan_content.strip(),
+                            "markdown": True,
+                        })
+                        last_response_text = plan_content.strip()
+                except Exception:
+                    pass
 
     # Phase-aware completion events
     if current_phase == "refining":
@@ -444,7 +485,16 @@ def start_planning(prompt: str, images: list = None):
 
     plan_prompt = (
         "IMPORTANT: Present a comprehensive execution plan before writing any code. "
-        "Think like a CTO planning a production system. Your plan MUST cover:\n\n"
+        "Think like a CTO planning a production system.\n\n"
+        "FIRST: Spawn parallel Agent subprocesses to research ALL independent aspects simultaneously. "
+        "For example, spawn separate agents to: analyze external repos, check APIs/docs, "
+        "review existing code patterns, research deployment options. Do NOT do research sequentially "
+        "when it can be parallelized.\n\n"
+        "CHECKPOINT: Save ALL research findings to .md files in docs/analysis/ directory. "
+        "For each external repo, API, codebase, or documentation source, create a separate .md file "
+        "(e.g., docs/analysis/repo-name.md, docs/analysis/api-name.md). "
+        "This avoids repeating research efforts in future runs.\n\n"
+        "Your plan MUST cover:\n\n"
         "1. ASSUMPTIONS — what you're assuming, what needs confirmation\n"
         "2. ARCHITECTURE — tech stack, system design, data flow\n"
         "3. INFRASTRUCTURE — hosting, CI/CD pipelines, deployment strategy, "
@@ -460,7 +510,11 @@ def start_planning(prompt: str, images: list = None):
         "10. WHAT'S NEEDED FROM USER — blockers, decisions, credentials, assets\n\n"
         "Use markdown with clear headers, tables, and code blocks for structure. "
         "Make reasonable assumptions and note them explicitly. "
-        "Do NOT ask clarifying questions. Do NOT start implementing. "
+        "Do NOT ask clarifying questions. Do NOT start implementing.\n\n"
+        "CRITICAL: You MUST present the FULL plan in your response text. "
+        "Do NOT just save it to a file and show a summary. "
+        "The user needs to see the complete plan in the chat to review and approve it. "
+        "You may ALSO save it to a file, but the full plan must appear in your response.\n\n"
         "End with exactly: ---PLAN READY---\n\n"
         "User task: " + prompt
     )
@@ -802,7 +856,7 @@ class DashboardHandler(SimpleHTTPRequestHandler):
             self.send_json(400, {"error": "Invalid JSON"})
 
     def handle_github(self):
-        """Set GitHub remote and commit+push."""
+        """Set GitHub remote and commit+push using gh CLI for auth."""
         length = int(self.headers.get("Content-Length", 0))
         body = self.rfile.read(length).decode()
         try:
@@ -815,31 +869,58 @@ class DashboardHandler(SimpleHTTPRequestHandler):
             cwd = os.getcwd()
             steps = []
 
+            # Extract owner/repo from URL
+            # Supports: https://github.com/user/repo, github.com/user/repo, user/repo
+            repo_slug = url.replace("https://github.com/", "").replace("http://github.com/", "")
+            repo_slug = repo_slug.replace("github.com/", "").rstrip("/").rstrip(".git")
+
             # Init git if needed
             if not os.path.isdir(os.path.join(cwd, ".git")):
-                r = subprocess.run(["git", "init"], capture_output=True, text=True, cwd=cwd)
-                steps.append(f"git init: {r.returncode}")
+                subprocess.run(["git", "init"], capture_output=True, text=True, cwd=cwd)
+                steps.append("git init")
 
-            # Set remote
+            # Set remote using gh-authenticated HTTPS URL
             subprocess.run(["git", "remote", "remove", "origin"],
                            capture_output=True, text=True, cwd=cwd)
-            r = subprocess.run(["git", "remote", "add", "origin", url],
+            # Use gh to get the authenticated remote URL
+            r = subprocess.run(["gh", "repo", "view", repo_slug, "--json", "url", "-q", ".url"],
                                capture_output=True, text=True, cwd=cwd)
-            steps.append(f"remote set: {url}")
+            if r.returncode == 0 and r.stdout.strip():
+                auth_url = r.stdout.strip()
+            else:
+                auth_url = f"https://github.com/{repo_slug}.git"
 
-            # Stage all, commit, push
+            subprocess.run(["git", "remote", "add", "origin", auth_url],
+                           capture_output=True, text=True, cwd=cwd)
+            steps.append(f"remote: {repo_slug}")
+
+            # Stage all, commit
             subprocess.run(["git", "add", "-A"], capture_output=True, text=True, cwd=cwd)
             r = subprocess.run(["git", "commit", "-m", "superx: commit via dashboard"],
                                capture_output=True, text=True, cwd=cwd)
-            steps.append(f"commit: {r.stdout.strip()[:80] or r.stderr.strip()[:80]}")
+            commit_msg = r.stdout.strip()[:80] or r.stderr.strip()[:80]
+            steps.append(f"commit: {commit_msg}")
 
-            r = subprocess.run(["git", "push", "-u", "origin", "HEAD"],
+            # Push using gh for authentication
+            r = subprocess.run(["gh", "repo", "sync", "--source", "."],
                                capture_output=True, text=True, cwd=cwd)
+            if r.returncode != 0:
+                # Fallback: use git push with gh auth token
+                r = subprocess.run(
+                    ["git", "push", "-u", "origin", "HEAD"],
+                    capture_output=True, text=True, cwd=cwd,
+                    env={**os.environ, "GIT_TERMINAL_PROMPT": "0",
+                         "GH_TOKEN": subprocess.run(
+                             ["gh", "auth", "token"],
+                             capture_output=True, text=True
+                         ).stdout.strip()}
+                )
+
             if r.returncode == 0:
                 steps.append("push: success")
                 self.send_json(200, {"status": "pushed", "steps": steps})
             else:
-                steps.append(f"push failed: {r.stderr.strip()[:120]}")
+                steps.append(f"push: {r.stderr.strip()[:120]}")
                 self.send_json(200, {"status": "push_failed", "steps": steps,
                                      "error": r.stderr.strip()[:200]})
         except Exception as e:
@@ -881,6 +962,7 @@ class DashboardHandler(SimpleHTTPRequestHandler):
         archive_session()
         # Clear session
         timeline_events.clear()
+        _recent_event_hashes.clear()
         with terminal_lock:
             terminal_lines.clear()
         pending_prompts.clear()
