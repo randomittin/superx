@@ -896,6 +896,18 @@ class DashboardHandler(SimpleHTTPRequestHandler):
             commit_msg = r.stdout.strip()[:80] or r.stderr.strip()[:80]
             steps.append(f"commit: {commit_msg}")
 
+            # Pull rebase first to sync with remote
+            r = subprocess.run(["git", "pull", "--rebase", "origin", "main"],
+                               capture_output=True, text=True, cwd=cwd)
+            if r.returncode == 0:
+                steps.append("pull --rebase: ok")
+            else:
+                # Try current branch name
+                branch = subprocess.run(["git", "branch", "--show-current"],
+                    capture_output=True, text=True, cwd=cwd).stdout.strip() or "main"
+                subprocess.run(["git", "pull", "--rebase", "origin", branch],
+                               capture_output=True, text=True, cwd=cwd)
+
             # Push via SSH
             r = subprocess.run(["git", "push", "-u", "origin", "HEAD"],
                                capture_output=True, text=True, cwd=cwd)
