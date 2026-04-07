@@ -856,7 +856,7 @@ class DashboardHandler(SimpleHTTPRequestHandler):
             self.send_json(400, {"error": "Invalid JSON"})
 
     def handle_github(self):
-        """Set GitHub remote and commit+push using gh CLI for auth."""
+        """Set GitHub remote and commit+push using SSH (matching gh config)."""
         length = int(self.headers.get("Content-Length", 0))
         body = self.rfile.read(length).decode()
         try:
@@ -869,30 +869,25 @@ class DashboardHandler(SimpleHTTPRequestHandler):
             cwd = os.getcwd()
             steps = []
 
-            # Extract owner/repo from URL
-            # Supports: https://github.com/user/repo, github.com/user/repo, user/repo
+            # Extract owner/repo from any URL format
             repo_slug = url.replace("https://github.com/", "").replace("http://github.com/", "")
-            repo_slug = repo_slug.replace("github.com/", "").rstrip("/").rstrip(".git")
+            repo_slug = repo_slug.replace("github.com/", "").replace("git@github.com:", "")
+            repo_slug = repo_slug.rstrip("/").rstrip(".git")
+
+            # Use SSH URL since gh is configured for SSH protocol
+            ssh_url = f"git@github.com:{repo_slug}.git"
 
             # Init git if needed
             if not os.path.isdir(os.path.join(cwd, ".git")):
                 subprocess.run(["git", "init"], capture_output=True, text=True, cwd=cwd)
                 steps.append("git init")
 
-            # Set remote using gh-authenticated HTTPS URL
+            # Set remote to SSH URL
             subprocess.run(["git", "remote", "remove", "origin"],
                            capture_output=True, text=True, cwd=cwd)
-            # Use gh to get the authenticated remote URL
-            r = subprocess.run(["gh", "repo", "view", repo_slug, "--json", "url", "-q", ".url"],
-                               capture_output=True, text=True, cwd=cwd)
-            if r.returncode == 0 and r.stdout.strip():
-                auth_url = r.stdout.strip()
-            else:
-                auth_url = f"https://github.com/{repo_slug}.git"
-
-            subprocess.run(["git", "remote", "add", "origin", auth_url],
+            subprocess.run(["git", "remote", "add", "origin", ssh_url],
                            capture_output=True, text=True, cwd=cwd)
-            steps.append(f"remote: {repo_slug}")
+            steps.append(f"remote: {repo_slug} (SSH)")
 
             # Stage all, commit
             subprocess.run(["git", "add", "-A"], capture_output=True, text=True, cwd=cwd)
@@ -901,20 +896,9 @@ class DashboardHandler(SimpleHTTPRequestHandler):
             commit_msg = r.stdout.strip()[:80] or r.stderr.strip()[:80]
             steps.append(f"commit: {commit_msg}")
 
-            # Push using gh for authentication
-            r = subprocess.run(["gh", "repo", "sync", "--source", "."],
+            # Push via SSH
+            r = subprocess.run(["git", "push", "-u", "origin", "HEAD"],
                                capture_output=True, text=True, cwd=cwd)
-            if r.returncode != 0:
-                # Fallback: use git push with gh auth token
-                r = subprocess.run(
-                    ["git", "push", "-u", "origin", "HEAD"],
-                    capture_output=True, text=True, cwd=cwd,
-                    env={**os.environ, "GIT_TERMINAL_PROMPT": "0",
-                         "GH_TOKEN": subprocess.run(
-                             ["gh", "auth", "token"],
-                             capture_output=True, text=True
-                         ).stdout.strip()}
-                )
 
             if r.returncode == 0:
                 steps.append("push: success")
