@@ -11,6 +11,8 @@ let eventSource = null;
 let gameMap = null;
 const timelineEvents = [];
 const MAX_EVENTS = 100;
+const activeAgents = new Set();  // tracks currently running agents
+const dynamicAgents = {};  // dynamically spawned agents { id: {name, status} }
 
 // === INITIALIZATION ===
 
@@ -153,7 +155,20 @@ function connectSSE() {
     try {
       const payload = JSON.parse(e.data);
       const data = payload.data || payload;
+      if (data.status === 'running') activeAgents.add(data.agent);
+      else activeAgents.delete(data.agent);
       updateAgentCard(data.agent, data.status);
+    } catch (err) {}
+  });
+
+  eventSource.addEventListener('agent_spawn', (e) => {
+    try {
+      const payload = JSON.parse(e.data);
+      const data = payload.data || payload;
+      const id = data.id || data.name || ('agent-' + Object.keys(dynamicAgents).length);
+      dynamicAgents[id] = { name: data.name || id, status: 'running', desc: data.desc || '' };
+      activeAgents.add(id);
+      addDynamicAgentCard(id, data.name || id, data.desc || '');
     } catch (err) {}
   });
 
@@ -400,59 +415,107 @@ function renderWarRoom(state) {
   const grid = document.getElementById('agent-grid');
   grid.textContent = '';
 
-  const activeAgents = state?.agent_history?.filter(a => a.status === 'running') || [];
-  const activeTypes = new Set(activeAgents.map(a => a.type));
-
+  // Core agents
   for (const type of AGENT_TYPES) {
-    const isActive = activeTypes.has(type);
-    const agent = activeAgents.find(a => a.type === type);
-    const sprite = window.SPRITES[type];
-
-    const card = document.createElement('div');
-    card.className = 'agent-card ' + (isActive ? 'active' : 'idle') + ' pixel-border';
-
-    // Status dot
-    const dot = document.createElement('div');
-    dot.className = 'status-dot ' + (isActive ? 'running' : 'idle');
-    card.appendChild(dot);
-
-    // Sprite
-    if (sprite) {
-      const img = document.createElement('img');
-      img.className = 'sprite';
-      img.src = sprite;
-      img.alt = type;
-      card.appendChild(img);
-    } else {
-      const placeholder = document.createElement('div');
-      placeholder.className = 'sprite';
-      card.appendChild(placeholder);
-    }
-
-    // Info column
-    const info = document.createElement('div');
-    info.className = 'card-info';
-
-    const nameEl = document.createElement('div');
-    nameEl.className = 'name';
-    nameEl.textContent = type;
-    info.appendChild(nameEl);
-
-    const taskEl = document.createElement('div');
-    taskEl.className = 'task';
-    taskEl.textContent = isActive ? (agent?.id || 'working...') : 'idle';
-    info.appendChild(taskEl);
-
-    card.appendChild(info);
-
-    // Gradient background per agent
-    const grad = window.GRADIENTS[type];
-    if (grad) {
-      card.style.background = 'linear-gradient(135deg, ' + grad[0] + ', ' + grad[1] + '44)';
-    }
-
-    grid.appendChild(card);
+    const isActive = activeAgents.has(type);
+    _createAgentCard(grid, type, type, window.SPRITES[type], isActive);
   }
+
+  // Dynamic spawned agents
+  for (const [id, info] of Object.entries(dynamicAgents)) {
+    const isActive = activeAgents.has(id);
+    _createAgentCard(grid, id, info.name, getVariantSprite(id), isActive, info.desc);
+  }
+}
+
+function _createAgentCard(grid, id, label, sprite, isActive, desc) {
+  const card = document.createElement('div');
+  card.className = 'agent-card ' + (isActive ? 'active' : 'idle') + ' pixel-border';
+  card.dataset.agentId = id;
+
+  const dot = document.createElement('div');
+  dot.className = 'status-dot ' + (isActive ? 'running' : 'idle');
+  card.appendChild(dot);
+
+  if (sprite) {
+    const img = document.createElement('img');
+    img.className = 'sprite';
+    img.src = sprite;
+    img.alt = label;
+    card.appendChild(img);
+  }
+
+  const info = document.createElement('div');
+  info.className = 'card-info';
+  const nameEl = document.createElement('div');
+  nameEl.className = 'name';
+  nameEl.textContent = label;
+  info.appendChild(nameEl);
+  const taskEl = document.createElement('div');
+  taskEl.className = 'task';
+  taskEl.textContent = isActive ? (desc || 'working...') : 'idle';
+  info.appendChild(taskEl);
+  card.appendChild(info);
+
+  const grad = window.GRADIENTS[id] || window.GRADIENTS.coder;
+  if (grad) card.style.background = 'linear-gradient(135deg, ' + grad[0] + ', ' + grad[1] + '44)';
+  grid.appendChild(card);
+}
+
+function addDynamicAgentCard(id, name, desc) {
+  const grid = document.getElementById('agent-grid');
+  _createAgentCard(grid, id, name, getVariantSprite(id), true, desc);
+}
+
+// Variant coder sprites with different suit/tie colors
+const _variantCache = {};
+const VARIANT_COLORS = [
+  { suit: '#2c3e50', tie: '#e74c3c' },
+  { suit: '#1a5276', tie: '#f39c12' },
+  { suit: '#4a235a', tie: '#2ecc71' },
+  { suit: '#0e6251', tie: '#e056a0' },
+  { suit: '#7b241c', tie: '#3498db' },
+  { suit: '#154360', tie: '#f1c40f' },
+  { suit: '#512e5f', tie: '#1abc9c' },
+  { suit: '#1a1a2e', tie: '#ff6b6b' },
+];
+
+function getVariantSprite(id) {
+  if (_variantCache[id]) return _variantCache[id];
+  let hash = 0;
+  for (let i = 0; i < id.length; i++) hash = ((hash << 5) - hash + id.charCodeAt(i)) | 0;
+  const v = VARIANT_COLORS[Math.abs(hash) % VARIANT_COLORS.length];
+  const work = document.createElement('canvas');
+  work.width = 32; work.height = 32;
+  const w = work.getContext('2d');
+  // BG gradient
+  for (let y = 0; y < 32; y++) {
+    w.fillStyle = `rgb(${5+Math.round(40*y/32)},${10+Math.round(20*y/32)},${10+Math.round(30*y/32)})`;
+    w.fillRect(0, y, 32, 1);
+  }
+  // Fox head
+  const f='#d2691e',f2='#a0522d';
+  w.fillStyle=f; w.fillRect(12,5,8,8); w.fillRect(11,6,10,6);
+  w.fillStyle=f; w.fillRect(11,2,3,4); w.fillRect(18,2,3,4);
+  w.fillStyle=f2; w.fillRect(12,3,1,1); w.fillRect(19,3,1,1);
+  w.fillStyle='#fff'; w.fillRect(14,9,4,3); w.fillRect(13,7,2,2); w.fillRect(17,7,2,2);
+  w.fillStyle='#111'; w.fillRect(14,8,1,1); w.fillRect(18,8,1,1); w.fillRect(15,10,2,1);
+  // Suit body
+  w.fillStyle=v.suit; w.fillRect(10,14,12,12); w.fillRect(9,16,14,8);
+  w.fillRect(7,16,3,7); w.fillRect(22,16,3,7);
+  w.fillStyle='#fff'; w.fillRect(15,14,2,4);
+  w.fillStyle=v.tie; w.fillRect(15,14,2,1); w.fillRect(15,15,1,1);
+  w.fillRect(16,16,1,1); w.fillRect(15,17,1,1);
+  w.fillStyle=f; w.fillRect(7,22,3,2); w.fillRect(22,22,3,2);
+  w.fillStyle=v.suit; w.fillRect(11,25,4,5); w.fillRect(17,25,4,5);
+  w.fillStyle='#111'; w.fillRect(11,29,4,2); w.fillRect(17,29,4,2);
+  // Scale up
+  const c = document.createElement('canvas');
+  c.width=96; c.height=96;
+  const ctx=c.getContext('2d'); ctx.imageSmoothingEnabled=false;
+  ctx.drawImage(work,0,0,96,96);
+  _variantCache[id]=c.toDataURL();
+  return _variantCache[id];
 }
 
 // === STATUS BADGE ===
@@ -465,6 +528,11 @@ function updateStatusBadge(state) {
 }
 
 // === PROMPT INPUT ===
+
+const promptHistory = [];
+let historyIndex = -1;
+const AUTONOMY_LEVELS = ['L1 Guided', 'L2 Checkpoint', 'L3 Full Auto'];
+let autonomyLevel = 1; // 0-based index, default L2
 
 function setupPromptInput() {
   const input = document.getElementById('prompt-input');
@@ -489,6 +557,13 @@ function setupPromptInput() {
     const prompt = input.value.trim();
     const images = pendingImages.prompt.slice();
     if (!prompt && images.length === 0) return;
+
+    // Save to prompt history
+    if (prompt) {
+      promptHistory.unshift(prompt);
+      if (promptHistory.length > 50) promptHistory.pop();
+      historyIndex = -1;
+    }
 
     input.value = '';
     input.style.height = 'auto';
@@ -522,8 +597,51 @@ function setupPromptInput() {
     if (e.key === 'Enter' && !e.shiftKey) {
       e.preventDefault();
       sendPrompt();
+      return;
     }
-    // Shift+Enter inserts newline (default textarea behavior)
+
+    // Arrow Up — cycle through prompt history
+    if (e.key === 'ArrowUp' && input.value.indexOf('\n') === -1) {
+      if (promptHistory.length > 0 && historyIndex < promptHistory.length - 1) {
+        e.preventDefault();
+        historyIndex++;
+        input.value = promptHistory[historyIndex];
+        autoGrow();
+      }
+      return;
+    }
+
+    // Arrow Down — cycle forward in prompt history
+    if (e.key === 'ArrowDown' && input.value.indexOf('\n') === -1) {
+      e.preventDefault();
+      if (historyIndex > 0) {
+        historyIndex--;
+        input.value = promptHistory[historyIndex];
+      } else {
+        historyIndex = -1;
+        input.value = '';
+      }
+      autoGrow();
+      return;
+    }
+
+    // Arrow Left/Right — cycle autonomy level (only when input is empty)
+    if ((e.key === 'ArrowLeft' || e.key === 'ArrowRight') && !input.value) {
+      e.preventDefault();
+      if (e.key === 'ArrowLeft') autonomyLevel = Math.max(0, autonomyLevel - 1);
+      else autonomyLevel = Math.min(2, autonomyLevel + 1);
+      const label = AUTONOMY_LEVELS[autonomyLevel];
+      document.getElementById('phase-info').textContent = label;
+      // Flash the badge to show the change
+      const badge = document.getElementById('status-badge');
+      badge.textContent = label;
+      badge.className = 'status-badge running';
+      setTimeout(() => {
+        badge.textContent = badge.dataset.lastStatus || 'IDLE';
+        badge.className = 'status-badge';
+      }, 1200);
+      return;
+    }
   });
 
   sendBtn.addEventListener('click', sendPrompt);
@@ -552,16 +670,19 @@ function setupPromptInput() {
 
 // === AGENT STATUS ===
 
-function updateAgentCard(agentType, status) {
+function updateAgentCard(agentId, status) {
+  // Find by data-agentId or by name text
   const cards = document.querySelectorAll('.agent-card');
   for (const card of cards) {
+    const id = card.dataset.agentId;
     const nameEl = card.querySelector('.name');
-    if (nameEl && nameEl.textContent === agentType) {
+    if (id === agentId || (nameEl && nameEl.textContent === agentId)) {
       card.className = 'agent-card ' + (status === 'running' ? 'active' : 'idle') + ' pixel-border';
       const dot = card.querySelector('.status-dot');
       if (dot) dot.className = 'status-dot ' + (status === 'running' ? 'running' : 'idle');
       const taskEl = card.querySelector('.task');
       if (taskEl) taskEl.textContent = status === 'running' ? 'working...' : 'idle';
+      return;
     }
   }
 }
