@@ -44,7 +44,7 @@ body {
 
 .dashboard {
   display: grid;
-  grid-template-rows: auto 1fr auto;
+  grid-template-rows: auto 1fr 80px;
   grid-template-columns: 1fr 320px;
   height: 100vh;
   gap: 2px;
@@ -217,6 +217,7 @@ body {
   padding: 0 14px 14px;
   display: flex;
   justify-content: flex-end;
+  gap: 8px;
 }
 
 .btn {
@@ -245,7 +246,7 @@ body {
 
 .timeline {
   grid-column: 1;
-  grid-row: 2;
+  grid-row: 2 / 4;
   background: var(--bg-panel);
   border: 2px solid var(--border);
   display: flex;
@@ -567,6 +568,71 @@ body {
 .event.warning .msg { color: var(--warning); }
 .event.info .msg { color: var(--info); }
 
+/* Logs bar */
+.logs-bar {
+  padding: 4px 8px;
+  border-top: 1px solid var(--border);
+  display: flex;
+  justify-content: flex-end;
+}
+
+.btn-copy-logs {
+  font-family: var(--font-pixel);
+  font-size: 7px;
+  padding: 3px 10px;
+  background: var(--bg-card);
+  border: 1px solid var(--border);
+  color: var(--text-dim);
+  cursor: pointer;
+}
+
+.btn-copy-logs:hover {
+  border-color: var(--info);
+  color: var(--info);
+}
+
+.btn-copy-logs.copied {
+  color: var(--success);
+  border-color: var(--success);
+}
+
+/* Resume checkpoint bar */
+.resume-bar { display: none; }
+
+.resume-bar.visible {
+  display: flex;
+  align-items: center;
+  padding: 6px 12px;
+  background: linear-gradient(90deg, rgba(243,156,18,0.15), rgba(243,156,18,0.05));
+  border-top: 2px solid var(--warning);
+  font-family: var(--font-pixel);
+  font-size: 7px;
+  color: var(--warning);
+  gap: 10px;
+}
+
+.resume-bar .resume-info { flex: 1; }
+
+.resume-bar .btn-resume {
+  font-family: var(--font-pixel);
+  font-size: 8px;
+  padding: 4px 14px;
+  background: var(--warning);
+  border: 2px solid var(--warning);
+  color: var(--bg-dark);
+  cursor: pointer;
+}
+
+.resume-bar .btn-dismiss {
+  font-family: var(--font-pixel);
+  font-size: 7px;
+  padding: 3px 8px;
+  background: none;
+  border: 1px solid var(--text-dim);
+  color: var(--text-dim);
+  cursor: pointer;
+}
+
 /* === PROMPT INPUT === */
 
 .prompt-bar {
@@ -615,17 +681,16 @@ body {
   background: #c0392b;
 }
 
-/* === WAR ROOM (bottom left) === */
+/* === WAR ROOM (bottom right, below map) === */
 
 .warroom {
-  grid-column: 1;
+  grid-column: 2;
   grid-row: 3;
   background: var(--bg-panel);
   border: 2px solid var(--border);
   display: flex;
   flex-direction: column;
   overflow: hidden;
-  height: auto;
   flex-shrink: 0;
 }
 
@@ -726,7 +791,7 @@ body {
 
 .right-panel {
   grid-column: 2;
-  grid-row: 2 / 4;
+  grid-row: 2;
   background: var(--bg-panel);
   border: 2px solid var(--border);
   display: flex;
@@ -772,6 +837,43 @@ body {
 /* Game map canvas */
 #map-canvas {
   flex: 1;
+  image-rendering: pixelated;
+}
+
+#tab-map {
+  position: relative;
+}
+
+.map-toolbar {
+  position: absolute;
+  top: 8px;
+  right: 8px;
+  display: flex;
+  flex-direction: column;
+  gap: 4px;
+  z-index: 10;
+}
+
+.map-tool-btn {
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  width: 28px;
+  height: 28px;
+  background: var(--bg-card);
+  border: 2px solid var(--border);
+  color: var(--text-dim);
+  cursor: pointer;
+  padding: 0;
+  image-rendering: pixelated;
+}
+
+.map-tool-btn:hover {
+  border-color: var(--warning);
+  color: var(--warning);
+}
+
+.map-tool-btn svg {
   image-rendering: pixelated;
 }
 

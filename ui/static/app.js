@@ -27,11 +27,13 @@ document.addEventListener('DOMContentLoaded', () => {
   setupImageAttach('attach-btn', 'attach-input', 'prompt-images', 'prompt');
   setupImageAttach('plan-attach-btn', 'plan-attach-input', 'plan-images', 'plan');
   setupContinueButton();
+  setupCopyLogs();
   setupTabs();
   setupHistory();
   setupGitHub();
   drawPixelIcons();
   restoreSession();
+  checkForCheckpoint();
   renderWarRoom(null);
 });
 
@@ -140,11 +142,13 @@ function connectSSE() {
         document.getElementById('status-badge').className = 'status-badge' + (success ? '' : ' error');
         document.getElementById('status-badge').textContent = success ? 'IDLE' : 'ERROR';
         if (window._showLoading) window._showLoading(false);
+        resetAllAgents();
       } else if (data.status === 'stopped') {
         addTimelineEvent('warning', 'superx', 'Process stopped by user');
         document.getElementById('status-badge').className = 'status-badge';
         document.getElementById('status-badge').textContent = 'IDLE';
         if (window._showLoading) window._showLoading(false);
+        resetAllAgents();
       }
     } catch (err) {
       console.error('Process parse error:', err);
@@ -158,6 +162,7 @@ function connectSSE() {
       if (data.status === 'running') activeAgents.add(data.agent);
       else activeAgents.delete(data.agent);
       updateAgentCard(data.agent, data.status);
+      if (gameMap) gameMap.setActiveAgents(activeAgents);
     } catch (err) {}
   });
 
@@ -336,6 +341,11 @@ function addTimelineEvent(type, agent, message, useMono, markdown) {
   };
   timelineEvents.unshift(event);
   if (timelineEvents.length > MAX_EVENTS) timelineEvents.pop();
+
+  // Notify map of file writes
+  if (gameMap && message && (message.startsWith('Write:') || message.startsWith('Edit:'))) {
+    gameMap.onFileWrite(message);
+  }
 
   const container = document.getElementById('timeline-events');
   const el = _createEventEl(type, agent, message, useMono, markdown);
@@ -670,6 +680,20 @@ function setupPromptInput() {
 
 // === AGENT STATUS ===
 
+function resetAllAgents() {
+  // Set all agents to idle when process exits
+  for (const id of activeAgents) {
+    updateAgentCard(id, 'idle');
+  }
+  activeAgents.clear();
+  // Also reset dynamic agents
+  for (const id of Object.keys(dynamicAgents)) {
+    dynamicAgents[id].status = 'idle';
+    updateAgentCard(id, 'idle');
+  }
+  if (gameMap) gameMap.setActiveAgents(activeAgents);
+}
+
 function updateAgentCard(agentId, status) {
   // Find by data-agentId or by name text
   const cards = document.querySelectorAll('.agent-card');
@@ -930,6 +954,7 @@ function setupTabs() {
 
       if (target === 'map') {
         gameMap.resize();
+        gameMap.fetchStructure();
       }
     });
   });
@@ -951,6 +976,8 @@ function setupTabs() {
       }
 
       setTimeout(() => gameMap.resize(), 50);
+      setTimeout(() => gameMap.resize(), 200);
+      setTimeout(() => gameMap.resize(), 500);
     });
   }
 }
@@ -1035,23 +1062,72 @@ function setupContinueButton() {
   });
 }
 
+// === COPY LOGS ===
+
+function setupCopyLogs() {
+  const btn = document.getElementById('copy-logs-btn');
+  if (!btn) return;
+
+  btn.addEventListener('click', async () => {
+    try {
+      const res = await fetch('/api/terminal');
+      const data = await res.json();
+      const logs = (data.lines || []).join('\n');
+      await navigator.clipboard.writeText(logs);
+      btn.textContent = 'COPIED';
+      btn.classList.add('copied');
+      setTimeout(() => {
+        btn.textContent = 'COPY LOGS';
+        btn.classList.remove('copied');
+      }, 2000);
+    } catch (err) {
+      // Fallback: copy from DOM
+      const terminal = document.getElementById('terminal-output');
+      const text = terminal ? terminal.innerText : '';
+      await navigator.clipboard.writeText(text);
+      btn.textContent = 'COPIED';
+      btn.classList.add('copied');
+      setTimeout(() => {
+        btn.textContent = 'COPY LOGS';
+        btn.classList.remove('copied');
+      }, 2000);
+    }
+  });
+}
+
 // === PIXEL ART ICONS ===
 
 function drawPixelIcons() {
   // Icons are now SVG/text — no canvas drawing needed
 }
 
-// === GITHUB REMOTE ===
+// === PROJECT SETTINGS & GITHUB ===
 
-function setupGitHub() {
+async function setupGitHub() {
   const btn = document.getElementById('github-btn');
   const modal = document.getElementById('github-modal');
   const closeBtn = document.getElementById('github-modal-close');
-  const saveBtn = document.getElementById('github-save');
+  const pushBtn = document.getElementById('github-save');
+  const projectBtn = document.getElementById('project-save');
   const urlInput = document.getElementById('github-url');
+  const pathInput = document.getElementById('github-path');
   const status = document.getElementById('github-status');
+  const pathDisplay = document.getElementById('project-path');
 
   if (!btn || !modal) return;
+
+  // Load saved config and pre-fill
+  try {
+    const res = await fetch('/api/project');
+    const cfg = await res.json();
+    if (cfg.path) {
+      pathInput.value = cfg.path;
+      const short = cfg.path.split('/').slice(-2).join('/');
+      pathDisplay.textContent = short;
+      pathDisplay.title = cfg.path;
+    }
+    if (cfg.url) urlInput.value = cfg.url;
+  } catch(e) {}
 
   btn.addEventListener('click', () => modal.classList.add('open'));
   closeBtn.addEventListener('click', () => modal.classList.remove('open'));
@@ -1059,22 +1135,64 @@ function setupGitHub() {
     if (e.target === modal) modal.classList.remove('open');
   });
 
-  saveBtn.addEventListener('click', async () => {
+  // SET PROJECT directory
+  projectBtn.addEventListener('click', async () => {
+    const localPath = pathInput.value.trim();
+    if (!localPath) {
+      status.textContent = 'Enter a project directory path';
+      status.style.color = 'var(--error)';
+      return;
+    }
+    status.textContent = 'Setting project directory...';
+    status.style.color = 'var(--warning)';
+    projectBtn.disabled = true;
+    try {
+      const res = await fetch('/api/project', {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({ path: localPath }),
+      });
+      const data = await res.json();
+      if (data.error) {
+        status.textContent = data.error;
+        status.style.color = 'var(--error)';
+      } else {
+        status.textContent = 'Project set: ' + data.path;
+        status.style.color = 'var(--success)';
+        const short = data.path.split('/').slice(-2).join('/');
+        pathDisplay.textContent = short;
+        pathDisplay.title = data.path;
+      }
+    } catch (err) {
+      status.textContent = 'Network error';
+      status.style.color = 'var(--error)';
+    }
+    projectBtn.disabled = false;
+  });
+
+  // PUSH TO GIT
+  pushBtn.addEventListener('click', async () => {
     const url = urlInput.value.trim();
+    const localPath = pathInput.value.trim();
     if (!url) {
-      status.textContent = 'Enter a GitHub repo URL';
+      status.textContent = 'Enter a GitHub repo URL to push';
+      status.style.color = 'var(--error)';
+      return;
+    }
+    if (!localPath) {
+      status.textContent = 'Set a project directory first';
       status.style.color = 'var(--error)';
       return;
     }
     status.textContent = 'Committing and pushing...';
     status.style.color = 'var(--warning)';
-    saveBtn.disabled = true;
+    pushBtn.disabled = true;
 
     try {
       const res = await fetch('/api/github', {
         method: 'POST',
         headers: { 'Content-Type': 'application/json' },
-        body: JSON.stringify({ url }),
+        body: JSON.stringify({ url, path: localPath }),
       });
       const data = await res.json();
       if (data.error) {
@@ -1085,6 +1203,9 @@ function setupGitHub() {
         status.style.color = 'var(--success)';
         addTimelineEvent('success', 'superx', 'Code pushed to ' + url);
         setTimeout(() => modal.classList.remove('open'), 1500);
+      } else if (data.status === 'nothing_to_push') {
+        status.textContent = 'Nothing to push — no new changes';
+        status.style.color = 'var(--warning)';
       } else {
         status.textContent = data.error || data.steps.join(' | ');
         status.style.color = 'var(--error)';
@@ -1093,10 +1214,45 @@ function setupGitHub() {
       status.textContent = 'Network error';
       status.style.color = 'var(--error)';
     }
-    saveBtn.disabled = false;
+    pushBtn.disabled = false;
   });
+}
 
-  urlInput.addEventListener('keydown', (e) => {
-    if (e.key === 'Enter') saveBtn.click();
-  });
+// === CHECKPOINT RESUME ===
+
+async function checkForCheckpoint() {
+  try {
+    const res = await fetch('/api/checkpoint');
+    const data = await res.json();
+    if (data.resumable) {
+      const bar = document.getElementById('resume-bar');
+      const prompt = data.prompt || 'unknown task';
+      const mins = data.minutes_ago || 0;
+      const phase = data.phase || 'unknown';
+      const timeAgo = mins < 60 ? mins + 'm ago' : Math.floor(mins/60) + 'h ago';
+
+      bar.innerHTML =
+        '<span class="resume-info">Checkpoint: "' + prompt + '..." (' + phase + ', ' + timeAgo + ')</span>' +
+        '<button class="btn-resume" id="btn-resume">RESUME</button>' +
+        '<button class="btn-dismiss" id="btn-dismiss">DISMISS</button>';
+      bar.classList.add('visible');
+
+      document.getElementById('btn-resume').addEventListener('click', async () => {
+        bar.classList.remove('visible');
+        addTimelineEvent('info', 'superx', 'Resuming from checkpoint...', true);
+        if (window._showLoading) window._showLoading(true);
+        try {
+          await fetch('/api/resume', { method: 'POST' });
+        } catch (err) {
+          addTimelineEvent('error', 'superx', 'Failed to resume');
+        }
+      });
+
+      document.getElementById('btn-dismiss').addEventListener('click', () => {
+        bar.classList.remove('visible');
+      });
+    }
+  } catch (e) {
+    // No checkpoint or server not ready
+  }
 }

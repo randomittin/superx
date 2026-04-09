@@ -446,3 +446,13 @@ function generateAllSprites() {
 
 window.SPRITES = generateAllSprites();
 window.GRADIENTS = GRADIENTS;
+
+// Pre-cache as Image objects for canvas drawing (used by map.js)
+window.SPRITE_CACHE = {};
+for (const [type, dataUrl] of Object.entries(window.SPRITES)) {
+  if (dataUrl) {
+    const img = new Image();
+    img.src = dataUrl;
+    window.SPRITE_CACHE[type] = img;
+  }
+}
