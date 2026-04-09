@@ -759,9 +759,50 @@ async function loadHistory() {
       card.dataset.index = idx;
       card.innerHTML =
         '<div class="session-time">' + ts + '</div>' +
-        '<div class="session-task">' + taskText.substring(0, 120) + '</div>' +
+        '<div class="session-task-row">' +
+          '<span class="session-task">' + taskText.substring(0, 120) + '</span>' +
+          '<button class="session-rename-btn" title="Rename">&#9998;</button>' +
+        '</div>' +
         '<div class="session-count">' + evtCount + ' events</div>';
-      card.addEventListener('click', () => viewPastSession(idx));
+      // Click card body to view session
+      card.addEventListener('click', (e) => {
+        if (e.target.closest('.session-rename-btn') || e.target.closest('.session-rename-input')) return;
+        viewPastSession(idx);
+      });
+      // Rename button
+      card.querySelector('.session-rename-btn').addEventListener('click', (e) => {
+        e.stopPropagation();
+        const taskRow = card.querySelector('.session-task-row');
+        const taskSpan = card.querySelector('.session-task');
+        const input = document.createElement('input');
+        input.type = 'text';
+        input.className = 'session-rename-input';
+        input.value = taskSpan.textContent;
+        taskRow.replaceChild(input, taskSpan);
+        card.querySelector('.session-rename-btn').style.display = 'none';
+        input.focus();
+        input.select();
+        const save = async () => {
+          const newName = input.value.trim();
+          if (newName && newName !== taskSpan.textContent) {
+            try {
+              await fetch('/api/history/' + idx + '/rename', {
+                method: 'POST',
+                headers: { 'Content-Type': 'application/json' },
+                body: JSON.stringify({ name: newName }),
+              });
+              taskSpan.textContent = newName;
+            } catch (err) { console.error('Rename failed:', err); }
+          }
+          taskRow.replaceChild(taskSpan, input);
+          card.querySelector('.session-rename-btn').style.display = '';
+        };
+        input.addEventListener('blur', save);
+        input.addEventListener('keydown', (ke) => {
+          if (ke.key === 'Enter') { ke.preventDefault(); input.blur(); }
+          if (ke.key === 'Escape') { taskRow.replaceChild(taskSpan, input); card.querySelector('.session-rename-btn').style.display = ''; }
+        });
+      });
       list.appendChild(card);
     }
   } catch (err) {

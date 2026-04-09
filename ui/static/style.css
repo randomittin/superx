@@ -1037,11 +1037,50 @@ body {
   margin-bottom: 4px;
 }
 
+.session-task-row {
+  display: flex;
+  align-items: flex-start;
+  gap: 6px;
+}
+
 .history-session .session-task {
   font-size: 9px;
   color: var(--text);
   line-height: 1.4;
   word-break: break-word;
+  flex: 1;
+}
+
+.session-rename-btn {
+  background: none;
+  border: none;
+  color: var(--text-dim);
+  cursor: pointer;
+  font-size: 10px;
+  padding: 0 2px;
+  opacity: 0;
+  transition: opacity 0.15s;
+  flex-shrink: 0;
+}
+
+.history-session:hover .session-rename-btn {
+  opacity: 1;
+}
+
+.session-rename-btn:hover {
+  color: var(--accent);
+}
+
+.session-rename-input {
+  font-family: 'Press Start 2P', monospace;
+  font-size: 9px;
+  color: var(--text);
+  background: var(--bg-dark);
+  border: 1px solid var(--accent);
+  padding: 2px 4px;
+  width: 100%;
+  outline: none;
+  flex: 1;
 }
 
 .history-session .session-count {
