@@ -127,6 +127,8 @@ let _mapZoom = 1.0;
 
 document.addEventListener('DOMContentLoaded', () => {
   const dnBtn = document.getElementById('daynight-btn');
+  const sunIcon = document.getElementById('daynight-icon-sun');
+  const moonIcon = document.getElementById('daynight-icon-moon');
   if (dnBtn) {
     dnBtn.title = 'AUTO';
     dnBtn.addEventListener('click', () => {
@@ -134,6 +136,10 @@ document.addEventListener('DOMContentLoaded', () => {
       _forcePhase = _phases[_phaseIdx];
       const label = _forcePhase ? _forcePhase.toUpperCase() : 'AUTO';
       dnBtn.title = label;
+      // Swap icon: sun for day/dawn/auto, moon for night/dusk
+      const dark = _forcePhase === 'night' || _forcePhase === 'dusk';
+      if (sunIcon) sunIcon.style.display = dark ? 'none' : '';
+      if (moonIcon) moonIcon.style.display = dark ? '' : 'none';
     });
   }
   const ziBtn = document.getElementById('zoom-in-btn');
@@ -157,8 +163,11 @@ class GameMap {
     this.gridW = 0; this.gridH = 0;
     this.panX = 0; this.panY = 0;
     this._dragging = false;
+    this._hoveredBuilding = null;
+    this._mouseX = 0; this._mouseY = 0;
     this.resize();
     this._setupPan();
+    this._setupHover();
     this._loadImages();
     window.addEventListener('resize', () => this.resize());
     this.fetchStructure();
@@ -167,17 +176,89 @@ class GameMap {
 
   _setupPan() {
     const c = this.canvas;
+    // Pixelated black cursor (16x16)
+    const cur = document.createElement('canvas');
+    cur.width = 16; cur.height = 16;
+    const cc = cur.getContext('2d');
+    cc.imageSmoothingEnabled = false;
+    cc.fillStyle = '#000';
+    // Arrow shape
+    cc.fillRect(0,0,2,14); cc.fillRect(2,2,2,2); cc.fillRect(4,4,2,2);
+    cc.fillRect(6,6,2,2); cc.fillRect(2,8,2,2); cc.fillRect(4,10,2,2);
+    cc.fillRect(6,12,2,2);
+    this._cursorUrl = cur.toDataURL();
+    c.style.cursor = 'url(' + this._cursorUrl + ') 0 0, auto';
+
     c.addEventListener('mousedown', e => {
       this._dragging = true; this._ds = {x:e.clientX,y:e.clientY}; this._ps = {x:this.panX,y:this.panY};
-      c.style.cursor = 'grabbing';
     });
     window.addEventListener('mousemove', e => {
+      const rect = c.getBoundingClientRect();
+      this._mouseX = e.clientX - rect.left;
+      this._mouseY = e.clientY - rect.top;
       if (!this._dragging) return;
       this.panX = this._ps.x + (e.clientX - this._ds.x);
       this.panY = this._ps.y + (e.clientY - this._ds.y);
     });
-    window.addEventListener('mouseup', () => { this._dragging = false; this.canvas.style.cursor = 'grab'; });
-    c.style.cursor = 'grab';
+    window.addEventListener('mouseup', () => { this._dragging = false; });
+  }
+
+  _setupHover() {
+    // Hit-test buildings on each frame (done in draw loop via _updateHover)
+  }
+
+  _updateHover(ox, oy) {
+    // Convert mouse position back through zoom transform
+    const w = this.canvas.width, h = this.canvas.height;
+    const mx = (this._mouseX - w/2) / _mapZoom + w/2;
+    const my = (this._mouseY - h/2) / _mapZoom + h/2;
+    this._hoveredBuilding = null;
+    for (const b of this.buildings) {
+      const p = toIso(b.col, b.row);
+      const gridYOff = (b.row + b.col) * 4 - (this.gridW - 1) * 2;
+      const x = ox + p.x, y = oy + p.y + gridYOff;
+      const sz = spriteSize(b.sprite);
+      const sw = sz.w * (b.scaleVar || 1);
+      const sh = sz.h * (b.scaleVar || 1);
+      const drawX = x - sw/2, drawY = y - sh + ISO_H * 1.4;
+      if (mx >= drawX && mx <= drawX + sw && my >= drawY && my <= drawY + sh) {
+        this._hoveredBuilding = b;
+        break; // take first hit (front-most from sorted draw order won't matter much)
+      }
+    }
+  }
+
+  _drawHoverTooltip(ctx) {
+    const b = this._hoveredBuilding;
+    if (!b) return;
+    // Draw tooltip billboard following the cursor
+    const mx = this._mouseX, my = this._mouseY;
+    const name = b.name.toUpperCase();
+    const color = b.bbColor;
+    const nl = Math.min(name.length, 16);
+    const sW = Math.max(40, nl * 7 + 10), sH = 18;
+    const tx = mx + 16, ty = my - 10;
+    // Shadow
+    ctx.fillStyle = 'rgba(0,0,0,0.4)';
+    ctx.fillRect(tx + 2, ty + 2, sW, sH);
+    // Background
+    ctx.fillStyle = color;
+    ctx.fillRect(tx, ty, sW, sH);
+    // Border
+    ctx.strokeStyle = '#1a1a2a';
+    ctx.lineWidth = 1.5;
+    ctx.strokeRect(tx, ty, sW, sH);
+    // Text
+    ctx.fillStyle = '#fff';
+    ctx.font = '7px "Press Start 2P"';
+    ctx.textAlign = 'left';
+    ctx.fillText(name.length > 16 ? name.substring(0, 15) + '..' : name, tx + 4, ty + sH - 5);
+    // Status + files
+    if (b.files > 0) {
+      ctx.fillStyle = 'rgba(255,255,255,0.7)';
+      ctx.font = '5px "Press Start 2P"';
+      ctx.fillText(b.files + ' files', tx + 4, ty + sH + 10);
+    }
   }
 
   _loadImages() {
@@ -426,12 +507,18 @@ class GameMap {
       if (pos.active) this._drawAgent(ctx, id, pos, ox, oy);
     }
 
+    // Hit-test buildings for hover (inside zoom space)
+    this._updateHover(ox, oy);
+
     ctx.restore(); // end zoom transform
 
     // Night overlay (AFTER zoom restore so it covers full canvas, not a transformed box)
     if (a < 0.5) { ctx.fillStyle = `rgba(6,8,24,${0.25 - a*0.4})`; ctx.fillRect(0,0,w,h); }
     if (getDayPhase() === 'dusk') { ctx.fillStyle = 'rgba(255,140,60,0.06)'; ctx.fillRect(0,0,w,h); }
     if (getDayPhase() === 'dawn') { ctx.fillStyle = 'rgba(255,180,100,0.04)'; ctx.fillRect(0,0,w,h); }
+
+    // Hover tooltip (in screen space, above everything)
+    this._drawHoverTooltip(ctx);
   }
 
   _drawRoads(ctx, ox, oy, a) {
