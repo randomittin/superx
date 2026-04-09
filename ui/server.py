@@ -919,6 +919,8 @@ class DashboardHandler(SimpleHTTPRequestHandler):
             self.handle_resume()
         elif self.path == "/api/project":
             self.handle_set_project()
+        elif self.path.startswith("/api/history/") and self.path.endswith("/rename"):
+            self.handle_history_rename()
         else:
             self.send_error(404)
 
@@ -1062,6 +1064,35 @@ class DashboardHandler(SimpleHTTPRequestHandler):
             full = json.loads(HISTORY_FILE.read_text())
             if 0 <= idx < len(full):
                 self.send_json(200, full[idx])
+            else:
+                self.send_json(404, {"error": "Session not found"})
+        except (json.JSONDecodeError, TypeError):
+            self.send_json(500, {"error": "Corrupt history"})
+
+    def handle_history_rename(self):
+        """Rename a past session's task label."""
+        try:
+            parts = self.path.split("/")
+            idx = int(parts[3])
+        except (ValueError, IndexError):
+            self.send_json(400, {"error": "Invalid index"})
+            return
+        length = int(self.headers.get("Content-Length", 0))
+        raw = self.rfile.read(length).decode()
+        body = json.loads(raw) if raw else {}
+        new_name = body.get("name", "").strip()
+        if not new_name:
+            self.send_json(400, {"error": "Name required"})
+            return
+        if not HISTORY_FILE.exists():
+            self.send_json(404, {"error": "No history"})
+            return
+        try:
+            full = json.loads(HISTORY_FILE.read_text())
+            if 0 <= idx < len(full):
+                full[idx]["task"] = new_name
+                HISTORY_FILE.write_text(json.dumps(full))
+                self.send_json(200, {"status": "ok", "name": new_name})
             else:
                 self.send_json(404, {"error": "Session not found"})
         except (json.JSONDecodeError, TypeError):
