@@ -1366,21 +1366,7 @@ body {
   grid-row: 2;
 }
 
-.btn-fullscreen {
-  font-size: 7px;
-  padding: 3px 6px;
-  margin-left: 8px;
-  background: var(--bg-card);
-  border: 1px solid var(--border);
-  color: var(--text-dim);
-  cursor: pointer;
-  font-family: var(--font-pixel);
-}
-
-.btn-fullscreen:hover {
-  border-color: var(--accent);
-  color: var(--text);
-}
+/* fullscreen button now uses .map-tool-btn in the toolbar */
 
 /* === PIXEL ART HELPERS === */
 

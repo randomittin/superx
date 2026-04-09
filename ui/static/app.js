@@ -1006,7 +1006,6 @@ function setupTabs() {
     fsBtn.addEventListener('click', () => {
       const dashboard = document.querySelector('.dashboard');
       dashboard.classList.toggle('map-fullscreen');
-      fsBtn.textContent = dashboard.classList.contains('map-fullscreen') ? '[x]' : '[ ]';
 
       // Switch to map tab when entering fullscreen
       if (dashboard.classList.contains('map-fullscreen')) {
