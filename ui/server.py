@@ -38,8 +38,32 @@ timeline_events: list[dict] = []  # persisted timeline events
 MAX_TIMELINE_EVENTS = 200
 SESSION_FILE = Path("superx-session.json")
 HISTORY_FILE = Path("superx-history.json")
+CHECKPOINT_FILE = Path("superx-checkpoint.json")
+GITHUB_CONFIG_FILE = Path("superx-github.json")
 session_lock = threading.Lock()
 MAX_HISTORY_SESSIONS = 50
+
+# GitHub / project directory config (persisted)
+configured_project_path: str = ""  # where Claude writes code
+configured_github_url: str = ""
+
+
+def _load_github_config():
+    global configured_project_path, configured_github_url
+    if GITHUB_CONFIG_FILE.exists():
+        try:
+            d = json.loads(GITHUB_CONFIG_FILE.read_text())
+            configured_project_path = d.get("path", "")
+            configured_github_url = d.get("url", "")
+        except Exception:
+            pass
+
+
+def _save_github_config():
+    GITHUB_CONFIG_FILE.write_text(json.dumps({
+        "path": configured_project_path,
+        "url": configured_github_url,
+    }))
 
 
 def save_session():
@@ -127,18 +151,98 @@ def load_session():
             pass
 
 
-_recent_event_hashes: set = set()
+def save_checkpoint():
+    """Save current execution state so it can be resumed after crash/restart."""
+    if current_phase == "idle":
+        # Clear checkpoint when idle
+        if CHECKPOINT_FILE.exists():
+            CHECKPOINT_FILE.unlink()
+        return
+    data = {
+        "phase": current_phase,
+        "original_prompt": original_prompt_text,
+        "refined_prompt": refined_prompt_text,
+        "last_response": last_response_text,
+        "images": prompt_images_list,
+        "timestamp": time.time(),
+        "cwd": os.getcwd(),
+    }
+    CHECKPOINT_FILE.write_text(json.dumps(data, indent=2))
+
+
+def load_checkpoint():
+    """Load checkpoint if it exists."""
+    if not CHECKPOINT_FILE.exists():
+        return None
+    try:
+        return json.loads(CHECKPOINT_FILE.read_text())
+    except (json.JSONDecodeError, KeyError):
+        return None
+
+
+def clear_checkpoint():
+    """Remove checkpoint file."""
+    if CHECKPOINT_FILE.exists():
+        CHECKPOINT_FILE.unlink()
+
+
+def resume_from_checkpoint(checkpoint: dict):
+    """Resume execution from a saved checkpoint."""
+    global current_phase, original_prompt_text, refined_prompt_text, last_response_text, prompt_images_list
+
+    phase = checkpoint.get("phase", "idle")
+    original_prompt_text = checkpoint.get("original_prompt", "")
+    refined_prompt_text = checkpoint.get("refined_prompt", "")
+    last_response_text = checkpoint.get("last_response", "")
+    prompt_images_list = checkpoint.get("images", [])
+
+    add_timeline_event({
+        "agent": "superx",
+        "type": "warning",
+        "message": f"Resuming from checkpoint (phase: {phase})",
+    })
+
+    if phase == "refining":
+        # Re-run refinement
+        start_claude(original_prompt_text, prompt_images_list)
+    elif phase == "planning":
+        # Re-run planning with the refined prompt
+        prompt = refined_prompt_text or original_prompt_text
+        start_planning(prompt, prompt_images_list)
+    elif phase == "executing":
+        # Resume execution
+        prompt = refined_prompt_text or original_prompt_text
+        execute_approved_plan(prompt)
+
+
+_recent_msg_keys: list = []  # exact first-200-char strings for dedup
+_last_timeline_key: str = ""  # last added event key for consecutive dedup
 
 def add_timeline_event(event: dict):
-    """Add a timeline event and persist. Deduplicates exact content."""
+    """Add a timeline event and persist. Deduplicates aggressively."""
+    global _last_timeline_key
     msg = event.get("message", "")
-    content_hash = hash(msg[:300]) if msg else 0
-    if content_hash in _recent_event_hashes and len(msg) > 30:
-        return  # skip duplicate
-    _recent_event_hashes.add(content_hash)
-    # Keep set bounded
-    if len(_recent_event_hashes) > 200:
-        _recent_event_hashes.clear()
+    key = msg.strip()[:200] if msg else ""
+    agent = event.get("agent", "")
+
+    # Skip exact duplicates (same first 200 chars)
+    if key and len(key) > 20 and key in _recent_msg_keys:
+        return
+
+    # Skip consecutive duplicate from same agent (even partial match)
+    if key and _last_timeline_key and agent:
+        if key == _last_timeline_key:
+            return
+        # If new message starts with or is contained in last message
+        if len(key) > 30 and (key.startswith(_last_timeline_key[:80]) or _last_timeline_key.startswith(key[:80])):
+            return
+
+    # Track for dedup
+    if key and len(key) > 20:
+        _recent_msg_keys.append(key)
+        if len(_recent_msg_keys) > 150:
+            _recent_msg_keys.pop(0)
+        _last_timeline_key = key
 
     timeline_events.append(event)
     if len(timeline_events) > MAX_TIMELINE_EVENTS:
@@ -197,20 +301,27 @@ def stream_claude_output(proc: subprocess.Popen):
     current_turn_text = ""  # full text of the current assistant turn
     flushed_text = ""  # what we already pushed to timeline
     last_seen_text = ""  # survives turn resets — the latest text from any turn
+    file_write_count = 0  # track file writes for auto-checkpoint
 
     def flush_text_to_timeline():
         """Push accumulated assistant text to the timeline if it's new."""
         nonlocal flushed_text
         text = current_turn_text.strip()
-        if text and text != flushed_text and len(text) > 20:
-            is_long = len(text) > 100 or "\n" in text
-            add_timeline_event({
-                "agent": "superx",
-                "type": "info",
-                "message": text,
-                "markdown": is_long,
-            })
-            flushed_text = text
+        if not text or len(text) <= 20:
+            return
+        # Skip if same as last flush or if new text is just more of the same
+        if text == flushed_text:
+            return
+        if flushed_text and text.startswith(flushed_text[:100]):
+            return
+        is_long = len(text) > 100 or "\n" in text
+        add_timeline_event({
+            "agent": "superx",
+            "type": "info",
+            "message": text,
+            "markdown": is_long,
+        })
+        flushed_text = text
 
     for raw_line in iter(proc.stdout.readline, ""):
         raw_line = raw_line.rstrip("\n")
@@ -292,6 +403,14 @@ def stream_claude_output(proc: subprocess.Popen):
                             "message": f"{tool_name}: {fname}"
                         })
                         push_event("agent_status", {"agent": "coder", "status": "running"})
+                        # Auto-checkpoint every 5 file writes
+                        file_write_count += 1
+                        if file_write_count % 5 == 0 and configured_project_path:
+                            threading.Thread(
+                                target=_auto_checkpoint_git,
+                                args=(file_write_count,),
+                                daemon=True,
+                            ).start()
                     elif tool_name == "Read":
                         fpath = tool_input.get("file_path", "")
                         fname = fpath.split("/")[-1] if fpath else "unknown"
@@ -355,8 +474,9 @@ def stream_claude_output(proc: subprocess.Popen):
         # try to read the actual plan file and show it
         if "saved to" in last_response_text.lower() and len(last_response_text) < 2000:
             import glob
+            search_dir = configured_project_path or os.getcwd()
             plan_files = sorted(
-                glob.glob(os.path.join(os.getcwd(), "docs/superpowers/plans/*.md")),
+                glob.glob(os.path.join(search_dir, "docs/superpowers/plans/*.md")),
                 key=os.path.getmtime, reverse=True
             )
             if plan_files:
@@ -373,11 +493,24 @@ def stream_claude_output(proc: subprocess.Popen):
                 except Exception:
                     pass
 
+    # Final checkpoint when execution completes
+    if current_phase == "executing" and configured_project_path:
+        threading.Thread(
+            target=_auto_checkpoint_git,
+            args=(file_write_count,),
+            daemon=True,
+        ).start()
+
     # Phase-aware completion events
     if current_phase == "refining":
         push_event("prompt_refined", {"status": "awaiting_approval"})
     elif current_phase == "planning":
         push_event("plan_ready", {"status": "awaiting_approval"})
+    elif current_phase == "executing":
+        # Reset to idle and clear checkpoint so resume bar doesn't show
+        current_phase = "idle"
+        if CHECKPOINT_FILE.exists():
+            CHECKPOINT_FILE.unlink()
 
     push_event("agent_status", {"agent": "superx", "status": "idle"})
     push_event("process", {"status": "exited", "code": proc.returncode})
@@ -398,6 +531,28 @@ def _terminal_append(line: str):
     if now - _last_session_save > 2:
         _last_session_save = now
         threading.Thread(target=save_session, daemon=True).start()
+
+
+def _auto_checkpoint_git(file_count: int):
+    """Auto-commit in the project directory as a checkpoint."""
+    cwd = configured_project_path
+    if not cwd or not os.path.isdir(os.path.join(cwd, ".git")):
+        return
+    try:
+        subprocess.run(["git", "add", "-A"], capture_output=True, text=True, cwd=cwd)
+        r = subprocess.run(
+            ["git", "commit", "-m", f"superx auto-checkpoint: {file_count} files written"],
+            capture_output=True, text=True, cwd=cwd,
+        )
+        if r.returncode == 0:
+            add_timeline_event({
+                "agent": "superx",
+                "type": "warning",
+                "message": f"Auto-checkpoint saved ({file_count} files)",
+            })
+            save_checkpoint()
+    except Exception:
+        pass
 
 
 def _build_image_note(images: list) -> str:
@@ -424,9 +579,10 @@ def _spawn_claude(prompt: str, images: list = None):
         "--verbose",
     ]
 
+    work_dir = configured_project_path or os.getcwd()
     claude_process = subprocess.Popen(
         cmd, stdout=subprocess.PIPE, stderr=subprocess.STDOUT,
-        text=True, cwd=os.getcwd(),
+        text=True, cwd=work_dir,
     )
     t = threading.Thread(target=stream_claude_output, args=(claude_process,), daemon=True)
     t.start()
@@ -443,6 +599,7 @@ def start_claude(prompt: str, images: list = None):
     current_phase = "refining"
     original_prompt_text = prompt
     prompt_images_list = images or []
+    save_checkpoint()
 
     refine_prompt = (
         "You are a senior prompt engineer. Improve the following user prompt that "
@@ -482,14 +639,17 @@ def start_planning(prompt: str, images: list = None):
         return
 
     current_phase = "planning"
+    save_checkpoint()
 
+    work_dir = configured_project_path or os.getcwd()
     plan_prompt = (
         "IMPORTANT: Present a comprehensive execution plan before writing any code. "
         "Think like a CTO planning a production system.\n\n"
+        f"PROJECT DIRECTORY: {work_dir} — ALL code, configs, docs MUST go here.\n\n"
         "FIRST: Spawn parallel Agent subprocesses to research ALL independent aspects simultaneously. "
         "For example, spawn separate agents to: analyze external repos, check APIs/docs, "
         "review existing code patterns, research deployment options. Do NOT do research sequentially "
-        "when it can be parallelized.\n\n"
+        "when it can be parallelized. ALWAYS use multiple agents in parallel.\n\n"
         "CHECKPOINT: Save ALL research findings to .md files in docs/analysis/ directory. "
         "For each external repo, API, codebase, or documentation source, create a separate .md file "
         "(e.g., docs/analysis/repo-name.md, docs/analysis/api-name.md). "
@@ -532,16 +692,62 @@ def start_planning(prompt: str, images: list = None):
 
 def execute_approved_plan(original_prompt: str):
     """Execute after user approves the plan."""
+    global current_phase
     if claude_process and claude_process.poll() is None:
         push_event("error", "Claude is already running.")
         return
 
+    current_phase = "executing"
+    save_checkpoint()
+
+    work_dir = configured_project_path or os.getcwd()
     exec_prompt = (
-        "The user has approved your plan. Now execute it fully. "
+        "The user has approved your plan. Execute it NOW with maximum parallelism.\n\n"
+        "CRITICAL RULES:\n"
+        f"1. ALL code and files MUST be written to: {work_dir}\n"
+        "2. SPAWN PARALLEL AGENTS for every independent task. Use the Agent tool aggressively. "
+        "If two tasks don't depend on each other, run them simultaneously. "
+        "For example: UI, API, config, tests, and docs can all be built in parallel.\n"
+        "3. After each major milestone (package created, service wired, tests passing), "
+        "run: git add -A && git commit -m 'checkpoint: <description>' "
+        f"in {work_dir} to checkpoint progress.\n"
+        "4. Save all research, decisions, and architecture notes to docs/ as .md files.\n"
+        "5. Create or update CLAUDE.md in the project root with project conventions.\n"
+        "6. Create or update README.md in the project root with:\n"
+        "   - Project name and description\n"
+        "   - Prerequisites (Node version, package manager, etc.)\n"
+        "   - Installation steps (git clone, install deps)\n"
+        "   - How to run in development mode\n"
+        "   - How to build for production\n"
+        "   - How to run tests\n"
+        "   - Environment variables needed (.env setup)\n"
+        "   - Project structure overview\n"
+        "   - Deployment instructions\n"
+        "   Keep it concise and actionable. Use code blocks for commands.\n\n"
+        "FINAL CHECKPOINT (CRITICAL — do this ONCE when all work is done):\n"
+        "When you have completed ALL implementation work, do these steps EXACTLY ONCE then STOP:\n"
+        f"1. Run: cd {work_dir} && git add -A && git commit -m 'final: all deliverables complete'\n"
+        "2. Write your final response as a DELIVERABLES SUMMARY in this exact markdown format:\n\n"
+        "# Deliverables Complete\n\n"
+        "- [x] Deliverable 1 description\n"
+        "- [x] Deliverable 2 description\n"
+        "- [x] ... (one line per major item)\n\n"
+        "## How to Run\n"
+        "```bash\n"
+        "# step-by-step commands to install and run\n"
+        "```\n\n"
+        "## How to Test\n"
+        "```bash\n"
+        "# commands to run tests\n"
+        "```\n\n"
+        "DO NOT run any more completeness checks after this. DO NOT loop back to verify. "
+        "DO NOT spawn more agents after the final commit. Just output the summary and STOP. "
+        "If something is incomplete, note it as '- [ ] Item (not done: reason)' and still STOP.\n\n"
         "The original task was: " + original_prompt
     )
 
     push_event("process", {"status": "starting", "prompt": "Executing approved plan..."})
+    push_event("agent_status", {"agent": "superx", "status": "running"})
 
     with terminal_lock:
         terminal_lines.append("")
@@ -604,7 +810,10 @@ def revise_plan(original_prompt: str, feedback: str, images: list = None):
         "The user reviewed your plan and wants changes. Here's their feedback:\n\n"
         f'"{feedback}"\n\n'
         "Please revise the plan based on this feedback. "
-        "Present the updated plan. DO NOT start implementing. "
+        "CRITICAL: You MUST present the FULL updated plan in your response text. "
+        "Do NOT just save it to a file and show a summary. "
+        "Show the complete revised plan with all sections so the user can review it. "
+        "DO NOT start implementing. "
         "End your response with: ---PLAN READY---\n\n"
         "Original task: " + original_prompt
     )
@@ -625,7 +834,7 @@ def revise_plan(original_prompt: str, feedback: str, images: list = None):
 
 def continue_on_terminal():
     """Open the system terminal with claude --continue."""
-    cwd = os.getcwd()
+    cwd = configured_project_path or os.getcwd()
     # macOS: open Terminal.app with claude --continue
     script = f'tell application "Terminal" to do script "cd {cwd} && claude --continue"'
     subprocess.Popen(["osascript", "-e", script])
@@ -667,10 +876,24 @@ class DashboardHandler(SimpleHTTPRequestHandler):
             self.handle_terminal()
         elif self.path == "/api/session":
             self.handle_session()
+        elif self.path == "/api/checkpoint":
+            self.handle_checkpoint_get()
         elif self.path == "/api/history":
             self.handle_history()
         elif self.path.startswith("/api/history/"):
             self.handle_history_detail()
+        elif self.path == "/api/github":
+            self.send_json(200, {
+                "url": configured_github_url,
+                "path": configured_project_path,
+            })
+        elif self.path == "/api/project":
+            self.send_json(200, {
+                "path": configured_project_path,
+                "url": configured_github_url,
+            })
+        elif self.path == "/api/project-structure":
+            self.handle_project_structure()
         elif self.path == "/":
             self.path = "/index.html"
             super().do_GET()
@@ -692,6 +915,10 @@ class DashboardHandler(SimpleHTTPRequestHandler):
             self.handle_continue()
         elif self.path == "/api/github":
             self.handle_github()
+        elif self.path == "/api/resume":
+            self.handle_resume()
+        elif self.path == "/api/project":
+            self.handle_set_project()
         else:
             self.send_error(404)
 
@@ -759,8 +986,34 @@ class DashboardHandler(SimpleHTTPRequestHandler):
             "pending_plan": has_pending,
         })
 
+    def handle_checkpoint_get(self):
+        """Return checkpoint data if resumable."""
+        cp = load_checkpoint()
+        if cp and cp.get("phase", "idle") != "idle":
+            import datetime
+            ts = cp.get("timestamp", 0)
+            ago = datetime.datetime.now() - datetime.datetime.fromtimestamp(ts)
+            mins = int(ago.total_seconds() / 60)
+            self.send_json(200, {
+                "resumable": True,
+                "phase": cp["phase"],
+                "prompt": cp.get("original_prompt", "")[:100],
+                "minutes_ago": mins,
+            })
+        else:
+            self.send_json(200, {"resumable": False})
+
+    def handle_resume(self):
+        """Resume from checkpoint."""
+        cp = load_checkpoint()
+        if not cp:
+            self.send_json(400, {"error": "No checkpoint found"})
+            return
+        resume_from_checkpoint(cp)
+        self.send_json(200, {"status": "resuming", "phase": cp.get("phase", "")})
+
     def handle_prompt(self):
-        """Accept a prompt and start claude."""
+        """Accept a prompt and start claude. Requires project directory to be set."""
         length = int(self.headers.get("Content-Length", 0))
         body = self.rfile.read(length).decode()
         try:
@@ -769,6 +1022,9 @@ class DashboardHandler(SimpleHTTPRequestHandler):
             images = data.get("images", [])
             if not prompt:
                 self.send_json(400, {"error": "Empty prompt"})
+                return
+            if not configured_project_path:
+                self.send_json(400, {"error": "Set a project directory first (click GitHub icon)"})
                 return
             start_claude(prompt, images)
             self.send_json(200, {"status": "started", "prompt": prompt})
@@ -856,17 +1112,29 @@ class DashboardHandler(SimpleHTTPRequestHandler):
             self.send_json(400, {"error": "Invalid JSON"})
 
     def handle_github(self):
-        """Set GitHub remote and commit+push using SSH (matching gh config)."""
+        """Set GitHub remote, persist config, and commit+push using SSH."""
+        global configured_project_path, configured_github_url
         length = int(self.headers.get("Content-Length", 0))
         body = self.rfile.read(length).decode()
         try:
             data = json.loads(body)
             url = data.get("url", "").strip()
+            local_path = data.get("path", "").strip()
             if not url:
                 self.send_json(400, {"error": "No URL provided"})
                 return
 
-            cwd = os.getcwd()
+            # Resolve and persist project path
+            cwd = os.path.expanduser(local_path) if local_path else configured_project_path or os.getcwd()
+            if not os.path.isdir(cwd):
+                self.send_json(400, {"error": f"Directory not found: {cwd}"})
+                return
+
+            # Persist config so Claude spawns in this directory
+            configured_project_path = cwd
+            configured_github_url = url
+            _save_github_config()
+
             steps = []
 
             # Extract owner/repo from any URL format
@@ -874,7 +1142,6 @@ class DashboardHandler(SimpleHTTPRequestHandler):
             repo_slug = repo_slug.replace("github.com/", "").replace("git@github.com:", "")
             repo_slug = repo_slug.rstrip("/").rstrip(".git")
 
-            # Use SSH URL since gh is configured for SSH protocol
             ssh_url = f"git@github.com:{repo_slug}.git"
 
             # Init git if needed
@@ -882,14 +1149,20 @@ class DashboardHandler(SimpleHTTPRequestHandler):
                 subprocess.run(["git", "init"], capture_output=True, text=True, cwd=cwd)
                 steps.append("git init")
 
-            # Set remote to SSH URL
-            subprocess.run(["git", "remote", "remove", "origin"],
-                           capture_output=True, text=True, cwd=cwd)
-            subprocess.run(["git", "remote", "add", "origin", ssh_url],
-                           capture_output=True, text=True, cwd=cwd)
-            steps.append(f"remote: {repo_slug} (SSH)")
+            # Set remote — only change if different
+            current_remote = subprocess.run(
+                ["git", "remote", "get-url", "origin"],
+                capture_output=True, text=True, cwd=cwd).stdout.strip()
+            if current_remote != ssh_url:
+                subprocess.run(["git", "remote", "remove", "origin"],
+                               capture_output=True, text=True, cwd=cwd)
+                subprocess.run(["git", "remote", "add", "origin", ssh_url],
+                               capture_output=True, text=True, cwd=cwd)
+                steps.append(f"remote: {repo_slug} (SSH)")
+            else:
+                steps.append(f"remote: {repo_slug} (unchanged)")
 
-            # Detect branch, recover from bad state
+            # Detect branch
             branch = subprocess.run(["git", "branch", "--show-current"],
                 capture_output=True, text=True, cwd=cwd).stdout.strip()
             if not branch:
@@ -916,17 +1189,96 @@ class DashboardHandler(SimpleHTTPRequestHandler):
                                capture_output=True, text=True, cwd=cwd)
                 steps.append("sync: skipped")
 
-            # Push explicit branch
+            # Always try to push — let the result tell us what happened
             r = subprocess.run(["git", "push", "-u", "origin", branch],
                                capture_output=True, text=True, cwd=cwd)
 
-            if r.returncode == 0:
-                steps.append("push: success")
-                self.send_json(200, {"status": "pushed", "steps": steps})
+            output = (r.stdout + r.stderr).strip()
+            if r.returncode == 0 or "Everything up-to-date" in output:
+                pushed_something = "up-to-date" not in output.lower()
+                steps.append("push: " + ("success" if pushed_something else "up-to-date"))
+                self.send_json(200, {
+                    "status": "pushed" if pushed_something else "nothing_to_push",
+                    "steps": steps
+                })
             else:
                 steps.append(f"push: {r.stderr.strip()[:120]}")
                 self.send_json(200, {"status": "push_failed", "steps": steps,
                                      "error": r.stderr.strip()[:200]})
+        except Exception as e:
+            self.send_json(500, {"error": str(e)})
+
+    def handle_project_structure(self):
+        """Scan project directory and return top-level packages/apps as map items."""
+        if not configured_project_path or not os.path.isdir(configured_project_path):
+            self.send_json(200, {"items": []})
+            return
+        items = []
+        root = configured_project_path
+        # Look for common monorepo patterns: apps/*, packages/*, src/*
+        for subdir in ["apps", "packages", "src", "services", "libs"]:
+            container = os.path.join(root, subdir)
+            if os.path.isdir(container):
+                for name in sorted(os.listdir(container)):
+                    full = os.path.join(container, name)
+                    if os.path.isdir(full) and not name.startswith("."):
+                        # Count files to estimate progress
+                        file_count = sum(1 for _, _, files in os.walk(full)
+                                        for f in files if not f.startswith("."))
+                        has_src = os.path.isdir(os.path.join(full, "src"))
+                        items.append({
+                            "id": f"{subdir}/{name}",
+                            "name": name,
+                            "category": subdir,
+                            "files": file_count,
+                            "has_src": has_src,
+                            "status": "complete" if file_count > 3 else
+                                      "in_progress" if file_count > 0 else "pending",
+                        })
+        # Also check for root-level config files as a "config" building
+        root_configs = [f for f in os.listdir(root)
+                       if os.path.isfile(os.path.join(root, f))
+                       and not f.startswith(".")]
+        if root_configs:
+            items.insert(0, {
+                "id": "root/config",
+                "name": "config",
+                "category": "root",
+                "files": len(root_configs),
+                "has_src": False,
+                "status": "complete" if len(root_configs) > 2 else "in_progress",
+            })
+        # docs directory
+        docs = os.path.join(root, "docs")
+        if os.path.isdir(docs):
+            doc_count = sum(1 for _, _, files in os.walk(docs) for f in files)
+            items.append({
+                "id": "docs",
+                "name": "docs",
+                "category": "docs",
+                "files": doc_count,
+                "has_src": False,
+                "status": "complete" if doc_count > 0 else "pending",
+            })
+        self.send_json(200, {"items": items})
+
+    def handle_set_project(self):
+        """Set the project working directory."""
+        global configured_project_path
+        length = int(self.headers.get("Content-Length", 0))
+        body = self.rfile.read(length).decode()
+        try:
+            data = json.loads(body)
+            path = os.path.expanduser(data.get("path", "").strip())
+            if not path:
+                self.send_json(400, {"error": "No path provided"})
+                return
+            if not os.path.isdir(path):
+                self.send_json(400, {"error": f"Not a directory: {path}"})
+                return
+            configured_project_path = path
+            _save_github_config()
+            self.send_json(200, {"status": "ok", "path": path})
         except Exception as e:
             self.send_json(500, {"error": str(e)})
 
@@ -964,9 +1316,12 @@ class DashboardHandler(SimpleHTTPRequestHandler):
             claude_process.terminate()
         # Archive before clearing
         archive_session()
-        # Clear session
+        # Clear session and checkpoint
+        global current_phase
+        current_phase = "idle"
+        clear_checkpoint()
         timeline_events.clear()
-        _recent_event_hashes.clear()
+        _recent_msg_keys.clear()
         with terminal_lock:
             terminal_lines.clear()
         pending_prompts.clear()
@@ -989,6 +1344,7 @@ class DashboardHandler(SimpleHTTPRequestHandler):
 def main():
     init_state_if_needed()
     load_session()
+    _load_github_config()
 
     watcher = threading.Thread(target=watch_state_file, daemon=True)
     watcher.start()
