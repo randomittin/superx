@@ -583,69 +583,141 @@ function setupPromptInput() {
     input.style.height = 'auto';
     const shortPrompt = prompt.length > 80 ? prompt.substring(0, 80) + '...' : prompt;
     const imgNote = images.length ? ' [' + images.length + ' img]' : '';
+    addTimelineEvent('info', 'superx', 'Task: ' + shortPrompt + imgNote, true);
     showLoading(true);
 
     // Clear images
     pendingImages.prompt = [];
     updateImagePreview('prompt-images', 'prompt');
 
-    // If we're awaiting Claude's question, this is a reply, not a new task
-    const awaiting = window._currentPhase === 'awaiting_user_input';
-    const endpoint = awaiting ? '/api/reply' : '/api/prompt';
-    const body = awaiting ? { reply: prompt, images } : { prompt, images };
-
-    if (awaiting) {
-      addTimelineEvent('info', 'superx', 'Reply: ' + shortPrompt + imgNote, true);
-    } else {
-      addTimelineEvent('info', 'superx', 'Task: ' + shortPrompt + imgNote, true);
-    }
-
     try {
-      const res = await fetch(endpoint, {
+      const res = await fetch('/api/prompt', {
         method: 'POST',
         headers: { 'Content-Type': 'application/json' },
-        body: JSON.stringify(body),
+        body: JSON.stringify({ prompt, images }),
       });
       const data = await res.json();
       if (data.error) {
         addTimelineEvent('error', 'superx', data.error);
         showLoading(false);
-      } else {
-        // Optimistically clear awaiting state — server will confirm via SSE
-        setAwaitingState(false);
       }
     } catch (err) {
-      addTimelineEvent('error', 'superx', 'Failed to send');
+      addTimelineEvent('error', 'superx', 'Failed to send prompt');
       showLoading(false);
     }
   }
 
-  // Toggle the prompt bar's "awaiting Claude question" appearance
+  // Show / hide the awaiting-input panel and populate it with the question.
+  // Detects multiple-choice options like "(A) ...", "(B) ..." and renders
+  // them as quick-pick buttons in addition to the free-form text input.
   function setAwaitingState(awaiting, questionText) {
     window._currentPhase = awaiting ? 'awaiting_user_input' : 'idle';
-    const promptBar = document.querySelector('.prompt-bar');
-    if (!promptBar) return;
+    const panel = document.getElementById('awaiting-panel');
+    if (!panel) return;
     if (awaiting) {
-      promptBar.classList.add('awaiting');
-      input.placeholder = 'Claude is asking — type your reply...';
-      // Show the question above the input as a hint
-      let hint = document.getElementById('awaiting-hint');
-      if (!hint) {
-        hint = document.createElement('div');
-        hint.id = 'awaiting-hint';
-        hint.className = 'awaiting-hint';
-        promptBar.insertBefore(hint, promptBar.firstChild);
+      panel.classList.add('visible');
+      const qEl = document.getElementById('awaiting-question');
+      const optsEl = document.getElementById('awaiting-options');
+      const text = questionText || 'Claude is waiting for your input';
+      qEl.textContent = text;
+      optsEl.textContent = '';
+
+      // Detect (A), (B), (C), (D) option patterns. Also picks up bold like **(A)**.
+      const optionRegex = /\*{0,2}\(([A-Z])\)\*{0,2}/g;
+      const seen = new Set();
+      const matches = [];
+      let m;
+      while ((m = optionRegex.exec(text)) !== null) {
+        if (seen.has(m[1])) continue;
+        seen.add(m[1]);
+        const after = text.substring(m.index + m[0].length, m.index + m[0].length + 60);
+        const desc = after.replace(/^\s*[-:.]?\s*/, '').split(/\n/)[0].trim().substring(0, 40);
+        matches.push({ letter: m[1], desc });
       }
-      hint.textContent = questionText || 'Claude is waiting for your input';
+
+      // Also detect a yes/no question — simple heuristic on the last sentence.
+      const lastSentence = text.split(/[.!?]/).filter(s => s.trim()).pop() || '';
+      const lower = lastSentence.toLowerCase();
+      const looksLikeYesNo =
+        matches.length === 0 && (
+          /\b(should|do|does|did|are|is|can|will|would|shall|may|have|has|want)\b/.test(lower) ||
+          lower.includes('yes or no') || lower.includes('y/n')
+        );
+
+      if (matches.length >= 2) {
+        for (const opt of matches) {
+          const btn = document.createElement('button');
+          btn.className = 'btn-awaiting-option';
+          btn.title = opt.desc;
+          btn.innerHTML = '<span class="opt-letter">(' + opt.letter + ')</span>' +
+                          (opt.desc ? '<span class="opt-desc">' + opt.desc + '</span>' : '');
+          btn.addEventListener('click', () => sendAwaitingReply(opt.letter));
+          optsEl.appendChild(btn);
+        }
+      } else if (looksLikeYesNo) {
+        for (const choice of ['yes', 'no']) {
+          const btn = document.createElement('button');
+          btn.className = 'btn-awaiting-option';
+          btn.innerHTML = '<span class="opt-letter">' + choice.toUpperCase() + '</span>';
+          btn.addEventListener('click', () => sendAwaitingReply(choice));
+          optsEl.appendChild(btn);
+        }
+      }
+      // Focus the text input for free-form replies
+      const ta = document.getElementById('awaiting-input');
+      if (ta) ta.focus();
     } else {
-      promptBar.classList.remove('awaiting');
-      input.placeholder = 'Type a task for superx...';
-      const hint = document.getElementById('awaiting-hint');
-      if (hint) hint.remove();
+      panel.classList.remove('visible');
+      const ta = document.getElementById('awaiting-input');
+      if (ta) ta.value = '';
+      const optsEl = document.getElementById('awaiting-options');
+      if (optsEl) optsEl.textContent = '';
     }
   }
   // Expose so SSE handlers can call it
   window._setAwaitingState = setAwaitingState;
+
+  // Send a reply to /api/reply (used by both option buttons and the SEND button)
+  async function sendAwaitingReply(replyText) {
+    const text = (replyText || '').trim();
+    if (!text) return;
+    const shortPrompt = text.length > 80 ? text.substring(0, 80) + '...' : text;
+    addTimelineEvent('info', 'superx', 'Reply: ' + shortPrompt, true);
+    showLoading(true);
+    setAwaitingState(false);
+    try {
+      const res = await fetch('/api/reply', {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({ reply: text, images: [] }),
+      });
+      const data = await res.json();
+      if (data.error) {
+        addTimelineEvent('error', 'superx', data.error);
+        showLoading(false);
+      }
+    } catch (err) {
+      addTimelineEvent('error', 'superx', 'Failed to send reply');
+      showLoading(false);
+    }
+  }
+  // Expose for option buttons inside setAwaitingState
+  window._sendAwaitingReply = sendAwaitingReply;
+
+  // Wire up the SEND button + Enter on the awaiting input
+  const awaitingSendBtn = document.getElementById('awaiting-send');
+  const awaitingInput = document.getElementById('awaiting-input');
+  if (awaitingSendBtn && awaitingInput) {
+    awaitingSendBtn.addEventListener('click', () => {
+      sendAwaitingReply(awaitingInput.value);
+    });
+    awaitingInput.addEventListener('keydown', (e) => {
+      if (e.key === 'Enter' && !e.shiftKey) {
+        e.preventDefault();
+        sendAwaitingReply(awaitingInput.value);
+      }
+    });
+  }
 
   input.addEventListener('keydown', (e) => {
     if (e.key === 'Enter' && !e.shiftKey) {
