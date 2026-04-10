@@ -579,6 +579,21 @@ function setupPromptInput() {
       historyIndex = -1;
     }
 
+    // If no project directory is set, buffer the prompt and pop the project
+    // modal. The modal save handler will auto-submit the buffered task once
+    // the path is in place. Avoids the user having to type their task twice.
+    if (!window._projectPath) {
+      window._pendingTask = { prompt, images };
+      input.value = '';
+      input.style.height = 'auto';
+      pendingImages.prompt = [];
+      updateImagePreview('prompt-images', 'prompt');
+      if (window._openProjectModal) {
+        window._openProjectModal('Pick a project directory before running this task. Plans, code, and research will all be written there.');
+      }
+      return;
+    }
+
     input.value = '';
     input.style.height = 'auto';
     const shortPrompt = prompt.length > 80 ? prompt.substring(0, 80) + '...' : prompt;
@@ -598,6 +613,15 @@ function setupPromptInput() {
       });
       const data = await res.json();
       if (data.error) {
+        // Server says we still need a project directory — buffer + open modal.
+        if (data.needs_project) {
+          window._pendingTask = { prompt, images };
+          showLoading(false);
+          if (window._openProjectModal) {
+            window._openProjectModal('Pick a project directory before running this task. Plans, code, and research will all be written there.');
+          }
+          return;
+        }
         addTimelineEvent('error', 'superx', data.error);
         showLoading(false);
       }
@@ -1147,12 +1171,24 @@ async function setupGitHub() {
     const cfg = await res.json();
     if (cfg.path) {
       pathInput.value = cfg.path;
+      window._projectPath = cfg.path;
       const short = cfg.path.split('/').slice(-2).join('/');
       pathDisplay.textContent = short;
       pathDisplay.title = cfg.path;
     }
     if (cfg.url) urlInput.value = cfg.url;
   } catch(e) {}
+
+  // Expose a helper to open the modal from elsewhere (e.g. sendPrompt when
+  // no project is set yet). Optional reason text is shown in the status row.
+  window._openProjectModal = (reason) => {
+    modal.classList.add('open');
+    if (reason) {
+      status.textContent = reason;
+      status.style.color = 'var(--warning)';
+    }
+    setTimeout(() => pathInput.focus(), 50);
+  };
 
   btn.addEventListener('click', () => modal.classList.add('open'));
   closeBtn.addEventListener('click', () => modal.classList.remove('open'));
@@ -1184,9 +1220,36 @@ async function setupGitHub() {
       } else {
         status.textContent = 'Project set: ' + data.path;
         status.style.color = 'var(--success)';
+        window._projectPath = data.path;
         const short = data.path.split('/').slice(-2).join('/');
         pathDisplay.textContent = short;
         pathDisplay.title = data.path;
+        // If a task was buffered while waiting for the path, auto-submit it
+        // and close the modal so the user doesn't have to retype.
+        if (window._pendingTask) {
+          const buffered = window._pendingTask;
+          window._pendingTask = null;
+          modal.classList.remove('open');
+          try {
+            const r = await fetch('/api/prompt', {
+              method: 'POST',
+              headers: { 'Content-Type': 'application/json' },
+              body: JSON.stringify(buffered),
+            });
+            const d = await r.json();
+            if (d.error) {
+              addTimelineEvent('error', 'superx', d.error);
+            } else {
+              const shortPrompt = buffered.prompt.length > 80
+                ? buffered.prompt.substring(0, 80) + '...'
+                : buffered.prompt;
+              addTimelineEvent('info', 'superx', 'Task: ' + shortPrompt, true);
+              if (window._showLoading) window._showLoading(true);
+            }
+          } catch (err) {
+            addTimelineEvent('error', 'superx', 'Failed to start buffered task');
+          }
+        }
       }
     } catch (err) {
       status.textContent = 'Network error';
