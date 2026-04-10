@@ -645,8 +645,10 @@ class GameMap {
     const sx = ox+p.x, sy = oy+p.y+bounce;
     const type = id==='coder'||id.includes('code')?'coder':id==='superx'?'superx':id.includes('archi')?'architect':id.includes('design')?'design':id.includes('test')?'test-runner':id.includes('doc')?'docs-writer':'coder';
     const img = window.SPRITE_CACHE?.[type];
-    if (img && img.complete) ctx.drawImage(img, sx-14, sy-36, 28, 28);
-    else { ctx.fillStyle='#e06060'; ctx.fillRect(sx-4,sy-26,8,8); ctx.fillStyle='#ffd040'; ctx.fillRect(sx-3,sy-32,6,6); }
+    // Smaller size (18x18) so characters read as tiny figures on buildings
+    const size = 18;
+    if (img && img.complete) ctx.drawImage(img, sx - size/2, sy - size - 4, size, size);
+    else { ctx.fillStyle='#e06060'; ctx.fillRect(sx-3,sy-20,6,6); ctx.fillStyle='#ffd040'; ctx.fillRect(sx-2,sy-25,4,4); }
   }
 
   _dim(hex, a) {
