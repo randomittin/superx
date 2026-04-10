@@ -573,7 +573,20 @@ def _build_image_note(images: list) -> str:
 def _system_preamble() -> str:
     work_dir = configured_project_path or os.getcwd()
     return (
-        f"PROJECT DIRECTORY: {work_dir} — write all code, configs, and docs here.\n\n"
+        f"PROJECT DIRECTORY: {work_dir}\n"
+        "ALL code, configs, docs, plans, specs, research notes, and any other "
+        "file you create MUST live inside the PROJECT DIRECTORY above. "
+        "Use these conventional sub-paths inside the project (create them if "
+        "they don't exist):\n"
+        f"  - {work_dir}/docs/superpowers/plans/    — implementation plans\n"
+        f"  - {work_dir}/docs/superpowers/specs/    — design specs\n"
+        f"  - {work_dir}/docs/analysis/             — research / analysis docs\n"
+        f"  - {work_dir}/                           — code, README, CLAUDE.md, configs\n"
+        "NEVER write any file inside the superx plugin directory itself "
+        "(the directory containing this dashboard's server). The superx plugin "
+        "is the tool, not the workspace. Use absolute paths under the PROJECT "
+        "DIRECTORY whenever you call Write or Edit. If you find yourself about "
+        "to write outside the PROJECT DIRECTORY, stop and re-target the path.\n\n"
         "INPUT PROTOCOL: If at any point you need clarification, a decision, "
         "credentials, or any other input from the user, end your final response "
         "with a single question (and a literal `?` as the very last character). "
@@ -887,7 +900,12 @@ class DashboardHandler(SimpleHTTPRequestHandler):
                 self.send_json(400, {"error": "Empty prompt"})
                 return
             if not configured_project_path:
-                self.send_json(400, {"error": "Set a project directory first (click GitHub icon)"})
+                # Structured error so the frontend can pop the project modal
+                # automatically and re-submit once the path is set.
+                self.send_json(400, {
+                    "error": "Set a project directory first",
+                    "needs_project": True,
+                })
                 return
             start_claude(prompt, images)
             self.send_json(200, {"status": "started", "prompt": prompt})
