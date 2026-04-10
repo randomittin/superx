@@ -17,15 +17,13 @@ const dynamicAgents = {};  // dynamically spawned agents { id: {name, status} }
 // === INITIALIZATION ===
 
 // Pending image paths for prompt and plan areas
-const pendingImages = { prompt: [], plan: [] };
+const pendingImages = { prompt: [] };
 
 document.addEventListener('DOMContentLoaded', () => {
   gameMap = new GameMap('map-canvas');
   connectSSE();
   setupPromptInput();
-  setupPlanApproval();
   setupImageAttach('attach-btn', 'attach-input', 'prompt-images', 'prompt');
-  setupImageAttach('plan-attach-btn', 'plan-attach-input', 'plan-images', 'plan');
   setupContinueButton();
   setupCopyLogs();
   setupTabs();
@@ -71,14 +69,14 @@ async function restoreSession() {
       if (window._showLoading) window._showLoading(true);
     }
 
-    if (session.pending_plan && !session.running) {
-      // Use phase to decide which approval UI to show
-      const phase = session.phase || 'planning';
-      window._currentPhase = phase;
-      showPlanApproval(true, phase);
-      document.getElementById('status-badge').className = 'status-badge';
-      document.getElementById('status-badge').textContent =
-        phase === 'refining' ? 'PROMPT READY' : 'PLAN READY';
+    if (session.phase === 'awaiting_user_input') {
+      window._currentPhase = 'awaiting_user_input';
+      if (window._setAwaitingState) {
+        window._setAwaitingState(true, session.awaiting_prompt || '');
+      }
+      const badge = document.getElementById('status-badge');
+      badge.className = 'status-badge';
+      badge.textContent = 'AWAITING INPUT';
     }
   } catch (e) {
     // First load, no session yet
@@ -141,11 +139,10 @@ function connectSSE() {
         if (window._showLoading) window._showLoading(true);
       } else if (data.status === 'exited') {
         const success = data.code === 0;
-        // If an approval panel is visible (refining/planning done), don't
-        // overwrite its PROMPT READY / PLAN READY status with IDLE.
-        const panel = document.getElementById('plan-approval');
-        const approvalVisible = panel && panel.classList.contains('visible');
-        if (!approvalVisible) {
+        // If we're waiting for the user to reply, don't claim the task is done.
+        // The awaiting_user_input event arrives just before this and sets the
+        // phase + badge appropriately.
+        if (window._currentPhase !== 'awaiting_user_input') {
           addTimelineEvent(success ? 'success' : 'error', 'superx',
             success ? 'Task completed successfully' : 'Exited with code ' + data.code);
           document.getElementById('status-badge').className = 'status-badge' + (success ? '' : ' error');
@@ -187,20 +184,17 @@ function connectSSE() {
     } catch (err) {}
   });
 
-  eventSource.addEventListener('prompt_refined', (e) => {
-    window._currentPhase = 'refining';
-    showPlanApproval(true, 'refining');
+  eventSource.addEventListener('awaiting_user_input', (e) => {
+    let questionText = '';
+    try {
+      const payload = JSON.parse(e.data);
+      questionText = (payload.data && payload.data.prompt) || '';
+    } catch (_) {}
+    if (window._setAwaitingState) window._setAwaitingState(true, questionText);
     if (window._showLoading) window._showLoading(false);
-    document.getElementById('status-badge').className = 'status-badge';
-    document.getElementById('status-badge').textContent = 'PROMPT READY';
-  });
-
-  eventSource.addEventListener('plan_ready', (e) => {
-    window._currentPhase = 'planning';
-    showPlanApproval(true, 'planning');
-    if (window._showLoading) window._showLoading(false);
-    document.getElementById('status-badge').className = 'status-badge';
-    document.getElementById('status-badge').textContent = 'PLAN READY';
+    const badge = document.getElementById('status-badge');
+    badge.className = 'status-badge';
+    badge.textContent = 'AWAITING INPUT';
   });
 
   eventSource.addEventListener('error', (e) => {
@@ -589,29 +583,69 @@ function setupPromptInput() {
     input.style.height = 'auto';
     const shortPrompt = prompt.length > 80 ? prompt.substring(0, 80) + '...' : prompt;
     const imgNote = images.length ? ' [' + images.length + ' img]' : '';
-    addTimelineEvent('info', 'superx', 'Task: ' + shortPrompt + imgNote, true);
     showLoading(true);
 
     // Clear images
     pendingImages.prompt = [];
     updateImagePreview('prompt-images', 'prompt');
 
+    // If we're awaiting Claude's question, this is a reply, not a new task
+    const awaiting = window._currentPhase === 'awaiting_user_input';
+    const endpoint = awaiting ? '/api/reply' : '/api/prompt';
+    const body = awaiting ? { reply: prompt, images } : { prompt, images };
+
+    if (awaiting) {
+      addTimelineEvent('info', 'superx', 'Reply: ' + shortPrompt + imgNote, true);
+    } else {
+      addTimelineEvent('info', 'superx', 'Task: ' + shortPrompt + imgNote, true);
+    }
+
     try {
-      const res = await fetch('/api/prompt', {
+      const res = await fetch(endpoint, {
         method: 'POST',
         headers: { 'Content-Type': 'application/json' },
-        body: JSON.stringify({ prompt, images }),
+        body: JSON.stringify(body),
       });
       const data = await res.json();
       if (data.error) {
         addTimelineEvent('error', 'superx', data.error);
         showLoading(false);
+      } else {
+        // Optimistically clear awaiting state — server will confirm via SSE
+        setAwaitingState(false);
       }
     } catch (err) {
-      addTimelineEvent('error', 'superx', 'Failed to send prompt');
+      addTimelineEvent('error', 'superx', 'Failed to send');
       showLoading(false);
     }
   }
+
+  // Toggle the prompt bar's "awaiting Claude question" appearance
+  function setAwaitingState(awaiting, questionText) {
+    window._currentPhase = awaiting ? 'awaiting_user_input' : 'idle';
+    const promptBar = document.querySelector('.prompt-bar');
+    if (!promptBar) return;
+    if (awaiting) {
+      promptBar.classList.add('awaiting');
+      input.placeholder = 'Claude is asking — type your reply...';
+      // Show the question above the input as a hint
+      let hint = document.getElementById('awaiting-hint');
+      if (!hint) {
+        hint = document.createElement('div');
+        hint.id = 'awaiting-hint';
+        hint.className = 'awaiting-hint';
+        promptBar.insertBefore(hint, promptBar.firstChild);
+      }
+      hint.textContent = questionText || 'Claude is waiting for your input';
+    } else {
+      promptBar.classList.remove('awaiting');
+      input.placeholder = 'Type a task for superx...';
+      const hint = document.getElementById('awaiting-hint');
+      if (hint) hint.remove();
+    }
+  }
+  // Expose so SSE handlers can call it
+  window._setAwaitingState = setAwaitingState;
 
   input.addEventListener('keydown', (e) => {
     if (e.key === 'Enter' && !e.shiftKey) {
@@ -670,7 +704,7 @@ function setupPromptInput() {
     try {
       await fetch('/api/stop', { method: 'POST' });
       showLoading(false);
-      showPlanApproval(false);
+      if (window._setAwaitingState) window._setAwaitingState(false);
       // Clear frontend
       document.getElementById('timeline-events').textContent = '';
       document.getElementById('event-count').textContent = '0';
@@ -857,137 +891,6 @@ async function viewPastSession(index) {
   } catch (err) {
     console.error('Failed to load session:', err);
   }
-}
-
-// === PLAN APPROVAL ===
-
-function showPlanApproval(visible, phase) {
-  const el = document.getElementById('plan-approval');
-  if (el) el.className = visible ? 'plan-approval visible' : 'plan-approval';
-  if (visible) {
-    const label = document.getElementById('plan-label');
-    const approveBtn = document.getElementById('btn-approve');
-    const feedback = document.getElementById('plan-feedback');
-    if (phase === 'refining') {
-      label.textContent = 'REFINED PROMPT — APPROVE OR EDIT';
-      approveBtn.textContent = 'APPROVE';
-      feedback.placeholder = 'Edit instructions for the refined prompt...';
-    } else {
-      label.textContent = 'PLAN READY — APPROVE OR REVISE';
-      approveBtn.textContent = 'APPROVE';
-      feedback.placeholder = 'Comments to revise the plan...';
-    }
-    detectAndShowOptions();
-  }
-}
-
-function detectAndShowOptions() {
-  // Look at the latest markdown timeline event to detect multiple-choice options
-  const lastMdEvent = timelineEvents.find(e => e.markdown || (e.message && e.message.length > 200));
-  if (!lastMdEvent) return;
-
-  const text = lastMdEvent.message || '';
-  // Match patterns: (A), (B), (C), (D) or **(A)**, **(B)** etc.
-  const optionRegex = /\*{0,2}\(([A-Z])\)\*{0,2}/g;
-  const matches = [];
-  const seen = new Set();
-  let result;
-  while ((result = optionRegex.exec(text)) !== null) {
-    if (!seen.has(result[1])) {
-      seen.add(result[1]);
-      // Extract short description after the option letter
-      const afterMatch = text.substring(result.index + result[0].length, result.index + result[0].length + 80);
-      const desc = afterMatch.replace(/^\s*[-:.]?\s*/, '').split(/\n/)[0].trim().substring(0, 50);
-      matches.push({ letter: result[1], desc: desc });
-    }
-  }
-
-  const container = document.getElementById('option-buttons');
-  const label = document.getElementById('plan-label');
-  container.textContent = '';
-
-  if (matches.length >= 2) {
-    label.textContent = 'CHOOSE AN OPTION OR TYPE RESPONSE';
-    for (const opt of matches) {
-      const btn = document.createElement('button');
-      btn.className = 'btn btn-option';
-      btn.textContent = opt.letter;
-      btn.title = opt.desc;
-      btn.addEventListener('click', () => sendOptionChoice(opt.letter));
-      container.appendChild(btn);
-    }
-  } else {
-    label.textContent = 'PLAN READY — APPROVE OR REVISE';
-  }
-}
-
-async function sendOptionChoice(letter) {
-  showPlanApproval(false);
-  const images = pendingImages.plan.slice();
-  pendingImages.plan = [];
-  updateImagePreview('plan-images', 'plan');
-  addTimelineEvent('success', 'superx', 'Selected option: ' + letter, true);
-  document.getElementById('option-buttons').textContent = '';
-  try {
-    await fetch('/api/revise', {
-      method: 'POST',
-      headers: { 'Content-Type': 'application/json' },
-      body: JSON.stringify({ feedback: letter, images }),
-    });
-  } catch (err) {
-    addTimelineEvent('error', 'superx', 'Failed to send choice');
-  }
-}
-
-function setupPlanApproval() {
-  const approveBtn = document.getElementById('btn-approve');
-  const reviseBtn = document.getElementById('btn-revise');
-  const feedbackInput = document.getElementById('plan-feedback');
-
-  approveBtn.addEventListener('click', async () => {
-    showPlanApproval(false);
-    document.getElementById('option-buttons').textContent = '';
-    addTimelineEvent('success', 'superx', 'Plan approved — executing...');
-    try {
-      await fetch('/api/approve', { method: 'POST' });
-    } catch (err) {
-      addTimelineEvent('error', 'superx', 'Failed to start execution');
-    }
-  });
-
-  reviseBtn.addEventListener('click', async () => {
-    const feedback = feedbackInput.value.trim();
-    const images = pendingImages.plan.slice();
-    if (!feedback && images.length === 0) {
-      feedbackInput.focus();
-      feedbackInput.style.borderColor = 'var(--error)';
-      setTimeout(() => { feedbackInput.style.borderColor = ''; }, 1500);
-      return;
-    }
-    showPlanApproval(false);
-    document.getElementById('option-buttons').textContent = '';
-    pendingImages.plan = [];
-    updateImagePreview('plan-images', 'plan');
-    const imgNote = images.length ? ' [' + images.length + ' img]' : '';
-    addTimelineEvent('warning', 'superx', 'Revising plan: ' + feedback + imgNote, true);
-    feedbackInput.value = '';
-    try {
-      await fetch('/api/revise', {
-        method: 'POST',
-        headers: { 'Content-Type': 'application/json' },
-        body: JSON.stringify({ feedback, images }),
-      });
-    } catch (err) {
-      addTimelineEvent('error', 'superx', 'Failed to revise plan');
-    }
-  });
-
-  feedbackInput.addEventListener('keydown', (e) => {
-    if (e.key === 'Enter' && !e.shiftKey) {
-      e.preventDefault();
-      reviseBtn.click();
-    }
-  });
 }
 
 // === TABS ===
