@@ -394,7 +394,7 @@ function hexToRgb(hex) {
   return [r, g, b];
 }
 
-function renderSprite(agentType) {
+function renderSprite(agentType, { transparent = false } = {}) {
   const drawFn = CHARACTERS[agentType];
   if (!drawFn) return null;
 
@@ -404,20 +404,22 @@ function renderSprite(agentType) {
   work.height = SPRITE_SIZE;
   const wctx = work.getContext('2d');
 
-  // Dithered gradient background
-  const grad = GRADIENTS[agentType];
-  if (grad) {
-    const [r1,g1,b1] = hexToRgb(grad[0]);
-    const [r2,g2,b2] = hexToRgb(grad[1]);
-    for (let y = 0; y < SPRITE_SIZE; y++) {
-      const t = y / SPRITE_SIZE;
-      for (let x = 0; x < SPRITE_SIZE; x++) {
-        const d = ((x + y) % 3 === 0) ? 12 : 0;
-        const r = Math.min(255, Math.round(r1 + (r2-r1)*t) + d);
-        const g = Math.min(255, Math.round(g1 + (g2-g1)*t) + d);
-        const b = Math.min(255, Math.round(b1 + (b2-b1)*t) + d);
-        wctx.fillStyle = `rgb(${r},${g},${b})`;
-        wctx.fillRect(x, y, 1, 1);
+  // Dithered gradient background — skip when transparent=true (map usage)
+  if (!transparent) {
+    const grad = GRADIENTS[agentType];
+    if (grad) {
+      const [r1,g1,b1] = hexToRgb(grad[0]);
+      const [r2,g2,b2] = hexToRgb(grad[1]);
+      for (let y = 0; y < SPRITE_SIZE; y++) {
+        const t = y / SPRITE_SIZE;
+        for (let x = 0; x < SPRITE_SIZE; x++) {
+          const d = ((x + y) % 3 === 0) ? 12 : 0;
+          const r = Math.min(255, Math.round(r1 + (r2-r1)*t) + d);
+          const g = Math.min(255, Math.round(g1 + (g2-g1)*t) + d);
+          const b = Math.min(255, Math.round(b1 + (b2-b1)*t) + d);
+          wctx.fillStyle = `rgb(${r},${g},${b})`;
+          wctx.fillRect(x, y, 1, 1);
+        }
       }
     }
   }
@@ -436,20 +438,22 @@ function renderSprite(agentType) {
   return canvas.toDataURL();
 }
 
-function generateAllSprites() {
+function generateAllSprites(opts) {
   const sprites = {};
   for (const type of Object.keys(CHARACTERS)) {
-    sprites[type] = renderSprite(type);
+    sprites[type] = renderSprite(type, opts);
   }
   return sprites;
 }
 
+// With background — used by timeline avatars and war room cards
 window.SPRITES = generateAllSprites();
 window.GRADIENTS = GRADIENTS;
 
-// Pre-cache as Image objects for canvas drawing (used by map.js)
+// Transparent — used by the map so characters sit on buildings without a box
+const _transparentSprites = generateAllSprites({ transparent: true });
 window.SPRITE_CACHE = {};
-for (const [type, dataUrl] of Object.entries(window.SPRITES)) {
+for (const [type, dataUrl] of Object.entries(_transparentSprites)) {
   if (dataUrl) {
     const img = new Image();
     img.src = dataUrl;
