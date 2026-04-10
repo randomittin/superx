@@ -72,9 +72,13 @@ async function restoreSession() {
     }
 
     if (session.pending_plan && !session.running) {
-      showPlanApproval(true);
+      // Use phase to decide which approval UI to show
+      const phase = session.phase || 'planning';
+      window._currentPhase = phase;
+      showPlanApproval(true, phase);
       document.getElementById('status-badge').className = 'status-badge';
-      document.getElementById('status-badge').textContent = 'PLAN READY';
+      document.getElementById('status-badge').textContent =
+        phase === 'refining' ? 'PROMPT READY' : 'PLAN READY';
     }
   } catch (e) {
     // First load, no session yet
@@ -137,10 +141,16 @@ function connectSSE() {
         if (window._showLoading) window._showLoading(true);
       } else if (data.status === 'exited') {
         const success = data.code === 0;
-        addTimelineEvent(success ? 'success' : 'error', 'superx',
-          success ? 'Task completed successfully' : 'Exited with code ' + data.code);
-        document.getElementById('status-badge').className = 'status-badge' + (success ? '' : ' error');
-        document.getElementById('status-badge').textContent = success ? 'IDLE' : 'ERROR';
+        // If an approval panel is visible (refining/planning done), don't
+        // overwrite its PROMPT READY / PLAN READY status with IDLE.
+        const panel = document.getElementById('plan-approval');
+        const approvalVisible = panel && panel.classList.contains('visible');
+        if (!approvalVisible) {
+          addTimelineEvent(success ? 'success' : 'error', 'superx',
+            success ? 'Task completed successfully' : 'Exited with code ' + data.code);
+          document.getElementById('status-badge').className = 'status-badge' + (success ? '' : ' error');
+          document.getElementById('status-badge').textContent = success ? 'IDLE' : 'ERROR';
+        }
         if (window._showLoading) window._showLoading(false);
         resetAllAgents();
       } else if (data.status === 'stopped') {

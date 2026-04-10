@@ -981,11 +981,15 @@ class DashboardHandler(SimpleHTTPRequestHandler):
             term = list(terminal_lines)
         running = claude_process is not None and claude_process.poll() is None
         has_pending = bool(pending_prompts.get(0))
+        # If we're in refining/planning phase and the process is done, the UI
+        # should show the approval panel. current_phase is the source of truth.
+        awaiting_approval = (not running) and current_phase in ("refining", "planning")
         self.send_json(200, {
             "timeline": timeline_events[-MAX_TIMELINE_EVENTS:],
             "terminal": term,
             "running": running,
-            "pending_plan": has_pending,
+            "pending_plan": has_pending or awaiting_approval,
+            "phase": current_phase,
         })
 
     def handle_checkpoint_get(self):
