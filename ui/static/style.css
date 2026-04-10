@@ -1098,111 +1098,29 @@ body {
 
 /* === PLAN APPROVAL === */
 
-.plan-approval {
-  padding: 8px 12px;
-  border-top: 2px solid var(--border);
-  background: var(--bg-card);
-  display: none;
-  flex-direction: column;
-  gap: 6px;
-  animation: slideIn 0.3s ease;
+/* Awaiting-input prompt bar treatment — when Claude ends with a question,
+   the bottom prompt bar tints orange and shows the question above the input. */
+.prompt-bar.awaiting {
+  border-top: 2px solid var(--warning);
+  background: linear-gradient(180deg, rgba(255, 200, 80, 0.06), transparent);
 }
 
-.plan-approval.visible {
-  display: flex;
+.prompt-bar.awaiting .prompt-input {
+  border-color: var(--warning);
 }
 
-.plan-approval .label {
-  font-size: 8px;
-  color: var(--warning);
-}
-
-.plan-approval .actions {
-  display: flex;
-  gap: 8px;
-  align-items: flex-start;
-}
-
-.plan-approval .feedback-input {
-  flex: 1;
+.awaiting-hint {
   font-family: 'SF Mono', 'Fira Code', 'Cascadia Code', 'Consolas', monospace;
   font-size: 11px;
+  color: var(--warning);
   padding: 6px 10px;
-  background: var(--bg-input);
-  border: 2px solid var(--border);
-  color: var(--text);
-  outline: none;
-  resize: none;
-  min-height: 28px;
-  max-height: 80px;
-}
-
-.plan-approval .feedback-input::placeholder {
-  color: var(--text-dim);
-}
-
-.plan-approval .feedback-input:focus {
-  border-color: var(--warning);
-}
-
-.btn-approve {
-  background: var(--success);
-  border-color: var(--success);
-  color: var(--bg-dark);
-  font-size: 9px;
-  padding: 6px 14px;
-  white-space: nowrap;
-}
-
-.btn-approve:hover {
-  background: #3ba88a;
-}
-
-.btn-revise {
-  background: var(--warning);
-  border-color: var(--warning);
-  color: var(--bg-dark);
-  font-size: 9px;
-  padding: 6px 14px;
-  white-space: nowrap;
-}
-
-.btn-revise:hover {
-  background: #d4b42d;
-}
-
-/* Option buttons for multiple-choice responses */
-.option-buttons {
-  display: flex;
-  gap: 8px;
-  flex-wrap: wrap;
-}
-
-.option-buttons:empty {
-  display: none;
-}
-
-.btn-option {
-  font-family: var(--font-pixel);
-  font-size: 12px;
-  padding: 8px 20px;
-  background: var(--purple);
-  border: 2px solid var(--magenta);
-  color: #fff;
-  cursor: pointer;
-  transition: all 0.15s;
-  min-width: 48px;
-  text-align: center;
-}
-
-.btn-option:hover {
-  background: var(--magenta);
-  border-color: #fff;
-  transform: scale(1.05);
-}
-
-.btn-option:active {
-  transform: scale(0.95);
+  background: rgba(255, 200, 80, 0.08);
+  border-left: 3px solid var(--warning);
+  margin: 4px 4px 6px 4px;
+  white-space: pre-wrap;
+  word-break: break-word;
+  max-height: 120px;
+  overflow-y: auto;
 }
 
 /* Image attachments */

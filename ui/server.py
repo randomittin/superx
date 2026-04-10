@@ -27,13 +27,15 @@ claude_process: subprocess.Popen | None = None
 terminal_lines: list[str] = []
 terminal_lock = threading.Lock()
 MAX_TERMINAL_LINES = 500
-pending_prompts: dict[int, str] = {}  # stores original prompt awaiting approval
-# Phase tracking: idle → refining → planning → executing
+# Phase tracking: idle → running → awaiting_user_input
+# - idle: no task running, no pending input
+# - running: Claude subprocess is actively streaming
+# - awaiting_user_input: stream ended with a question, waiting on user reply
 current_phase = "idle"
 original_prompt_text = ""
-refined_prompt_text = ""
 prompt_images_list: list[str] = []
 last_response_text = ""  # latest full text from claude (set at end of streaming)
+claude_session_id: str = ""  # captured from stream-json system init for --resume
 timeline_events: list[dict] = []  # persisted timeline events
 MAX_TIMELINE_EVENTS = 200
 SESSION_FILE = Path("superx-session.json")
@@ -72,7 +74,8 @@ def save_session():
         data = {
             "timeline": timeline_events[-MAX_TIMELINE_EVENTS:],
             "terminal": terminal_lines[-MAX_TERMINAL_LINES:],
-            "pending_prompt": pending_prompts.get(0, None),
+            "phase": current_phase,
+            "claude_session_id": claude_session_id,
             "saved_at": time.time(),
         }
         SESSION_FILE.write_text(json.dumps(data))
@@ -135,7 +138,7 @@ def archive_session():
 
 def load_session():
     """Restore session from disk on startup."""
-    global timeline_events
+    global timeline_events, current_phase, claude_session_id
     if SESSION_FILE.exists():
         try:
             data = json.loads(SESSION_FILE.read_text())
@@ -144,28 +147,38 @@ def load_session():
             with terminal_lock:
                 terminal_lines.clear()
                 terminal_lines.extend(restored_terminal)
-            pending = data.get("pending_prompt")
-            if pending:
-                pending_prompts[0] = pending
+            # Restore phase only if it's awaiting_user_input — running can't survive
+            # a server restart (the subprocess is gone), and we don't want to falsely
+            # claim we're processing.
+            saved_phase = data.get("phase", "idle")
+            if saved_phase == "awaiting_user_input":
+                current_phase = "awaiting_user_input"
+                claude_session_id = data.get("claude_session_id", "")
+            else:
+                current_phase = "idle"
         except (json.JSONDecodeError, KeyError):
             pass
 
 
 def save_checkpoint():
-    """Save current execution state so it can be resumed after crash/restart."""
-    if current_phase == "idle":
-        # Clear checkpoint when idle
+    """Save current task so it can be resumed after a crash/restart.
+
+    Only stores meaningful state when a task is actively running. Idle and
+    awaiting_user_input states do not persist via checkpoint (idle = nothing
+    to resume; awaiting_user_input is restored via session.json which carries
+    the claude_session_id).
+    """
+    if current_phase != "running":
         if CHECKPOINT_FILE.exists():
             CHECKPOINT_FILE.unlink()
         return
     data = {
         "phase": current_phase,
         "original_prompt": original_prompt_text,
-        "refined_prompt": refined_prompt_text,
-        "last_response": last_response_text,
         "images": prompt_images_list,
+        "claude_session_id": claude_session_id,
         "timestamp": time.time(),
-        "cwd": os.getcwd(),
+        "cwd": configured_project_path or os.getcwd(),
     }
     CHECKPOINT_FILE.write_text(json.dumps(data, indent=2))
 
@@ -187,32 +200,26 @@ def clear_checkpoint():
 
 
 def resume_from_checkpoint(checkpoint: dict):
-    """Resume execution from a saved checkpoint."""
-    global current_phase, original_prompt_text, refined_prompt_text, last_response_text, prompt_images_list
+    """Resume an interrupted task from a saved checkpoint."""
+    global original_prompt_text, prompt_images_list, claude_session_id
 
-    phase = checkpoint.get("phase", "idle")
     original_prompt_text = checkpoint.get("original_prompt", "")
-    refined_prompt_text = checkpoint.get("refined_prompt", "")
-    last_response_text = checkpoint.get("last_response", "")
     prompt_images_list = checkpoint.get("images", [])
+    saved_session_id = checkpoint.get("claude_session_id", "")
 
     add_timeline_event({
         "agent": "superx",
         "type": "warning",
-        "message": f"Resuming from checkpoint (phase: {phase})",
+        "message": "Resuming interrupted task",
     })
 
-    if phase == "refining":
-        # Re-run refinement
+    # If we captured a session id before the crash, resume that conversation;
+    # otherwise start fresh with the original prompt.
+    if saved_session_id:
+        claude_session_id = saved_session_id
+        start_claude_resume("(resuming interrupted task)", prompt_images_list)
+    else:
         start_claude(original_prompt_text, prompt_images_list)
-    elif phase == "planning":
-        # Re-run planning with the refined prompt
-        prompt = refined_prompt_text or original_prompt_text
-        start_planning(prompt, prompt_images_list)
-    elif phase == "executing":
-        # Resume execution
-        prompt = refined_prompt_text or original_prompt_text
-        execute_approved_plan(prompt)
 
 
 _recent_msg_keys: list = []  # exact first-200-char strings for dedup
@@ -296,7 +303,11 @@ def stream_claude_output(proc: subprocess.Popen):
     Claude's conversational text is shown in the timeline as superx speaking,
     not just tool actions. Text is flushed to timeline when Claude transitions
     from speaking to using a tool, or at the end of a turn.
+
+    On stream end, if the final assistant text ends with a question mark,
+    transition to awaiting_user_input. Otherwise return to idle.
     """
+    global claude_session_id
     last_text = ""
     current_turn_text = ""  # full text of the current assistant turn
     flushed_text = ""  # what we already pushed to timeline
@@ -342,6 +353,14 @@ def stream_claude_output(proc: subprocess.Popen):
         msg_type = obj.get("type", "")
         msg = obj.get("message", {})
         content = msg.get("content", []) if isinstance(msg, dict) else []
+
+        # Capture Claude's session id from the system init message — used later
+        # for `claude --resume <id>` so the user's reply continues the same
+        # conversation rather than starting fresh.
+        if msg_type == "system" and obj.get("subtype") == "init":
+            sid = obj.get("session_id", "")
+            if sid:
+                claude_session_id = sid
 
         # Extract text content from assistant messages
         if msg_type == "assistant" and content:
@@ -451,10 +470,10 @@ def stream_claude_output(proc: subprocess.Popen):
 
     proc.wait()
 
-    global last_response_text
+    global last_response_text, current_phase
 
-    # Flush the final text block to timeline
-    # Use last_seen_text (survives turn resets) if current_turn_text was cleared
+    # Flush the final text block to timeline. Use last_seen_text (survives
+    # turn resets) if current_turn_text was cleared between turns.
     final_text = current_turn_text.strip() or last_seen_text.strip()
     if final_text and final_text != flushed_text and len(final_text) > 20:
         is_long = len(final_text) > 100 or "\n" in final_text
@@ -465,52 +484,30 @@ def stream_claude_output(proc: subprocess.Popen):
             "markdown": is_long,
         })
 
-    # Store the last response for phase transitions
     last_response_text = last_seen_text.strip()
 
-    # If planning phase, check if a plan .md file was written but only a summary shown
-    if current_phase == "planning" and last_response_text:
-        # If the response is just a summary (mentions "saved to" but plan not inline),
-        # try to read the actual plan file and show it
-        if "saved to" in last_response_text.lower() and len(last_response_text) < 2000:
-            import glob
-            search_dir = configured_project_path or os.getcwd()
-            plan_files = sorted(
-                glob.glob(os.path.join(search_dir, "docs/superpowers/plans/*.md")),
-                key=os.path.getmtime, reverse=True
-            )
-            if plan_files:
-                try:
-                    plan_content = Path(plan_files[0]).read_text()
-                    if len(plan_content) > 100:
-                        add_timeline_event({
-                            "agent": "superx",
-                            "type": "info",
-                            "message": plan_content.strip(),
-                            "markdown": True,
-                        })
-                        last_response_text = plan_content.strip()
-                except Exception:
-                    pass
-
-    # Final checkpoint when execution completes
-    if current_phase == "executing" and configured_project_path:
+    # Auto-checkpoint git after a successful run
+    if configured_project_path:
         threading.Thread(
             target=_auto_checkpoint_git,
             args=(file_write_count,),
             daemon=True,
         ).start()
 
-    # Phase-aware completion events
-    if current_phase == "refining":
-        push_event("prompt_refined", {"status": "awaiting_approval"})
-    elif current_phase == "planning":
-        push_event("plan_ready", {"status": "awaiting_approval"})
-    elif current_phase == "executing":
-        # Reset to idle and clear checkpoint so resume bar doesn't show
+    # Decide next phase: did Claude end with a question?
+    # Strip trailing whitespace and any closing markdown punctuation, then
+    # check for a `?`. If yes → awaiting user input; otherwise → idle.
+    stripped = last_response_text.rstrip().rstrip("*_`)]}>").rstrip()
+    ends_with_question = stripped.endswith("?")
+
+    if ends_with_question:
+        current_phase = "awaiting_user_input"
+        push_event("awaiting_user_input", {"prompt": stripped[-300:]})
+        # Persist so a reload restores the awaiting state with the session id
+        threading.Thread(target=save_session, daemon=True).start()
+    else:
         current_phase = "idle"
-        if CHECKPOINT_FILE.exists():
-            CHECKPOINT_FILE.unlink()
+        clear_checkpoint()
 
     push_event("agent_status", {"agent": "superx", "status": "idle"})
     push_event("process", {"status": "exited", "code": proc.returncode})
@@ -550,10 +547,8 @@ def _auto_checkpoint_git(file_count: int):
                 "type": "warning",
                 "message": f"Auto-checkpoint saved ({file_count} files)",
             })
-            # Only re-save state if we're still actively executing — otherwise a
-            # slow git commit from a previous run could resurrect a stale
-            # checkpoint after the main thread has already cleared it.
-            if current_phase == "executing":
+            # Only re-save crash-recovery state while a task is still running.
+            if current_phase == "running":
                 save_checkpoint()
     except Exception:
         pass
@@ -569,20 +564,33 @@ def _build_image_note(images: list) -> str:
     return note
 
 
-def _spawn_claude(prompt: str, images: list = None):
-    """Low-level: spawn claude process with given prompt and optional images."""
+# System instruction prepended to every user prompt sent to the Claude
+# subprocess. Two purposes:
+# (1) Tell Claude where the project lives so all writes land in the right dir.
+# (2) Tell Claude to end its response with a question mark whenever it needs
+#     user input — this is how the dashboard's awaiting_user_input detector
+#     decides to open the reply prompt instead of marking the task done.
+def _system_preamble() -> str:
+    work_dir = configured_project_path or os.getcwd()
+    return (
+        f"PROJECT DIRECTORY: {work_dir} — write all code, configs, and docs here.\n\n"
+        "INPUT PROTOCOL: If at any point you need clarification, a decision, "
+        "credentials, or any other input from the user, end your final response "
+        "with a single question (and a literal `?` as the very last character). "
+        "If you don't need user input, complete the task end-to-end and finish "
+        "with a statement that does NOT end in a question mark. The wrapping "
+        "dashboard uses the trailing `?` to decide whether to prompt the user.\n\n"
+        "You have full superx capabilities: dangerously-skip-permissions is on, "
+        "the superx plugin is loaded, and you may explore the codebase, spawn "
+        "Agent subprocesses in parallel, use any installed Skill, and write/edit "
+        "files freely. Use these powers aggressively to complete the task.\n\n"
+        "---\n\n"
+    )
+
+
+def _spawn_claude(cmd: list, images: list = None):
+    """Low-level: spawn the claude subprocess with the given argv."""
     global claude_process
-    prompt += _build_image_note(images or [])
-
-    cmd = [
-        "claude",
-        "--dangerously-skip-permissions",
-        "-p", prompt,
-        "--plugin-dir", str(PLUGIN_DIR),
-        "--output-format", "stream-json",
-        "--verbose",
-    ]
-
     work_dir = configured_project_path or os.getcwd()
     claude_process = subprocess.Popen(
         cmd, stdout=subprocess.PIPE, stderr=subprocess.STDOUT,
@@ -592,38 +600,40 @@ def _spawn_claude(prompt: str, images: list = None):
     t.start()
 
 
+def _build_cmd(user_prompt: str, images: list = None, resume_id: str = "") -> list:
+    """Construct the claude argv with all superx flags preserved."""
+    full_prompt = _system_preamble() + user_prompt + _build_image_note(images or [])
+    cmd = [
+        "claude",
+        "--dangerously-skip-permissions",
+        "-p", full_prompt,
+        "--plugin-dir", str(PLUGIN_DIR),
+        "--output-format", "stream-json",
+        "--verbose",
+    ]
+    if resume_id:
+        cmd.extend(["--resume", resume_id])
+    return cmd
+
+
 def start_claude(prompt: str, images: list = None):
-    """Start with prompt refinement phase."""
-    global current_phase, original_prompt_text, prompt_images_list
+    """Run a fresh task. Refuses if a process is already running."""
+    global current_phase, original_prompt_text, prompt_images_list, claude_session_id
 
     if claude_process and claude_process.poll() is None:
         push_event("error", "Claude is already running. Wait for it to finish.")
         return
 
-    # Clear any stale checkpoint from a previous task before writing the new one.
-    # This prevents a leftover "resume" bar from popping up if the previous task
-    # finished but didn't clean up its checkpoint for any reason.
+    # Clear any stale checkpoint and session id from a previous task before
+    # writing the new one — keeps the resume bar from popping up unexpectedly.
     if CHECKPOINT_FILE.exists():
         CHECKPOINT_FILE.unlink()
+    claude_session_id = ""
 
-    current_phase = "refining"
+    current_phase = "running"
     original_prompt_text = prompt
     prompt_images_list = images or []
     save_checkpoint()
-
-    refine_prompt = (
-        "You are a senior prompt engineer. Improve the following user prompt that "
-        "will be given to a CTO-level coding assistant. Make it:\n\n"
-        "1. CLEARER — remove ambiguity, be specific about what to build\n"
-        "2. STRUCTURED — use markdown with sections, bullet points\n"
-        "3. COMPLETE — fill reasonable gaps (tech stack preferences, deployment, testing)\n"
-        "4. ACTIONABLE — explicit requirements with acceptance criteria\n"
-        "5. CONCISE — no fluff, every sentence adds value\n\n"
-        "Return ONLY the improved prompt. No preamble like 'Here is the improved prompt'. "
-        "No explanations. Just the refined prompt in clean markdown.\n\n"
-        "---\n"
-        "Original prompt:\n" + prompt
-    )
 
     push_event("process", {"status": "starting", "prompt": prompt})
     push_event("agent_status", {"agent": "superx", "status": "running"})
@@ -634,212 +644,39 @@ def start_claude(prompt: str, images: list = None):
         if images:
             terminal_lines.append(f"  [{len(images)} image(s) attached]")
         terminal_lines.append("")
-        terminal_lines.append("=== REFINING PROMPT ===")
-        terminal_lines.append("")
 
-    _spawn_claude(refine_prompt, images)
+    _spawn_claude(_build_cmd(prompt, images), images)
 
 
-def start_planning(prompt: str, images: list = None):
-    """Run the planning phase with the refined prompt."""
+def start_claude_resume(reply: str, images: list = None):
+    """Continue an existing Claude conversation with the user's reply.
+
+    Uses `claude --resume <session_id>` so Claude has the full prior turn
+    in context. Falls back to a fresh run if no session id was captured.
+    """
     global current_phase
 
     if claude_process and claude_process.poll() is None:
-        push_event("error", "Claude is already running.")
+        push_event("error", "Claude is already running. Wait for it to finish.")
         return
 
-    current_phase = "planning"
+    if not claude_session_id:
+        # No session id to resume — treat as a brand new task with the reply.
+        start_claude(reply, images)
+        return
+
+    current_phase = "running"
     save_checkpoint()
 
-    work_dir = configured_project_path or os.getcwd()
-    plan_prompt = (
-        "IMPORTANT: Present a comprehensive execution plan before writing any code. "
-        "Think like a CTO planning a production system.\n\n"
-        f"PROJECT DIRECTORY: {work_dir} — ALL code, configs, docs MUST go here.\n\n"
-        "FIRST: Spawn parallel Agent subprocesses to research ALL independent aspects simultaneously. "
-        "For example, spawn separate agents to: analyze external repos, check APIs/docs, "
-        "review existing code patterns, research deployment options. Do NOT do research sequentially "
-        "when it can be parallelized. ALWAYS use multiple agents in parallel.\n\n"
-        "CHECKPOINT: Save ALL research findings to .md files in docs/analysis/ directory. "
-        "For each external repo, API, codebase, or documentation source, create a separate .md file "
-        "(e.g., docs/analysis/repo-name.md, docs/analysis/api-name.md). "
-        "This avoids repeating research efforts in future runs.\n\n"
-        "Your plan MUST cover:\n\n"
-        "1. ASSUMPTIONS — what you're assuming, what needs confirmation\n"
-        "2. ARCHITECTURE — tech stack, system design, data flow\n"
-        "3. INFRASTRUCTURE — hosting, CI/CD pipelines, deployment strategy, "
-        "environment management, DNS/SSL, monitoring/observability, error tracking\n"
-        "4. SECURITY — auth, rate limiting, CORS, CSP, secrets management\n"
-        "5. SUB-PROJECTS — decomposition with dependency graph, agent assignments, "
-        "parallelism opportunities\n"
-        "6. EACH SUB-PROJECT must have: scope, agent, expected outcome, "
-        "acceptance criteria (testable done conditions), risks and mitigations\n"
-        "7. TESTING STRATEGY — unit, integration, E2E, visual regression\n"
-        "8. DEPLOYMENT PIPELINE — PR checks, preview deploys, staging, production, rollback\n"
-        "9. AGENT DISPATCH SUMMARY — phase table with parallelism\n"
-        "10. WHAT'S NEEDED FROM USER — blockers, decisions, credentials, assets\n\n"
-        "Use markdown with clear headers, tables, and code blocks for structure. "
-        "Make reasonable assumptions and note them explicitly. "
-        "Do NOT ask clarifying questions. Do NOT start implementing.\n\n"
-        "CRITICAL: You MUST present the FULL plan in your response text. "
-        "Do NOT just save it to a file and show a summary. "
-        "The user needs to see the complete plan in the chat to review and approve it. "
-        "You may ALSO save it to a file, but the full plan must appear in your response.\n\n"
-        "End with exactly: ---PLAN READY---\n\n"
-        "User task: " + prompt
-    )
-
-    push_event("process", {"status": "starting", "prompt": "Planning..."})
+    push_event("process", {"status": "starting", "prompt": f"(reply) {reply[:80]}"})
     push_event("agent_status", {"agent": "superx", "status": "running"})
 
     with terminal_lock:
         terminal_lines.append("")
-        terminal_lines.append("=== PLANNING ===")
+        terminal_lines.append(f"$ user reply: {reply}")
         terminal_lines.append("")
 
-    _spawn_claude(plan_prompt, images)
-
-
-def execute_approved_plan(original_prompt: str):
-    """Execute after user approves the plan."""
-    global current_phase
-    if claude_process and claude_process.poll() is None:
-        push_event("error", "Claude is already running.")
-        return
-
-    current_phase = "executing"
-    save_checkpoint()
-
-    work_dir = configured_project_path or os.getcwd()
-    exec_prompt = (
-        "The user has approved your plan. Execute it NOW with maximum parallelism.\n\n"
-        "CRITICAL RULES:\n"
-        f"1. ALL code and files MUST be written to: {work_dir}\n"
-        "2. SPAWN PARALLEL AGENTS for every independent task. Use the Agent tool aggressively. "
-        "If two tasks don't depend on each other, run them simultaneously. "
-        "For example: UI, API, config, tests, and docs can all be built in parallel.\n"
-        "3. After each major milestone (package created, service wired, tests passing), "
-        "run: git add -A && git commit -m 'checkpoint: <description>' "
-        f"in {work_dir} to checkpoint progress.\n"
-        "4. Save all research, decisions, and architecture notes to docs/ as .md files.\n"
-        "5. Create or update CLAUDE.md in the project root with project conventions.\n"
-        "6. Create or update README.md in the project root with:\n"
-        "   - Project name and description\n"
-        "   - Prerequisites (Node version, package manager, etc.)\n"
-        "   - Installation steps (git clone, install deps)\n"
-        "   - How to run in development mode\n"
-        "   - How to build for production\n"
-        "   - How to run tests\n"
-        "   - Environment variables needed (.env setup)\n"
-        "   - Project structure overview\n"
-        "   - Deployment instructions\n"
-        "   Keep it concise and actionable. Use code blocks for commands.\n\n"
-        "FINAL CHECKPOINT (CRITICAL — do this ONCE when all work is done):\n"
-        "When you have completed ALL implementation work, do these steps EXACTLY ONCE then STOP:\n"
-        f"1. Run: cd {work_dir} && git add -A && git commit -m 'final: all deliverables complete'\n"
-        "2. Write your final response as a DELIVERABLES SUMMARY in this exact markdown format:\n\n"
-        "# Deliverables Complete\n\n"
-        "- [x] Deliverable 1 description\n"
-        "- [x] Deliverable 2 description\n"
-        "- [x] ... (one line per major item)\n\n"
-        "## How to Run\n"
-        "```bash\n"
-        "# step-by-step commands to install and run\n"
-        "```\n\n"
-        "## How to Test\n"
-        "```bash\n"
-        "# commands to run tests\n"
-        "```\n\n"
-        "DO NOT run any more completeness checks after this. DO NOT loop back to verify. "
-        "DO NOT spawn more agents after the final commit. Just output the summary and STOP. "
-        "If something is incomplete, note it as '- [ ] Item (not done: reason)' and still STOP.\n\n"
-        "The original task was: " + original_prompt
-    )
-
-    push_event("process", {"status": "starting", "prompt": "Executing approved plan..."})
-    push_event("agent_status", {"agent": "superx", "status": "running"})
-
-    with terminal_lock:
-        terminal_lines.append("")
-        terminal_lines.append("=== PLAN APPROVED — EXECUTING ===")
-        terminal_lines.append("")
-
-    _spawn_claude(exec_prompt)
-
-
-def revise_refinement(original_prompt: str, feedback: str, images: list = None):
-    """Re-run prompt refinement with user feedback."""
-    global current_phase
-
-    if claude_process and claude_process.poll() is None:
-        push_event("error", "Claude is already running.")
-        return
-
-    current_phase = "refining"
-
-    # Include the previous refined version so Claude can update it
-    prev_refined = last_response_text or original_prompt
-    revise_prompt = (
-        "You previously refined a user prompt into this version:\n\n"
-        "---BEGIN REFINED PROMPT---\n"
-        f"{prev_refined}\n"
-        "---END REFINED PROMPT---\n\n"
-        "The user reviewed it and wants these changes:\n\n"
-        f'"{feedback}"\n\n'
-        "Return ONLY the updated refined prompt with the user's changes applied. "
-        "No preamble, no explanations — just the prompt."
-    )
-
-    add_timeline_event({
-        "agent": "superx",
-        "type": "warning",
-        "message": f"Revising prompt: {feedback}",
-        "useMono": True,
-    })
-
-    push_event("process", {"status": "starting", "prompt": "Revising prompt..."})
-    push_event("agent_status", {"agent": "superx", "status": "running"})
-
-    with terminal_lock:
-        terminal_lines.append("")
-        terminal_lines.append(f"=== REVISING PROMPT: {feedback} ===")
-        terminal_lines.append("")
-
-    _spawn_claude(revise_prompt, images)
-
-
-def revise_plan(original_prompt: str, feedback: str, images: list = None):
-    """Re-run planning with user feedback."""
-    global current_phase
-    current_phase = "planning"
-    if claude_process and claude_process.poll() is None:
-        push_event("error", "Claude is already running.")
-        return
-
-    revise_prompt = (
-        "The user reviewed your plan and wants changes. Here's their feedback:\n\n"
-        f'"{feedback}"\n\n'
-        "Please revise the plan based on this feedback. "
-        "CRITICAL: You MUST present the FULL updated plan in your response text. "
-        "Do NOT just save it to a file and show a summary. "
-        "Show the complete revised plan with all sections so the user can review it. "
-        "DO NOT start implementing. "
-        "End your response with: ---PLAN READY---\n\n"
-        "Original task: " + original_prompt
-    )
-
-    pending_prompts[0] = original_prompt
-
-    push_event("process", {"status": "starting", "prompt": "Revising plan..."})
-
-    with terminal_lock:
-        terminal_lines.append("")
-        terminal_lines.append("=== REVISING PLAN ===")
-        if images:
-            terminal_lines.append(f"  [{len(images)} image(s) attached]")
-        terminal_lines.append("")
-
-    _spawn_claude(revise_prompt, images)
+    _spawn_claude(_build_cmd(reply, images, resume_id=claude_session_id), images)
 
 
 def continue_on_terminal():
@@ -913,10 +750,8 @@ class DashboardHandler(SimpleHTTPRequestHandler):
     def do_POST(self):
         if self.path == "/api/prompt":
             self.handle_prompt()
-        elif self.path == "/api/approve":
-            self.handle_approve()
-        elif self.path == "/api/revise":
-            self.handle_revise()
+        elif self.path == "/api/reply":
+            self.handle_reply()
         elif self.path == "/api/stop":
             self.handle_stop()
         elif self.path == "/api/upload":
@@ -955,15 +790,14 @@ class DashboardHandler(SimpleHTTPRequestHandler):
             except Exception:
                 pass
 
-        # Replay "awaiting approval" event if we're stuck in that state.
-        # Without this, a client that (re)connects AFTER prompt_refined/plan_ready
-        # already fired would never know to show the approval panel.
+        # Replay awaiting_user_input event if we're stuck in that state.
+        # Without this, a client that (re)connects AFTER the event already
+        # fired would never know to open the reply prompt.
         try:
-            is_running = claude_process is not None and claude_process.poll() is None
-            if not is_running and current_phase in ("refining", "planning"):
-                event_name = "prompt_refined" if current_phase == "refining" else "plan_ready"
-                replay = json.dumps({"type": event_name, "data": {"status": "awaiting_approval"}})
-                self.wfile.write(f"event: {event_name}\ndata: {replay}\n\n".encode())
+            if current_phase == "awaiting_user_input":
+                tail = (last_response_text or "")[-300:]
+                replay = json.dumps({"type": "awaiting_user_input", "data": {"prompt": tail}})
+                self.wfile.write(f"event: awaiting_user_input\ndata: {replay}\n\n".encode())
                 self.wfile.flush()
         except Exception:
             pass
@@ -1003,16 +837,16 @@ class DashboardHandler(SimpleHTTPRequestHandler):
         with terminal_lock:
             term = list(terminal_lines)
         running = claude_process is not None and claude_process.poll() is None
-        has_pending = bool(pending_prompts.get(0))
-        # If we're in refining/planning phase and the process is done, the UI
-        # should show the approval panel. current_phase is the source of truth.
-        awaiting_approval = (not running) and current_phase in ("refining", "planning")
+        # Reconcile: if the subprocess is still running, phase must be "running".
+        # If it's not, phase is whatever the state machine last set
+        # (idle or awaiting_user_input).
+        effective_phase = "running" if running else current_phase
         self.send_json(200, {
             "timeline": timeline_events[-MAX_TIMELINE_EVENTS:],
             "terminal": term,
             "running": running,
-            "pending_plan": has_pending or awaiting_approval,
-            "phase": current_phase,
+            "phase": effective_phase,
+            "awaiting_prompt": (last_response_text or "")[-300:] if effective_phase == "awaiting_user_input" else "",
         })
 
     def handle_checkpoint_get(self):
@@ -1125,47 +959,27 @@ class DashboardHandler(SimpleHTTPRequestHandler):
         except (json.JSONDecodeError, TypeError):
             self.send_json(500, {"error": "Corrupt history"})
 
-    def handle_approve(self):
-        """Phase-aware approve: refined prompt → plan, plan → execute."""
-        global current_phase, refined_prompt_text
-        if current_phase == "refining":
-            # Approved the refined prompt — move to planning
-            refined_prompt_text = last_response_text or original_prompt_text
-            add_timeline_event({
-                "agent": "superx", "type": "success",
-                "message": "Refined prompt approved"
-            })
-            start_planning(refined_prompt_text, prompt_images_list)
-            self.send_json(200, {"status": "planning"})
-        elif current_phase == "planning":
-            # Approved the plan — execute
-            prompt = refined_prompt_text or original_prompt_text
-            execute_approved_plan(prompt)
-            self.send_json(200, {"status": "executing"})
-        else:
-            self.send_json(400, {"error": "Nothing to approve"})
-
-    def handle_revise(self):
-        """Phase-aware revise: re-refine prompt or revise plan."""
+    def handle_reply(self):
+        """Send a user reply to a Claude session that's awaiting input."""
         length = int(self.headers.get("Content-Length", 0))
         body = self.rfile.read(length).decode()
         try:
             data = json.loads(body)
-            feedback = data.get("feedback", "").strip()
+            reply = data.get("reply", "").strip()
             images = data.get("images", [])
-            if not feedback:
-                self.send_json(400, {"error": "Provide feedback"})
+            if not reply:
+                self.send_json(400, {"error": "Empty reply"})
                 return
-            if current_phase == "refining":
-                # Re-refine with feedback
-                revise_refinement(original_prompt_text, feedback, images)
-                self.send_json(200, {"status": "re-refining"})
-            elif current_phase == "planning":
-                prompt = refined_prompt_text or original_prompt_text
-                revise_plan(prompt, feedback, images)
-                self.send_json(200, {"status": "revising"})
-            else:
-                self.send_json(400, {"error": "Nothing to revise"})
+            if current_phase != "awaiting_user_input":
+                self.send_json(400, {"error": "Not awaiting input"})
+                return
+            add_timeline_event({
+                "agent": "superx",
+                "type": "success",
+                "message": f"User reply: {reply}",
+            })
+            start_claude_resume(reply, images)
+            self.send_json(200, {"status": "running"})
         except json.JSONDecodeError:
             self.send_json(400, {"error": "Invalid JSON"})
 
@@ -1369,20 +1183,19 @@ class DashboardHandler(SimpleHTTPRequestHandler):
 
     def handle_stop(self):
         """Stop the running claude process, archive, and clear the session."""
-        global claude_process
+        global claude_process, current_phase, claude_session_id
         if claude_process and claude_process.poll() is None:
             claude_process.terminate()
         # Archive before clearing
         archive_session()
         # Clear session and checkpoint
-        global current_phase
         current_phase = "idle"
+        claude_session_id = ""
         clear_checkpoint()
         timeline_events.clear()
         _recent_msg_keys.clear()
         with terminal_lock:
             terminal_lines.clear()
-        pending_prompts.clear()
         if SESSION_FILE.exists():
             SESSION_FILE.unlink()
         push_event("process", {"status": "stopped"})
