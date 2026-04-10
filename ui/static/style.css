@@ -1098,29 +1098,127 @@ body {
 
 /* === PLAN APPROVAL === */
 
-/* Awaiting-input prompt bar treatment — when Claude ends with a question,
-   the bottom prompt bar tints orange and shows the question above the input. */
-.prompt-bar.awaiting {
+/* === AWAITING USER INPUT PANEL ===
+   Shown when Claude ends a response with a question. Contains the question
+   text, detected option buttons (A/B/C/D), a text input, and a SEND button. */
+.awaiting-panel {
+  padding: 8px 12px;
   border-top: 2px solid var(--warning);
-  background: linear-gradient(180deg, rgba(255, 200, 80, 0.06), transparent);
+  background: var(--bg-card);
+  display: none;
+  flex-direction: column;
+  gap: 8px;
+  animation: slideIn 0.3s ease;
 }
 
-.prompt-bar.awaiting .prompt-input {
+.awaiting-panel.visible {
+  display: flex;
+}
+
+.awaiting-label {
+  font-size: 8px;
+  color: var(--warning);
+  letter-spacing: 0.5px;
+}
+
+.awaiting-question {
+  font-family: 'SF Mono', 'Fira Code', 'Cascadia Code', 'Consolas', monospace;
+  font-size: 11px;
+  color: var(--text);
+  padding: 8px 10px;
+  background: rgba(255, 200, 80, 0.08);
+  border-left: 3px solid var(--warning);
+  white-space: pre-wrap;
+  word-break: break-word;
+  max-height: 160px;
+  overflow-y: auto;
+}
+
+.awaiting-options {
+  display: flex;
+  gap: 8px;
+  flex-wrap: wrap;
+}
+
+.awaiting-options:empty {
+  display: none;
+}
+
+.btn-awaiting-option {
+  font-family: var(--font-pixel);
+  font-size: 11px;
+  padding: 8px 16px;
+  background: var(--purple);
+  border: 2px solid var(--magenta);
+  color: #fff;
+  cursor: pointer;
+  transition: all 0.15s;
+  min-width: 44px;
+  text-align: center;
+}
+
+.btn-awaiting-option:hover {
+  background: var(--magenta);
+  border-color: #fff;
+  transform: scale(1.04);
+}
+
+.btn-awaiting-option:active {
+  transform: scale(0.96);
+}
+
+.btn-awaiting-option .opt-letter {
+  font-weight: bold;
+  font-size: 12px;
+  margin-right: 6px;
+}
+
+.btn-awaiting-option .opt-desc {
+  font-size: 9px;
+  opacity: 0.85;
+}
+
+.awaiting-actions {
+  display: flex;
+  gap: 8px;
+  align-items: flex-start;
+}
+
+.awaiting-input {
+  flex: 1;
+  font-family: 'SF Mono', 'Fira Code', 'Cascadia Code', 'Consolas', monospace;
+  font-size: 11px;
+  padding: 6px 10px;
+  background: var(--bg-input);
+  border: 2px solid var(--border);
+  color: var(--text);
+  outline: none;
+  resize: none;
+  min-height: 28px;
+  max-height: 120px;
+}
+
+.awaiting-input::placeholder {
+  color: var(--text-dim);
+}
+
+.awaiting-input:focus {
   border-color: var(--warning);
 }
 
-.awaiting-hint {
-  font-family: 'SF Mono', 'Fira Code', 'Cascadia Code', 'Consolas', monospace;
-  font-size: 11px;
-  color: var(--warning);
-  padding: 6px 10px;
-  background: rgba(255, 200, 80, 0.08);
-  border-left: 3px solid var(--warning);
-  margin: 4px 4px 6px 4px;
-  white-space: pre-wrap;
-  word-break: break-word;
-  max-height: 120px;
-  overflow-y: auto;
+.btn-awaiting-send {
+  background: var(--warning);
+  border-color: var(--warning);
+  color: var(--bg-dark);
+  font-size: 9px;
+  padding: 6px 18px;
+  white-space: nowrap;
+  cursor: pointer;
+  font-family: var(--font-pixel);
+}
+
+.btn-awaiting-send:hover {
+  background: #d4b42d;
 }
 
 /* Image attachments */
