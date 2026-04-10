@@ -1,0 +1,177 @@
+{
+  "roads": {
+    "straight_ns": [
+      "cityTiles_005.png",
+      "cityTiles_010.png",
+      "cityTiles_073.png",
+      "cityTiles_084.png",
+      "cityTiles_103.png"
+    ],
+    "straight_ew": [
+      "cityTiles_014.png",
+      "cityTiles_021.png",
+      "cityTiles_077.png",
+      "cityTiles_081.png",
+      "cityTiles_088.png"
+    ],
+    "turn_ne": [
+      "cityTiles_027.png",
+      "cityTiles_124.png"
+    ],
+    "turn_nw": [
+      "cityTiles_028.png",
+      "cityTiles_125.png"
+    ],
+    "turn_se": [
+      "cityTiles_009.png",
+      "cityTiles_020.png",
+      "cityTiles_122.png"
+    ],
+    "turn_sw": [
+      "cityTiles_035.png",
+      "cityTiles_126.png"
+    ],
+    "intersection_3way": [
+      "cityTiles_029.png",
+      "cityTiles_030.png",
+      "cityTiles_037.png",
+      "cityTiles_070.png",
+      "cityTiles_071.png",
+      "cityTiles_078.png",
+      "cityTiles_085.png",
+      "cityTiles_092.png",
+      "cityTiles_095.png",
+      "cityTiles_096.png"
+    ],
+    "intersection_4way": [
+      "cityTiles_022.png",
+      "cityTiles_063.png",
+      "cityTiles_082.png",
+      "cityTiles_089.png",
+      "cityTiles_091.png",
+      "cityTiles_099.png"
+    ],
+    "road_end": [
+      "cityTiles_015.png",
+      "cityTiles_042.png",
+      "cityTiles_049.png",
+      "cityTiles_079.png",
+      "cityTiles_093.png",
+      "cityTiles_100.png",
+      "cityTiles_101.png",
+      "cityTiles_107.png",
+      "cityTiles_115.png",
+      "cityTiles_120.png"
+    ],
+    "crosswalk": [
+      "cityTiles_056.png",
+      "cityTiles_064.png",
+      "cityTiles_106.png",
+      "cityTiles_112.png"
+    ],
+    "road_with_streetlight": [
+      "cityTiles_050.png",
+      "cityTiles_057.png",
+      "cityTiles_058.png",
+      "cityTiles_065.png"
+    ],
+    "road_slope": [
+      "cityTiles_102.png",
+      "cityTiles_108.png",
+      "cityTiles_109.png",
+      "cityTiles_114.png",
+      "cityTiles_119.png",
+      "cityTiles_123.png"
+    ]
+  },
+  "grass": [
+    "cityTiles_054.png",
+    "cityTiles_059.png",
+    "cityTiles_061.png",
+    "cityTiles_062.png",
+    "cityTiles_068.png",
+    "cityTiles_069.png",
+    "cityTiles_076.png"
+  ],
+  "sidewalk": [
+    "cityTiles_000.png",
+    "cityTiles_002.png",
+    "cityTiles_003.png",
+    "cityTiles_006.png",
+    "cityTiles_048.png",
+    "cityTiles_055.png",
+    "cityTiles_066.png",
+    "cityTiles_072.png",
+    "cityTiles_074.png",
+    "cityTiles_080.png",
+    "cityTiles_086.png",
+    "cityTiles_087.png",
+    "cityTiles_094.png",
+    "cityTiles_104.png",
+    "cityTiles_110.png",
+    "cityTiles_111.png",
+    "cityTiles_113.png",
+    "cityTiles_116.png",
+    "cityTiles_117.png",
+    "cityTiles_118.png",
+    "cityTiles_121.png"
+  ],
+  "sidewalk_slope": [
+    "cityTiles_019.png",
+    "cityTiles_025.png",
+    "cityTiles_032.png",
+    "cityTiles_034.png",
+    "cityTiles_039.png",
+    "cityTiles_041.png",
+    "cityTiles_090.png",
+    "cityTiles_097.png",
+    "cityTiles_098.png",
+    "cityTiles_105.png"
+  ],
+  "parking": [
+    "cityTiles_040.png",
+    "cityTiles_047.png"
+  ],
+  "buildings_small": [
+    "cityTiles_004.png",
+    "cityTiles_007.png",
+    "cityTiles_008.png",
+    "cityTiles_011.png",
+    "cityTiles_012.png",
+    "cityTiles_016.png",
+    "cityTiles_017.png",
+    "cityTiles_023.png"
+  ],
+  "buildings_medium": [
+    "cityTiles_013.png",
+    "cityTiles_018.png",
+    "cityTiles_024.png",
+    "cityTiles_026.png",
+    "cityTiles_031.png",
+    "cityTiles_033.png"
+  ],
+  "buildings_tall": [],
+  "trees_parks": [
+    "cityTiles_036.png",
+    "cityTiles_044.png",
+    "cityTiles_067.png",
+    "cityTiles_075.png",
+    "cityTiles_083.png"
+  ],
+  "water": [
+    "cityTiles_001.png",
+    "cityTiles_038.png",
+    "cityTiles_045.png",
+    "cityTiles_046.png",
+    "cityTiles_052.png",
+    "cityTiles_053.png",
+    "cityTiles_060.png",
+    "cityTiles_127.png"
+  ],
+  "other": [
+    "cityTiles_043.png",
+    "cityTiles_051.png"
+  ],
+  "tileWidth": 132,
+  "tileHeight": 101
+}
