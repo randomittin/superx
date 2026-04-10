@@ -1,9 +1,39 @@
 {
   "name": "superx",
-  "description": "Autonomous superskill manager — decomposes work, spawns agents, enforces quality gates, and drives execution to completion with CTO-level judgment",
-  "version": "0.1.0",
+  "displayName": "superx",
+  "description": "Autonomous superskill manager for Claude Code — turns a single prompt into a finished project. Decomposes work, spawns parallel agents, enforces quality gates, and ships with CTO-level judgment. Includes a real-time pixel-art dashboard for live observability.",
+  "version": "1.0.0",
   "author": {
-    "name": "superx"
+    "name": "superx contributors",
+    "url": "https://github.com/randomittin/superx"
   },
-  "license": "MIT"
+  "license": "MIT",
+  "homepage": "https://github.com/randomittin/superx",
+  "repository": {
+    "type": "git",
+    "url": "https://github.com/randomittin/superx.git"
+  },
+  "bugs": {
+    "url": "https://github.com/randomittin/superx/issues"
+  },
+  "keywords": [
+    "agent",
+    "orchestration",
+    "autonomous",
+    "multi-agent",
+    "quality-gates",
+    "ci-cd",
+    "dashboard",
+    "claude-code",
+    "skill",
+    "plugin"
+  ],
+  "categories": [
+    "agents",
+    "orchestration",
+    "developer-tools"
+  ],
+  "engines": {
+    "claude-code": ">=1.0.0"
+  }
 }
