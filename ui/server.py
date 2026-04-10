@@ -550,7 +550,11 @@ def _auto_checkpoint_git(file_count: int):
                 "type": "warning",
                 "message": f"Auto-checkpoint saved ({file_count} files)",
             })
-            save_checkpoint()
+            # Only re-save state if we're still actively executing — otherwise a
+            # slow git commit from a previous run could resurrect a stale
+            # checkpoint after the main thread has already cleared it.
+            if current_phase == "executing":
+                save_checkpoint()
     except Exception:
         pass
 
@@ -595,6 +599,12 @@ def start_claude(prompt: str, images: list = None):
     if claude_process and claude_process.poll() is None:
         push_event("error", "Claude is already running. Wait for it to finish.")
         return
+
+    # Clear any stale checkpoint from a previous task before writing the new one.
+    # This prevents a leftover "resume" bar from popping up if the previous task
+    # finished but didn't clean up its checkpoint for any reason.
+    if CHECKPOINT_FILE.exists():
+        CHECKPOINT_FILE.unlink()
 
     current_phase = "refining"
     original_prompt_text = prompt
@@ -944,6 +954,19 @@ class DashboardHandler(SimpleHTTPRequestHandler):
                 self.wfile.flush()
             except Exception:
                 pass
+
+        # Replay "awaiting approval" event if we're stuck in that state.
+        # Without this, a client that (re)connects AFTER prompt_refined/plan_ready
+        # already fired would never know to show the approval panel.
+        try:
+            is_running = claude_process is not None and claude_process.poll() is None
+            if not is_running and current_phase in ("refining", "planning"):
+                event_name = "prompt_refined" if current_phase == "refining" else "plan_ready"
+                replay = json.dumps({"type": event_name, "data": {"status": "awaiting_approval"}})
+                self.wfile.write(f"event: {event_name}\ndata: {replay}\n\n".encode())
+                self.wfile.flush()
+        except Exception:
+            pass
 
         try:
             while True:
