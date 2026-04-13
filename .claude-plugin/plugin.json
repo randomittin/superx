@@ -1,6 +1,5 @@
 {
   "name": "superx",
-  "displayName": "superx",
   "description": "Autonomous superskill manager for Claude Code — turns a single prompt into a finished project. Decomposes work, spawns parallel agents, enforces quality gates, and ships with CTO-level judgment. Includes a real-time pixel-art dashboard for live observability.",
   "version": "1.0.0",
   "author": {
@@ -9,13 +8,7 @@
   },
   "license": "MIT",
   "homepage": "https://github.com/randomittin/superx",
-  "repository": {
-    "type": "git",
-    "url": "https://github.com/randomittin/superx.git"
-  },
-  "bugs": {
-    "url": "https://github.com/randomittin/superx/issues"
-  },
+  "repository": "https://github.com/randomittin/superx",
   "keywords": [
     "agent",
     "orchestration",
@@ -27,13 +20,5 @@
     "claude-code",
     "skill",
     "plugin"
-  ],
-  "categories": [
-    "agents",
-    "orchestration",
-    "developer-tools"
-  ],
-  "engines": {
-    "claude-code": ">=1.0.0"
-  }
+  ]
 }
