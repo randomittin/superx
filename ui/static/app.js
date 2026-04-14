@@ -67,6 +67,7 @@ async function restoreSession() {
       document.getElementById('status-badge').className = 'status-badge running';
       document.getElementById('status-badge').textContent = 'RUNNING';
       if (window._showLoading) window._showLoading(true);
+      if (window._setRunningUI) window._setRunningUI(true);
     }
 
     if (session.phase === 'awaiting_user_input') {
@@ -137,6 +138,7 @@ function connectSSE() {
         document.getElementById('status-badge').className = 'status-badge running';
         document.getElementById('status-badge').textContent = 'RUNNING';
         if (window._showLoading) window._showLoading(true);
+        if (window._setRunningUI) window._setRunningUI(true);
       } else if (data.status === 'exited') {
         const success = data.code === 0;
         // If we're waiting for the user to reply, don't claim the task is done.
@@ -149,12 +151,14 @@ function connectSSE() {
           document.getElementById('status-badge').textContent = success ? 'IDLE' : 'ERROR';
         }
         if (window._showLoading) window._showLoading(false);
+        if (window._setRunningUI) window._setRunningUI(false);
         resetAllAgents();
       } else if (data.status === 'stopped') {
         addTimelineEvent('warning', 'superx', 'Process stopped by user');
         document.getElementById('status-badge').className = 'status-badge';
         document.getElementById('status-badge').textContent = 'IDLE';
         if (window._showLoading) window._showLoading(false);
+        if (window._setRunningUI) window._setRunningUI(false);
         resetAllAgents();
       }
     } catch (err) {
@@ -552,7 +556,39 @@ function setupPromptInput() {
   const input = document.getElementById('prompt-input');
   const sendBtn = document.getElementById('send-btn');
   const stopBtn = document.getElementById('stop-btn');
+  const newProjectBtn = document.getElementById('new-project-btn');
   const loadingBar = document.getElementById('loading-bar');
+
+  // Toggle NEW vs STOP button visibility based on running state
+  function setRunningUI(running) {
+    if (newProjectBtn) newProjectBtn.style.display = running ? 'none' : 'flex';
+    if (stopBtn) stopBtn.style.display = running ? 'flex' : 'none';
+  }
+  window._setRunningUI = setRunningUI;
+  setRunningUI(false); // start with NEW visible
+
+  // NEW PROJECT button — archives current session, clears state, opens project modal
+  if (newProjectBtn) {
+    newProjectBtn.addEventListener('click', async () => {
+      // Archive + clear current session on the server
+      try { await fetch('/api/stop', { method: 'POST' }); } catch (_) {}
+      // Clear frontend
+      document.getElementById('timeline-events').textContent = '';
+      document.getElementById('event-count').textContent = '0';
+      timelineEvents.length = 0;
+      resetGrouping();
+      window.terminalAPI.clearTerminal();
+      document.getElementById('status-badge').className = 'status-badge';
+      document.getElementById('status-badge').textContent = 'IDLE';
+      // Clear project path so the modal opens fresh
+      window._projectPath = '';
+      document.getElementById('project-path').textContent = '';
+      // Open the project settings modal
+      if (window._openProjectModal) {
+        window._openProjectModal('Pick a directory for your new project');
+      }
+    });
+  }
 
   // Auto-grow textarea
   function autoGrow() {
