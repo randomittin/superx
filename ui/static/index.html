@@ -44,8 +44,11 @@
           </div>
           <div class="modal-body">
             <label style="font-size:7px;color:var(--text-dim);display:block;margin-bottom:4px">PROJECT DIRECTORY (where code gets written)</label>
-            <input id="github-path" type="text" class="modal-input"
-                   placeholder="~/Downloads/my-project" autocomplete="off">
+            <div style="display:flex;gap:6px;align-items:center">
+              <input id="github-path" type="text" class="modal-input" style="flex:1"
+                     placeholder="~/Downloads/my-project" autocomplete="off">
+              <button id="browse-folder-btn" class="btn" style="font-size:7px;padding:6px 10px;white-space:nowrap;background:var(--bg-card);border-color:var(--border);color:var(--text)" title="Browse for folder">BROWSE</button>
+            </div>
             <label style="font-size:7px;color:var(--text-dim);display:block;margin:8px 0 4px">GITHUB REMOTE URL (optional)</label>
             <input id="github-url" type="text" class="modal-input"
                    placeholder="https://github.com/user/repo.git" autocomplete="off">
