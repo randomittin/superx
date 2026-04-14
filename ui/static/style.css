@@ -129,22 +129,17 @@ body {
   flex-shrink: 0;
 }
 
-/* New Project button — superx pink */
+/* New Project button — pink */
 .btn.btn-new-project {
-  gap: 6px;
-  background: var(--accent);
-  border-color: var(--accent);
+  background: var(--magenta);
+  border-color: var(--magenta);
   color: #fff;
-}
-
-.btn.btn-new-project svg {
-  width: 10px;
-  height: 10px;
+  white-space: nowrap;
 }
 
 .btn.btn-new-project:hover {
-  background: #d13350;
-  border-color: #ff5a7a;
+  background: #c84890;
+  border-color: #f060b0;
 }
 
 /* Stop button — solid red, white text+icon */
