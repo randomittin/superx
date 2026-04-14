@@ -92,12 +92,11 @@ body {
 
 .header-right {
   display: flex;
-  gap: 8px;
+  gap: 6px;
   align-items: center;
 }
 
-/* GitHub button */
-/* Header buttons — same height */
+/* Header buttons — uniform sizing */
 .btn-github,
 .btn-new-project,
 .btn-stop-icon,
@@ -105,8 +104,11 @@ body {
   display: flex;
   align-items: center;
   justify-content: center;
-  height: 30px;
-  padding: 0 10px;
+  height: 28px;
+  padding: 0 8px;
+  box-sizing: border-box;
+  font-size: 8px;
+  line-height: 1;
 }
 
 .btn-github {
@@ -127,12 +129,12 @@ body {
   flex-shrink: 0;
 }
 
-/* New Project button — green accent */
+/* New Project button — superx pink */
 .btn.btn-new-project {
   gap: 6px;
-  background: var(--success);
-  border-color: var(--success);
-  color: var(--bg-dark);
+  background: var(--accent);
+  border-color: var(--accent);
+  color: #fff;
 }
 
 .btn.btn-new-project svg {
@@ -141,8 +143,8 @@ body {
 }
 
 .btn.btn-new-project:hover {
-  background: #3ba88a;
-  border-color: #4ecca3;
+  background: #d13350;
+  border-color: #ff5a7a;
 }
 
 /* Stop button — solid red, white text+icon */
