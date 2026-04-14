@@ -129,17 +129,17 @@ body {
   flex-shrink: 0;
 }
 
-/* New Project button — pink */
+/* New Project button — pink background */
 .btn.btn-new-project {
-  background: var(--magenta);
-  border-color: var(--magenta);
-  color: #fff;
+  background: #e056a0 !important;
+  border-color: #e056a0 !important;
+  color: #fff !important;
   white-space: nowrap;
 }
 
 .btn.btn-new-project:hover {
-  background: #c84890;
-  border-color: #f060b0;
+  background: #c84890 !important;
+  border-color: #f060b0 !important;
 }
 
 /* Stop button — solid red, white text+icon */
