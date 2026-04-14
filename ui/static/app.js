@@ -1224,6 +1224,8 @@ async function setupGitHub() {
         const short = data.path.split('/').slice(-2).join('/');
         pathDisplay.textContent = short;
         pathDisplay.title = data.path;
+        // Refresh map to reflect the new project's structure
+        if (gameMap) gameMap.fetchStructure();
         // If a task was buffered while waiting for the path, auto-submit it
         // and close the modal so the user doesn't have to retype.
         if (window._pendingTask) {
