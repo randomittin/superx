@@ -1232,6 +1232,35 @@ async function setupGitHub() {
     if (e.target === modal) modal.classList.remove('open');
   });
 
+  // BROWSE button — opens native OS folder picker
+  const browseBtn = document.getElementById('browse-folder-btn');
+  if (browseBtn) {
+    browseBtn.addEventListener('click', async () => {
+      browseBtn.disabled = true;
+      browseBtn.textContent = '...';
+      try {
+        const res = await fetch('/api/pick-folder');
+        const data = await res.json();
+        if (data.path) {
+          pathInput.value = data.path;
+          status.textContent = 'Selected: ' + data.path;
+          status.style.color = 'var(--success)';
+        } else if (data.cancelled) {
+          status.textContent = 'Cancelled';
+          status.style.color = 'var(--text-dim)';
+        } else if (data.error) {
+          status.textContent = data.error;
+          status.style.color = 'var(--error)';
+        }
+      } catch (err) {
+        status.textContent = 'Failed to open folder picker';
+        status.style.color = 'var(--error)';
+      }
+      browseBtn.disabled = false;
+      browseBtn.textContent = 'BROWSE';
+    });
+  }
+
   // SET PROJECT directory
   projectBtn.addEventListener('click', async () => {
     const localPath = pathInput.value.trim();

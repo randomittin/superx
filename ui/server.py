@@ -742,6 +742,8 @@ class DashboardHandler(SimpleHTTPRequestHandler):
             self.handle_history()
         elif self.path.startswith("/api/history/"):
             self.handle_history_detail()
+        elif self.path == "/api/pick-folder":
+            self.handle_pick_folder()
         elif self.path == "/api/github":
             self.send_json(200, {
                 "url": configured_github_url,
@@ -830,6 +832,41 @@ class DashboardHandler(SimpleHTTPRequestHandler):
         finally:
             if q in event_queues:
                 event_queues.remove(q)
+
+    def handle_pick_folder(self):
+        """Open a native OS folder picker and return the chosen path."""
+        import platform
+        path = ""
+        try:
+            if platform.system() == "Darwin":
+                r = subprocess.run(
+                    ["osascript", "-e",
+                     'POSIX path of (choose folder with prompt "Select project directory")'],
+                    capture_output=True, text=True, timeout=120,
+                )
+                path = r.stdout.strip().rstrip("/")
+            elif platform.system() == "Linux":
+                r = subprocess.run(
+                    ["zenity", "--file-selection", "--directory",
+                     "--title=Select project directory"],
+                    capture_output=True, text=True, timeout=120,
+                )
+                path = r.stdout.strip()
+            else:
+                self.send_json(400, {"error": "Folder picker not supported on this OS"})
+                return
+        except FileNotFoundError:
+            self.send_json(400, {"error": "No folder picker available (install zenity on Linux)"})
+            return
+        except subprocess.TimeoutExpired:
+            self.send_json(400, {"error": "Folder picker timed out"})
+            return
+
+        if path and os.path.isdir(path):
+            self.send_json(200, {"path": path})
+        else:
+            # User cancelled the dialog
+            self.send_json(200, {"path": "", "cancelled": True})
 
     def handle_state(self):
         """Return current superx-state.json."""
