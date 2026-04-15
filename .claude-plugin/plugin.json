@@ -17,6 +17,8 @@
     "quality-gates",
     "ci-cd",
     "dashboard",
+    "caveman",
+    "token-saving",
     "claude-code",
     "skill",
     "plugin"
