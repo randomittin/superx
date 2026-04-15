@@ -29,6 +29,16 @@ For detailed guidance on specific topics:
 - [Maintainer mode guide](references/maintainer-guide.md)
 - [Communication templates](references/communication-templates.md)
 
+## Planning Pipeline
+
+superx uses complexity-based routing to decide how much planning overhead a task needs:
+
+- **Simple** (single-file fix, config change, question): execute directly, no planning
+- **Medium** (feature addition, multi-file bug): lightweight plan in `.planning/PLAN.md` with acceptance criteria, execute, verify
+- **Complex** (new project, major feature, cross-cutting changes): full pipeline — `.planning/CONTEXT.md` for codebase analysis, `.planning/PLAN-{phase}.md` with wave-grouped tasks, wave-executor agents with fresh context per wave, verifier agent checks all criteria
+
+The `.planning/` directory at the project root is the state system. Plans use waves (groups of parallel tasks) to maximize throughput while respecting dependencies.
+
 ## Full Specification
 
 For the complete design specification (paths relative to plugin root, use `${CLAUDE_SKILL_DIR}/../..` to resolve):
