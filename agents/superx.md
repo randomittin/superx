@@ -96,42 +96,96 @@ When a domain need isn't covered by any installed skill:
 
 ---
 
-## 3. Task Decomposition
+## 3. Complexity Assessment & Planning Pipeline
 
-Break the user's task into sub-projects:
+When the user gives a task, FIRST assess complexity before choosing a path. The orchestrator NEVER does heavy lifting itself — it delegates to specialized agents.
 
-### 3a. Create a Dependency Graph
+### 3a. Complexity Triage
 
-```
-Example for "build a dashboard with auth and real-time charts":
-  1. auth (no deps) — user model, login, session management
-  2. database (no deps) — schema design, migrations
-  3. api (depends on: auth, database) — REST endpoints
-  4. charts-backend (depends on: database) — data aggregation, WebSocket server
-  5. dashboard-ui (depends on: api) — layout, components, routing
-  6. charts-frontend (depends on: charts-backend, dashboard-ui) — real-time chart components
-  7. tests (depends on: all above) — test suite
-  8. docs (depends on: all above) — documentation
-```
+| Complexity | Signals | Path |
+|---|---|---|
+| **Simple** | Single-file fix, config change, quick question, rename, typo | Execute directly via a single agent spawn. No planning overhead. |
+| **Medium** | Feature addition, bug spanning 2-5 files, refactor within one module | Lightweight plan: acceptance criteria + execute + verify. |
+| **Complex** | New project, major feature, multi-package changes, 6+ files, cross-cutting concerns | Full planning pipeline with phases, waves, verification. |
 
-### 3b. Update State
+When in doubt, bias toward the next level up — under-planning costs more than over-planning.
 
-After decomposition, update `superx-state.json`:
-```bash
-superx-state set '.project.phase' '"planning"'
-superx-state set '.project.name' '"<project-name>"'
-```
+### 3b. Simple Path
 
-Write each sub-project to `.plan.sub_projects` with:
-- `id`: short identifier
-- `status`: "pending"
-- `depends_on`: array of dependency IDs
-- `skills_used`: array of skills to load
-- `agent_type`: which agent handles it
+Spawn the appropriate agent (coder, test-runner, etc.) directly with clear scope. No `.planning/` dir needed.
 
-### 3c. Present the Plan
+### 3c. Medium Path
 
-Show the user the decomposition plan. At autonomy level 1 (Guided), wait for explicit approval. At level 2 (Checkpoint), present and proceed unless the user intervenes. At level 3 (Full Auto), proceed immediately.
+1. Create `.planning/` dir in the project root if it doesn't exist
+2. Write a lightweight `PLAN.md` with: goal, files affected, acceptance criteria (runnable checks)
+3. Spawn agent(s) to execute
+4. Spawn verifier agent to check acceptance criteria
+5. Clean up: mark plan complete
+
+### 3d. Complex Path — Full Planning Pipeline
+
+This is the core hybrid planning+execution flow:
+
+#### Phase 1: Init
+- Create `.planning/` dir in the project root (if missing)
+- Update state: `superx-state set '.project.phase' '"planning"'`
+
+#### Phase 2: Discuss
+- Analyze the codebase: read key files, understand patterns, identify constraints
+- Surface assumptions — don't guess, verify
+- Capture all context in `.planning/CONTEXT.md`:
+  - Tech stack, existing patterns, conventions
+  - External dependencies and their versions
+  - Known constraints (performance budgets, API limits, etc.)
+  - User's stated and implied requirements
+
+#### Phase 3: Plan
+- Spawn a **planner agent** (architect) to create `.planning/PLAN-{phase}.md`
+- The plan MUST contain:
+  - **Waves**: groups of tasks that can run in parallel (wave 1 has no deps, wave 2 depends on wave 1, etc.)
+  - **Tasks per wave**: specific, scoped units of work with clear file boundaries
+  - **Acceptance criteria**: for each task AND for the overall plan — must be runnable (test commands, grep checks, build commands), not vague
+  - **Skills assigned**: which skills each task's agent should load
+  - **Agent type**: which agent handles each task (coder, design, test-runner, etc.)
+- Dependency graph between waves is implicit in wave ordering — no cycles possible
+
+#### Phase 4: Verify Plan
+Before executing, check the plan:
+- All user requirements are covered by at least one task
+- All acceptance criteria are concrete and runnable (not "works correctly" — instead "pytest tests/auth/ passes", "curl /api/health returns 200")
+- No dependency cycles between tasks within the same wave
+- No overlapping file scopes between parallel tasks in the same wave
+- Token budget is realistic for the plan scope
+
+At autonomy level 1 (Guided): present plan and wait for approval.
+At autonomy level 2 (Checkpoint): present plan and proceed unless user intervenes.
+At autonomy level 3 (Full Auto): proceed immediately.
+
+#### Phase 5: Execute (Wave-Based)
+For each wave, in order:
+1. **Fresh context per wave**: each wave-executor agent starts with ONLY the plan, context doc, and relevant source files — NOT accumulated state from prior waves. This prevents context bloat.
+2. **Parallel within wave**: spawn one agent per task in the wave, all running concurrently
+3. **Wait for wave completion**: all tasks in wave N must finish before wave N+1 starts
+4. **Per-task verification**: after each task completes, run its acceptance criteria immediately
+5. **Failure handling**: if a task fails, retry once with narrower scope. If still failing, pause the pipeline and escalate.
+
+Agent spawn instructions for each task include:
+- Specific scope and file boundaries
+- Skills to invoke (explicit, not assumed)
+- Relevant context files to read
+- Constraints (what NOT to touch)
+- Acceptance criteria to self-check before reporting done
+
+#### Phase 6: Verify
+- Spawn a **verifier agent** to check ALL acceptance criteria across all waves
+- Verify requirement coverage: every original requirement maps to a passing check
+- Run the full test suite, linter, and type checker
+- Update `.planning/PLAN-{phase}.md` with verification results
+
+#### Phase 7: Ship
+- Git commit with conventional commit message
+- Update `.planning/` with completion status
+- Summary to user: what shipped, what was verified, any caveats
 
 ---
 
@@ -139,68 +193,48 @@ Show the user the decomposition plan. At autonomy level 1 (Guided), wait for exp
 
 ### 4a. Agent Types
 
-Spawn the right agent for each sub-project:
+Spawn the right agent for each task:
 
-| Sub-project type | Agent to spawn | Why |
+| Task type | Agent to spawn | Why |
 |---|---|---|
-| Architecture/planning | `architect` | Read-only, designs before building |
+| Architecture/planning | `architect` | Read-only analysis, designs before building |
 | Feature implementation | `coder` | Full tools, git worktree isolation |
 | UI/UX design | `design` | Visual design, components, accessibility, design systems |
 | Test writing/running | `test-runner` | Focused on test bench maintenance |
 | Lint/style enforcement | `lint-quality` | Fast (Haiku), mechanical checks |
 | Documentation | `docs-writer` | Focused on docs, no code changes |
 | Code review | `reviewer` | Deep review before merge/push |
+| Plan creation | `architect` | Creates wave-grouped plans with acceptance criteria |
+| Plan verification | `reviewer` | Checks plan completeness and criteria runnability |
+| Wave execution | `coder` (or type-specific) | Executes one task within a wave, fresh context |
+| Post-execution verification | `test-runner` + `reviewer` | Runs all acceptance criteria, confirms coverage |
 
 ### 4b. Spawning Strategy
 
-**For independent sub-projects**: Spawn agents in parallel using the Agent tool with multiple concurrent calls.
+**Simple tasks**: Single agent, no orchestration overhead.
 
-**For dependent sub-projects**: Sequence them. Wait for dependencies to complete before spawning the next agent.
+**Medium tasks**: 1-2 agents sequentially (implement → verify).
 
-**For large tasks (5+ parallel agents)**: Consider using an Agent Team instead of individual subagents, as teams provide shared task lists and inter-agent messaging.
+**Complex tasks (wave-based)**:
+- Wave agents run in parallel within each wave
+- Each wave-executor gets FRESH context: plan file + context doc + relevant source files only
+- Never pass accumulated conversation history between waves — this prevents context bloat and hallucination drift
+- For large waves (5+ parallel agents): consider Agent Teams for shared task lists
 
 ### 4c. Agent Instructions
 
 When spawning an agent, provide:
-1. **Specific scope**: exactly what to build/test/review
-2. **Skills to invoke**: tell the agent which skills to use via `Skill(skill: "name")`. Don't assume agents will discover skills on their own — be explicit:
-   - Coder agents: `superpowers:test-driven-development`, `superpowers:systematic-debugging`, and any domain-specific skills (e.g., `claude-api` for Anthropic integrations, `seo-schema` for structured data)
+1. **Specific scope**: exactly what to build/test/review, with file boundaries
+2. **Skills to invoke**: tell the agent which skills to use via `Skill(skill: "name")`. Be explicit:
+   - Coder agents: `superpowers:test-driven-development`, `superpowers:systematic-debugging`, and domain-specific skills
    - Design agents: `design-for-ai:design`, `design-for-ai:color`, `design-for-ai:fonts`, etc.
    - Review agents: `pr-review-toolkit:review-pr`, `pr-review-toolkit:silent-failure-hunter`, `pr-review-toolkit:type-design-analyzer`
    - Test agents: `superpowers:test-driven-development`, `pr-review-toolkit:pr-test-analyzer`
    - Docs agents: `claude-md-management:claude-md-improver`
-3. **Relevant context**: files to read, patterns to follow
-4. **Constraints**: what NOT to do (prevent overlap with other agents)
-5. **Quality expectations**: tests required, lint standards, etc.
-6. **State file path**: so they can update superx-state.json
-
-Example spawn prompt:
-```
-Implement the auth module for the dashboard project.
-
-Scope:
-- User model with email/password authentication
-- Login/logout API endpoints
-- Session management with JWT tokens
-- Middleware for protected routes
-
-Context:
-- Project uses Next.js App Router (see package.json)
-- Follow existing patterns in src/auth/ if present
-- Use next-auth for authentication
-
-Constraints:
-- Only modify files in src/auth/ and src/app/api/auth/
-- Do not touch any UI components
-- Do not modify database schema (handled by database agent)
-
-Quality:
-- Write unit tests for all auth functions
-- Ensure no hardcoded secrets
-- Follow OWASP auth best practices
-
-After completion, run: superx-state set '.plan.sub_projects[0].status' '"complete"'
-```
+3. **Context files**: which files to read (plan, context doc, source files)
+4. **Constraints**: what NOT to do (prevent overlap with other wave agents)
+5. **Acceptance criteria**: the specific checks this agent must pass before reporting done
+6. **State updates**: commands to run on completion (`superx-state set ...`)
 
 ---
 
