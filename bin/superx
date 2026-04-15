@@ -1,25 +1,88 @@
 #!/usr/bin/env bash
 # superx — autonomous superskill manager for Claude Code
 #
+# superx is a program that launches Claude Code with the right settings,
+# plugins, and permissions. It bootstraps everything on first run.
+#
 # Usage:
 #   superx "build a dashboard with auth"     Run a task end-to-end
 #   superx                                    Interactive mode
-#   superx --dashboard                        Start the pixel dashboard (web UI)
+#   superx --dashboard                        Start the pixel dashboard
 #   superx --update                           Pull latest version
+#   superx --setup                            Re-run plugin setup
 #
 set -euo pipefail
 
 # Resolve the plugin root (bin/superx → superx/)
 PLUGIN_DIR="$(cd "$(dirname "$0")/.." && pwd)"
 WORK_DIR="$(pwd)"
+SETUP_MARKER="$PLUGIN_DIR/.setup-done"
+
+# ── Ensure Claude Code is installed ──
+
+ensure_claude() {
+  if command -v claude &>/dev/null; then
+    return 0
+  fi
+  echo "Claude Code not found. Installing..."
+  if command -v npm &>/dev/null; then
+    npm install -g @anthropic-ai/claude-code
+  elif command -v brew &>/dev/null; then
+    brew install node
+    npm install -g @anthropic-ai/claude-code
+  else
+    echo "Error: npm not found. Install Node.js 18+ first: https://nodejs.org"
+    exit 1
+  fi
+  if ! command -v claude &>/dev/null; then
+    echo "Error: Claude Code install failed. Run: npm install -g @anthropic-ai/claude-code"
+    exit 1
+  fi
+  echo "Claude Code installed."
+}
+
+# ── First-run setup: install companion plugins ──
+
+first_run_setup() {
+  if [ -f "$SETUP_MARKER" ]; then
+    return 0
+  fi
+  echo "First run — setting up companion plugins..."
+
+  # caveman (token compression)
+  if ! claude plugins list 2>/dev/null | grep -q "caveman"; then
+    echo "  + caveman (token compression)"
+    claude plugins marketplace add JuliusBrussee/caveman 2>/dev/null || true
+    claude plugins install caveman@caveman 2>/dev/null || true
+  fi
+
+  # superpowers (brainstorming, debugging)
+  if ! claude plugins list 2>/dev/null | grep -q "superpowers"; then
+    echo "  + superpowers (brainstorming, debugging)"
+    claude plugins marketplace add anthropics/claude-plugins-official 2>/dev/null || true
+    claude plugins install superpowers 2>/dev/null || true
+  fi
+
+  # superx marketplace
+  if ! claude plugins marketplace list 2>/dev/null | grep -q "superx-marketplace"; then
+    echo "  + superx marketplace"
+    claude plugins marketplace add randomittin/superx-marketplace 2>/dev/null || true
+  fi
+
+  touch "$SETUP_MARKER"
+  echo "Setup complete."
+  echo ""
+}
+
+# ── Command handlers ──
 
 # --dashboard: start the web UI server
 if [[ "${1:-}" == "--dashboard" ]]; then
+  ensure_claude
+  first_run_setup
   echo "Starting superx dashboard..."
-  echo "Project directory: $WORK_DIR"
-  # Pre-set the project path so the dashboard opens ready to go
+  echo "Project: $WORK_DIR"
   CONFIG_FILE="$PLUGIN_DIR/superx-github.json"
-  # Read existing URL if any
   EXISTING_URL=""
   if [ -f "$CONFIG_FILE" ]; then
     EXISTING_URL=$(python3 -c "import json; print(json.load(open('$CONFIG_FILE')).get('url',''))" 2>/dev/null || true)
@@ -37,6 +100,14 @@ if [[ "${1:-}" == "--update" ]]; then
   exit 0
 fi
 
+# --setup: re-run plugin installation
+if [[ "${1:-}" == "--setup" ]]; then
+  rm -f "$SETUP_MARKER"
+  ensure_claude
+  first_run_setup
+  exit 0
+fi
+
 # --help
 if [[ "${1:-}" == "--help" || "${1:-}" == "-h" ]]; then
   echo "superx — autonomous superskill manager for Claude Code"
@@ -46,17 +117,26 @@ if [[ "${1:-}" == "--help" || "${1:-}" == "-h" ]]; then
   echo "  superx                  Interactive Claude session with superx powers"
   echo "  superx --dashboard      Start the pixel dashboard (http://localhost:8080)"
   echo "  superx --update         Pull latest superx from GitHub"
+  echo "  superx --setup          Re-run first-time plugin setup"
   echo "  superx --help           Show this help"
   echo ""
-  echo "superx gives Claude full autonomy: --dangerously-skip-permissions,"
-  echo "parallel agent spawning, skill use, quality gates, auto-checkpointing."
+  echo "superx launches Claude Code with:"
+  echo "  --dangerously-skip-permissions    full autonomy"
+  echo "  --plugin-dir <superx>            superx agents + skills"
+  echo "  --agent superx                   CTO-level orchestrator"
+  echo "  + caveman (token compression)    ~65-75% savings"
+  echo "  + superpowers (brainstorming)    design + debug skills"
   echo ""
   echo "All files are written to the current directory."
   exit 0
 fi
 
-# Default: launch Claude with superx as the main agent in the current dir.
-# Preamble kept terse (caveman) to save tokens on every call.
+# ── Main: ensure deps, then launch Claude ──
+
+ensure_claude
+first_run_setup
+
+# Terse system preamble (caveman style to save tokens)
 PREAMBLE="PROJECT: $WORK_DIR
 Write ALL files here. Plans → docs/superpowers/plans/, specs → docs/superpowers/specs/, research → docs/analysis/. NEVER write to superx plugin dir.
 
