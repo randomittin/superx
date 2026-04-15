@@ -7,7 +7,8 @@
 # What it does:
 #   1. Clones superx to ~/.superx (or updates if already installed)
 #   2. Adds ~/.superx/bin to your PATH (in .zshrc / .bashrc)
-#   3. Prints usage instructions
+#   3. Installs companion plugins (caveman, superpowers) via Claude Code
+#   4. Prints usage instructions
 #
 set -euo pipefail
 
@@ -56,11 +57,54 @@ else
   echo "    export PATH=\"\$PATH:\$HOME/.superx/bin\""
 fi
 
+# Install companion plugins if Claude Code is available
+if command -v claude &>/dev/null; then
+  echo ""
+  echo "  Installing companion plugins..."
+
+  # caveman — token compression (~65-75% output savings)
+  if ! claude plugins list 2>/dev/null | grep -q "caveman"; then
+    echo "  + caveman (token compression)"
+    claude plugins marketplace add JuliusBrussee/caveman 2>/dev/null || true
+    claude plugins install caveman@caveman 2>/dev/null || true
+  else
+    echo "  ✔ caveman already installed"
+  fi
+
+  # superpowers — brainstorming, debugging, skill-creator
+  if ! claude plugins list 2>/dev/null | grep -q "superpowers"; then
+    echo "  + superpowers (brainstorming, debugging, skill-creator)"
+    claude plugins marketplace add anthropics/claude-plugins-official 2>/dev/null || true
+    claude plugins install superpowers 2>/dev/null || true
+  else
+    echo "  ✔ superpowers already installed"
+  fi
+
+  # superx marketplace — for `claude plugins install superx` updates
+  if ! claude plugins marketplace list 2>/dev/null | grep -q "superx-marketplace"; then
+    echo "  + superx marketplace"
+    claude plugins marketplace add randomittin/superx-marketplace 2>/dev/null || true
+  else
+    echo "  ✔ superx marketplace already added"
+  fi
+
+else
+  echo ""
+  echo "  ⚠ Claude Code not found — skipping companion plugin install."
+  echo "    Install Claude Code first, then re-run this script to get:"
+  echo "    - caveman (token compression, ~65-75% savings)"
+  echo "    - superpowers (brainstorming, debugging, skill-creator)"
+fi
+
 echo ""
 echo "  ✔ superx installed to $INSTALL_DIR"
 echo ""
 echo "  To start using it now:"
-echo "    source $SHELL_RC"
+if [ -n "$SHELL_RC" ]; then
+  echo "    source $SHELL_RC"
+else
+  echo "    export PATH=\"\$PATH:\$HOME/.superx/bin\""
+fi
 echo ""
 echo "  Then from any project directory:"
 echo "    cd /path/to/your/project"
