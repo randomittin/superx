@@ -63,6 +63,14 @@ first_run_setup() {
     claude plugins install superpowers 2>/dev/null || true
   fi
 
+  # claude-mem (persistent cross-session memory)
+  if ! command -v claude-mem &>/dev/null; then
+    echo "  + claude-mem (persistent memory across sessions)"
+    if command -v npx &>/dev/null; then
+      npx claude-mem install 2>/dev/null || true
+    fi
+  fi
+
   # superx marketplace
   if ! claude plugins marketplace list 2>/dev/null | grep -q "superx-marketplace"; then
     echo "  + superx marketplace"
@@ -126,6 +134,7 @@ if [[ "${1:-}" == "--help" || "${1:-}" == "-h" ]]; then
   echo "  --agent superx                   CTO-level orchestrator"
   echo "  + caveman (token compression)    ~65-75% savings"
   echo "  + superpowers (brainstorming)    design + debug skills"
+  echo "  + claude-mem (persistent memory) cross-session context"
   echo ""
   echo "All files are written to the current directory."
   exit 0
