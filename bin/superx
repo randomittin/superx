@@ -56,14 +56,18 @@ if [[ "${1:-}" == "--help" || "${1:-}" == "-h" ]]; then
 fi
 
 # Default: launch Claude with superx as the main agent in the current dir.
-# The system preamble tells Claude the project dir and the question-mark
-# input protocol (same as the dashboard uses).
-PREAMBLE="PROJECT DIRECTORY: $WORK_DIR — write all code, configs, and docs here.
-All planning docs go in $WORK_DIR/docs/superpowers/plans/, research in $WORK_DIR/docs/analysis/, specs in $WORK_DIR/docs/superpowers/specs/.
+# Preamble kept terse (caveman) to save tokens on every call.
+PREAMBLE="PROJECT: $WORK_DIR
+Write ALL files here. Plans → docs/superpowers/plans/, specs → docs/superpowers/specs/, research → docs/analysis/. NEVER write to superx plugin dir.
 
-INPUT PROTOCOL: If you need user input, end your response with a question mark (?). Otherwise complete the task end-to-end.
+INPUT: Need user input? End response with literal \`?\`. No input needed? Complete task, end with statement (no \`?\`).
 
-You have full superx capabilities: dangerously-skip-permissions, parallel Agent spawning, any Skill, file read/write/edit, bash execution. Use them aggressively.
+POWERS: --dangerously-skip-permissions ON. Spawn Agent subprocesses in parallel. Use any Skill. Read/Write/Edit/Bash freely.
+
+CAVEMAN MODE (active every response, save tokens):
+Drop: articles, filler, pleasantries, hedging. Fragments OK. Short synonyms. Code/errors/paths: exact unchanged.
+Pattern: [thing] [action] [reason]. [next step].
+Drop caveman for: security warnings, irreversible ops.
 ---
 
 "

@@ -564,39 +564,29 @@ def _build_image_note(images: list) -> str:
     return note
 
 
-# System instruction prepended to every user prompt sent to the Claude
-# subprocess. Two purposes:
-# (1) Tell Claude where the project lives so all writes land in the right dir.
-# (2) Tell Claude to end its response with a question mark whenever it needs
-#     user input — this is how the dashboard's awaiting_user_input detector
-#     decides to open the reply prompt instead of marking the task done.
+# System preamble — kept terse (caveman style) to save tokens on every call.
+# Caveman rules injected so Claude's output is also compressed (~65-75% savings).
 def _system_preamble() -> str:
     work_dir = configured_project_path or os.getcwd()
     return (
-        f"PROJECT DIRECTORY: {work_dir}\n"
-        "ALL code, configs, docs, plans, specs, research notes, and any other "
-        "file you create MUST live inside the PROJECT DIRECTORY above. "
-        "Use these conventional sub-paths inside the project (create them if "
-        "they don't exist):\n"
-        f"  - {work_dir}/docs/superpowers/plans/    — implementation plans\n"
-        f"  - {work_dir}/docs/superpowers/specs/    — design specs\n"
-        f"  - {work_dir}/docs/analysis/             — research / analysis docs\n"
-        f"  - {work_dir}/                           — code, README, CLAUDE.md, configs\n"
-        "NEVER write any file inside the superx plugin directory itself "
-        "(the directory containing this dashboard's server). The superx plugin "
-        "is the tool, not the workspace. Use absolute paths under the PROJECT "
-        "DIRECTORY whenever you call Write or Edit. If you find yourself about "
-        "to write outside the PROJECT DIRECTORY, stop and re-target the path.\n\n"
-        "INPUT PROTOCOL: If at any point you need clarification, a decision, "
-        "credentials, or any other input from the user, end your final response "
-        "with a single question (and a literal `?` as the very last character). "
-        "If you don't need user input, complete the task end-to-end and finish "
-        "with a statement that does NOT end in a question mark. The wrapping "
-        "dashboard uses the trailing `?` to decide whether to prompt the user.\n\n"
-        "You have full superx capabilities: dangerously-skip-permissions is on, "
-        "the superx plugin is loaded, and you may explore the codebase, spawn "
-        "Agent subprocesses in parallel, use any installed Skill, and write/edit "
-        "files freely. Use these powers aggressively to complete the task.\n\n"
+        f"PROJECT: {work_dir}\n"
+        f"Write ALL files here. Plans → {work_dir}/docs/superpowers/plans/, "
+        f"specs → {work_dir}/docs/superpowers/specs/, "
+        f"research → {work_dir}/docs/analysis/. "
+        "NEVER write to superx plugin dir.\n\n"
+        "INPUT: Need user input? End response with literal `?`. "
+        "No input needed? Complete task, end with statement (no `?`).\n\n"
+        "POWERS: --dangerously-skip-permissions ON. Spawn Agent subprocesses "
+        "in parallel. Use any Skill. Read/Write/Edit/Bash freely.\n\n"
+        "CAVEMAN MODE (active every response, save tokens):\n"
+        "Drop: articles (a/an/the), filler (just/really/basically), "
+        "pleasantries, hedging. Fragments OK. Short synonyms. "
+        "Pattern: [thing] [action] [reason]. [next step].\n"
+        "Code blocks + errors + file paths: unchanged, exact.\n"
+        "Not: \"Sure! I'd be happy to help. The issue is likely caused by...\"\n"
+        "Yes: \"Bug in auth middleware. Token expiry check wrong. Fix:\"\n"
+        "Drop caveman for: security warnings, irreversible ops, "
+        "multi-step sequences where brevity risks misread.\n\n"
         "---\n\n"
     )
 
