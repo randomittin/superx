@@ -114,6 +114,14 @@ else
   echo "  ✔ superpowers"
 fi
 
+# claude-mem — persistent cross-session memory
+if ! command -v claude-mem &>/dev/null; then
+  echo "  + claude-mem (persistent memory across sessions)"
+  npx claude-mem install 2>/dev/null || true
+else
+  echo "  ✔ claude-mem"
+fi
+
 # superx marketplace
 if ! claude plugins marketplace list 2>/dev/null | grep -q "superx-marketplace"; then
   echo "  + superx marketplace"
