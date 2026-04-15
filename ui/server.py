@@ -744,6 +744,9 @@ class DashboardHandler(SimpleHTTPRequestHandler):
             self.handle_history_detail()
         elif self.path == "/api/pick-folder":
             self.handle_pick_folder()
+        elif self.path == "/api/check-update":
+            msg = _auto_update()
+            self.send_json(200, {"updated": bool(msg), "message": msg or "Already up to date"})
         elif self.path == "/api/github":
             self.send_json(200, {
                 "url": configured_github_url,
@@ -1267,7 +1270,63 @@ class DashboardHandler(SimpleHTTPRequestHandler):
         pass
 
 
+def _auto_update():
+    """Pull latest superx code from origin on startup.
+
+    JS/CSS/HTML changes take effect immediately (served from disk).
+    server.py changes take effect on the next restart.
+    Runs silently — never blocks startup or crashes on failure.
+    """
+    superx_dir = str(PLUGIN_DIR)
+    git_dir = os.path.join(superx_dir, ".git")
+    if not os.path.isdir(git_dir):
+        return ""
+    try:
+        # Fetch latest
+        subprocess.run(
+            ["git", "fetch", "origin", "main"],
+            capture_output=True, text=True, cwd=superx_dir, timeout=15,
+        )
+        # Check if we're behind
+        local = subprocess.run(
+            ["git", "rev-parse", "HEAD"],
+            capture_output=True, text=True, cwd=superx_dir,
+        ).stdout.strip()
+        remote = subprocess.run(
+            ["git", "rev-parse", "origin/main"],
+            capture_output=True, text=True, cwd=superx_dir,
+        ).stdout.strip()
+        if local == remote:
+            return ""
+        # Fast-forward pull (won't clobber local uncommitted changes)
+        r = subprocess.run(
+            ["git", "pull", "--ff-only", "origin", "main"],
+            capture_output=True, text=True, cwd=superx_dir, timeout=30,
+        )
+        if r.returncode == 0:
+            # Check if server.py itself changed (needs restart)
+            changed = subprocess.run(
+                ["git", "diff", "--name-only", local, "HEAD"],
+                capture_output=True, text=True, cwd=superx_dir,
+            ).stdout
+            server_changed = "ui/server.py" in changed
+            count = len([l for l in changed.strip().split("\n") if l])
+            msg = f"Auto-updated superx ({count} files)"
+            if server_changed:
+                msg += " — restart server for full effect"
+            return msg
+        return ""
+    except Exception:
+        return ""
+
+
+_update_msg = ""  # stored for the startup banner + API
+
+
 def main():
+    global _update_msg
+    _update_msg = _auto_update()
+
     init_state_if_needed()
     load_session()
     _load_github_config()
@@ -1283,6 +1342,10 @@ def main():
     print(f"  ╔══════════════════════════════════════╗")
     print(f"  ║   superx dashboard                   ║")
     print(f"  ║   http://localhost:{PORT}              ║")
+    if _update_msg:
+        # Pad message to fit the box
+        padded = _update_msg[:36].ljust(36)
+        print(f"  ║   {padded} ║")
     print(f"  ║   Press Ctrl+C to stop               ║")
     print(f"  ╚══════════════════════════════════════╝")
     print(f"\033[0m")
