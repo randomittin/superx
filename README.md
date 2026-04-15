@@ -26,51 +26,65 @@ A real-time **pixel-art dashboard** ships with the plugin so you can watch the w
 
 ## Quick start
 
-### 1. Clone
+### One-line install
 
 ```bash
-git clone https://github.com/randomittin/superx.git
-cd superx
+curl -fsSL https://raw.githubusercontent.com/randomittin/superx/main/install.sh | bash
 ```
 
-### 2. Install Claude Code (if you haven't)
-
-Follow the [official install guide](https://docs.claude.com/en/docs/claude-code/setup) — superx works with Claude Code 1.0+.
-
-### 3. Pick a runtime
-
-You have two ways to use superx:
-
-#### Option A — Pixel dashboard (recommended)
+This clones superx to `~/.superx`, adds it to your PATH, and you're done. Then:
 
 ```bash
-# Start the local dashboard server
-python ui/server.py
-# Then open http://localhost:8080 in your browser
-```
-
-The dashboard handles project selection, prompt entry, GitHub remote setup, image attachments, and live observability — no terminal juggling required.
-
-> Requires Python 3.11+. No external Python dependencies — everything is stdlib.
-
-#### Option B — Direct CLI
-
-```bash
-# Add bin to your PATH (or symlink the launcher)
-export PATH="$PATH:$(pwd)/bin"
-
-# Run superx in any project directory
+# Open a new terminal (or `source ~/.zshrc`), cd to any project, and go:
 cd /path/to/your/project
 superx "build a real-time dashboard with auth and charts"
 ```
 
-### 4. Optional: install as a Claude Code plugin
-
-Make superx's agents and slash commands available globally:
+### Or install manually
 
 ```bash
-claude --plugin-dir /absolute/path/to/superx
+git clone https://github.com/randomittin/superx.git ~/.superx
+export PATH="$PATH:$HOME/.superx/bin"
 ```
+
+### Prerequisites
+
+- **Claude Code** 1.0+ with valid auth ([install guide](https://docs.claude.com/en/docs/claude-code/setup))
+- **Python** 3.11+ (for the dashboard; stdlib only, no pip install)
+- **Git**
+
+---
+
+## Usage
+
+```bash
+superx "deploy to vercel"     # Run a task end-to-end in the current dir
+superx                        # Interactive Claude session with superx powers
+superx --dashboard            # Start the pixel dashboard (http://localhost:8080)
+superx --update               # Pull latest version from GitHub
+superx --help                 # Show help
+```
+
+All three modes give Claude full autonomy: `--dangerously-skip-permissions`, the superx plugin loaded, parallel agent spawning, any installed skill, and quality gates enforced.
+
+### Dashboard mode
+
+```bash
+cd /path/to/your/project
+superx --dashboard
+# open http://localhost:8080
+```
+
+Auto-sets the current directory as the project. The dashboard handles prompt entry, image attachments, GitHub remote setup, and gives you live observability — isometric city map, war room, streaming logs, session history.
+
+### Install as a Claude Code plugin
+
+```bash
+claude plugins marketplace add randomittin/superx-marketplace
+claude plugins install superx
+```
+
+Or load directly: `claude --plugin-dir ~/.superx`
 
 ---
 

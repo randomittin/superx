@@ -1,16 +1,84 @@
 #!/usr/bin/env bash
-# superx — Launch the superx autonomous orchestrator
-# Usage: superx [prompt]
-#   superx "build a dashboard with auth and real-time charts"
-#   superx  (interactive mode)
+# superx — autonomous superskill manager for Claude Code
+#
+# Usage:
+#   superx "build a dashboard with auth"     Run a task end-to-end
+#   superx                                    Interactive mode
+#   superx --dashboard                        Start the pixel dashboard (web UI)
+#   superx --update                           Pull latest version
+#
 set -euo pipefail
 
 # Resolve the plugin root (bin/superx → superx/)
 PLUGIN_DIR="$(cd "$(dirname "$0")/.." && pwd)"
+WORK_DIR="$(pwd)"
 
-# Launch Claude Code with superx as the main agent
-exec claude \
-  --agent superx \
-  --dangerously-skip-permissions \
-  --plugin-dir "$PLUGIN_DIR" \
-  "$@"
+# --dashboard: start the web UI server
+if [[ "${1:-}" == "--dashboard" ]]; then
+  echo "Starting superx dashboard..."
+  echo "Project directory: $WORK_DIR"
+  # Pre-set the project path so the dashboard opens ready to go
+  CONFIG_FILE="$PLUGIN_DIR/superx-github.json"
+  # Read existing URL if any
+  EXISTING_URL=""
+  if [ -f "$CONFIG_FILE" ]; then
+    EXISTING_URL=$(python3 -c "import json; print(json.load(open('$CONFIG_FILE')).get('url',''))" 2>/dev/null || true)
+  fi
+  python3 -c "import json; json.dump({'path':'$WORK_DIR','url':'$EXISTING_URL'}, open('$CONFIG_FILE','w'))"
+  exec python3 "$PLUGIN_DIR/ui/server.py"
+fi
+
+# --update: pull latest
+if [[ "${1:-}" == "--update" ]]; then
+  echo "Updating superx..."
+  git -C "$PLUGIN_DIR" fetch origin main
+  git -C "$PLUGIN_DIR" pull --ff-only origin main
+  echo "Done."
+  exit 0
+fi
+
+# --help
+if [[ "${1:-}" == "--help" || "${1:-}" == "-h" ]]; then
+  echo "superx — autonomous superskill manager for Claude Code"
+  echo ""
+  echo "Usage:"
+  echo "  superx \"build X\"       Run a task end-to-end in the current directory"
+  echo "  superx                  Interactive Claude session with superx powers"
+  echo "  superx --dashboard      Start the pixel dashboard (http://localhost:8080)"
+  echo "  superx --update         Pull latest superx from GitHub"
+  echo "  superx --help           Show this help"
+  echo ""
+  echo "superx gives Claude full autonomy: --dangerously-skip-permissions,"
+  echo "parallel agent spawning, skill use, quality gates, auto-checkpointing."
+  echo ""
+  echo "All files are written to the current directory."
+  exit 0
+fi
+
+# Default: launch Claude with superx as the main agent in the current dir.
+# The system preamble tells Claude the project dir and the question-mark
+# input protocol (same as the dashboard uses).
+PREAMBLE="PROJECT DIRECTORY: $WORK_DIR — write all code, configs, and docs here.
+All planning docs go in $WORK_DIR/docs/superpowers/plans/, research in $WORK_DIR/docs/analysis/, specs in $WORK_DIR/docs/superpowers/specs/.
+
+INPUT PROTOCOL: If you need user input, end your response with a question mark (?). Otherwise complete the task end-to-end.
+
+You have full superx capabilities: dangerously-skip-permissions, parallel Agent spawning, any Skill, file read/write/edit, bash execution. Use them aggressively.
+---
+
+"
+
+if [ $# -gt 0 ]; then
+  # Non-interactive: run the prompt
+  exec claude \
+    --agent superx \
+    --dangerously-skip-permissions \
+    --plugin-dir "$PLUGIN_DIR" \
+    -p "${PREAMBLE}${*}"
+else
+  # Interactive mode
+  exec claude \
+    --agent superx \
+    --dangerously-skip-permissions \
+    --plugin-dir "$PLUGIN_DIR"
+fi
