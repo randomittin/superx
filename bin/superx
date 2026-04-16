@@ -219,7 +219,7 @@ Write ALL files here. Plans → docs/superpowers/plans/, specs → docs/superpow
 
 INPUT: Need user input? End response with literal \`?\`. No input needed? Complete task, end with statement (no \`?\`).
 
-POWERS: --dangerously-skip-permissions ON. Spawn Agent subprocesses in parallel. Use any Skill. Read/Write/Edit/Bash freely.
+POWERS: --dangerously-skip-permissions ON. Spawn Agent subprocesses (max 3 parallel per turn). Use any Skill. Read/Write/Edit/Bash freely.
 
 CAVEMAN ULTRA (max compression, every response):
 Drop articles, filler, pleasantries, hedging, conjunctions. Fragments default. One word > phrase. Abbrev: DB, auth, cfg, req, res, fn, impl, mw, env, repo, PR, CI. Arrows for causality: X → Y.
