@@ -116,6 +116,27 @@ if [[ "${1:-}" == "--setup" ]]; then
   exit 0
 fi
 
+# --resume: continue the last Claude session AND load .planning/ state
+if [[ "${1:-}" == "--resume" || "${1:-}" == "-r" ]]; then
+  ensure_claude
+  first_run_setup
+  apply_superx_theme 2>/dev/null || true
+  print_banner 2>/dev/null || true
+
+  # Check for resumable state
+  if [ -f "$WORK_DIR/.planning/STATE.md" ]; then
+    echo "  ▸ Resuming from .planning/STATE.md"
+  fi
+  if [ -f "$WORK_DIR/superx-state.json" ]; then
+    echo "  ▸ superx state loaded"
+  fi
+
+  exec claude --continue \
+    --agent superx \
+    --dangerously-skip-permissions \
+    --plugin-dir "$PLUGIN_DIR"
+fi
+
 # --help
 if [[ "${1:-}" == "--help" || "${1:-}" == "-h" ]]; then
   echo "superx — autonomous superskill manager for Claude Code"
@@ -123,6 +144,7 @@ if [[ "${1:-}" == "--help" || "${1:-}" == "-h" ]]; then
   echo "Usage:"
   echo "  superx \"build X\"       Run a task end-to-end in the current directory"
   echo "  superx                  Interactive Claude session with superx powers"
+  echo "  superx --resume         Resume last session (conversation + .planning state)"
   echo "  superx --dashboard      Start the pixel dashboard (http://localhost:8080)"
   echo "  superx --update         Pull latest superx from GitHub"
   echo "  superx --setup          Re-run first-time plugin setup"

@@ -17,7 +17,7 @@
         "hooks": [
           {
             "type": "command",
-            "command": "if [ -f superx-state.json ]; then superx-state mark-dirty 2>/dev/null || true; fi"
+            "command": "if [ -f superx-state.json ]; then superx-state mark-dirty 2>/dev/null || true; fi; count=$(git diff --name-only 2>/dev/null | wc -l); if [ \"$count\" -ge 5 ] && [ -d .git ]; then git add -A && git commit -m \"superx: auto-checkpoint ($count files)\" --no-verify 2>/dev/null || true; fi"
           }
         ]
       }
@@ -27,7 +27,17 @@
         "hooks": [
           {
             "type": "command",
-            "command": "if [ ! -f superx-state.json ]; then superx-state init 2>/dev/null || true; fi"
+            "command": "if [ ! -f superx-state.json ]; then superx-state init 2>/dev/null || true; fi; if [ -f .planning/STATE.md ]; then echo \"[superx] Resuming from .planning/STATE.md — read it for prior context.\"; fi"
+          }
+        ]
+      }
+    ],
+    "SessionEnd": [
+      {
+        "hooks": [
+          {
+            "type": "command",
+            "command": "if [ -d .git ] && [ -n \"$(git status --porcelain 2>/dev/null)\" ]; then git add -A && git commit -m \"superx: session-end checkpoint\" --no-verify 2>/dev/null || true; fi"
           }
         ]
       }
