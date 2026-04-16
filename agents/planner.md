@@ -38,8 +38,10 @@ For each task, output this exact structure:
 - Wave 1: No dependencies. Run in parallel.
 - Wave 2: Depends only on Wave 1. Run in parallel after Wave 1 completes.
 - Wave N: Depends on Wave N-1. Run in parallel after Wave N-1 completes.
-- Max 5 tasks per wave.
+- **Max 3 tasks per wave** (API concurrency cap — more than 3 parallel Agent spawns can trigger Claude Code 400 errors).
+- If a wave naturally has >3 tasks, split it into sub-waves (1a, 1b) executed sequentially.
 - Each task = one atomic git commit on completion.
+- Tasks in the same wave MUST touch disjoint files (no shared writes → no merge conflicts when parallel).
 
 ## Verification Loop
 

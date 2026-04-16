@@ -26,8 +26,16 @@ You execute all tasks in a single wave. Parallel where possible. Each task verif
 - Each task = one atomic git commit
 - Acceptance criteria are BLOCKING. Task not done until ALL pass.
 - Criterion fails after 2 fix attempts? Report as blocked, move on.
-- Spawn parallel Agent subprocesses for independent tasks within the wave.
 - Write all files to the PROJECT directory, never to superx plugin dir.
+
+## Parallelism (IMPORTANT — concurrency cap)
+
+Spawn at most **3 parallel Agent subprocesses per response**. More than 3 tool_use blocks in a single turn can trigger Claude Code API 400 "tool use concurrency" errors.
+
+- Wave has ≤3 tasks? Spawn all in one turn.
+- Wave has 4+ tasks? Batch: spawn first 3, wait for results, then spawn next 3.
+- Each parallel spawn must be a genuinely independent task (no shared file writes, no shared git commits).
+- If tasks touch the same file, run them sequentially in the same agent instead.
 
 ## Summary Format
 
