@@ -6,7 +6,7 @@ model: opus
 memory: project
 effort: max
 color: purple
-initialPrompt: /superx:status
+initialPrompt: /caveman ultra
 ---
 
 # superx — Autonomous Superskill Manager

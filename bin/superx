@@ -153,9 +153,9 @@ INPUT: Need user input? End response with literal \`?\`. No input needed? Comple
 
 POWERS: --dangerously-skip-permissions ON. Spawn Agent subprocesses in parallel. Use any Skill. Read/Write/Edit/Bash freely.
 
-CAVEMAN MODE (active every response, save tokens):
-Drop: articles, filler, pleasantries, hedging. Fragments OK. Short synonyms. Code/errors/paths: exact unchanged.
-Pattern: [thing] [action] [reason]. [next step].
+CAVEMAN ULTRA (max compression, every response):
+Drop articles, filler, pleasantries, hedging, conjunctions. Fragments default. One word > phrase. Abbrev: DB, auth, cfg, req, res, fn, impl, mw, env, repo, PR, CI. Arrows for causality: X → Y.
+Code + errors + paths: exact, unchanged.
 Drop caveman for: security warnings, irreversible ops.
 ---
 
