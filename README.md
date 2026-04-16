@@ -2,25 +2,30 @@
 
 **Autonomous superskill manager for Claude Code.**
 
-Turn a single prompt into a finished project. superx decomposes work into sub-projects, spawns parallel agents, enforces quality gates, and drives execution end-to-end — with the judgment of a senior dev / CTO.
+Turn a single prompt into a finished project. superx assesses complexity, plans with acceptance criteria, executes in parallel waves with fresh context, verifies everything, and ships — with the judgment of a senior dev / CTO.
 
-A real-time **pixel-art dashboard** ships with the plugin so you can watch the work happen: a live isometric city map of your project, a war room of agents, a streaming logs panel, and a clean timeline of every decision.
+A real-time **pixel-art dashboard** ships with the plugin so you can watch the work happen: a live isometric city map of your project, a war room of agents, streaming logs, and a timeline of every decision.
 
 ---
 
 ## Features
 
 - **One prompt → finished project.** Drop a task in, get a working repo back.
-- **Single-phase end-to-end execution** with `--dangerously-skip-permissions`, full plugin access, parallel `Agent` spawning, and any installed Skill at Claude's disposal.
+- **Hybrid planning pipeline.** Complexity-aware: simple tasks execute directly, complex tasks go through structured planning → wave execution → verification.
+- **Wave-based parallel execution.** Tasks grouped into dependency waves. Each wave runs in parallel with fresh 200K-token context — no context rot.
+- **Acceptance criteria as blocking gates.** Every task has runnable checks (grep, curl, test commands). Tasks cannot advance until all criteria pass.
+- **Plan verification before execution.** Plans are validated up to 3 iterations before any code is written — catches requirement misses before you waste time building the wrong thing.
+- **File-based state in `.planning/`.** Human-readable Markdown (PROJECT.md, REQUIREMENTS.md, STATE.md, CONTEXT.md, PLAN, SUMMARY) committed to git. Survives `/clear`, inspectable by humans.
 - **Question-mark protocol.** Claude only stops to ask when it actually needs you. The dashboard surfaces the question with quick-pick buttons and a free-form input.
 - **Conversation continuity.** User replies use `claude --resume <session_id>` so Claude has the full prior turn in context.
-- **Real-time pixel dashboard.** Isometric city map of your packages, war room of agents, streaming logs, day/night theme, fullscreen mode, hover tooltips on buildings, drag-to-pan, zoom, history drawer with renameable past sessions.
+- **Real-time pixel dashboard.** Isometric city map, war room of agents, streaming logs, day/night theme, fullscreen, hover tooltips, drag-to-pan, zoom, history drawer.
+- **Companion plugins auto-installed.** caveman (~65-75% token savings), superpowers (brainstorming, debugging), claude-mem (persistent cross-session memory).
 - **Quality gates.** Tests, lint, code review, conflict reflection — enforced via PreToolUse hooks before any push.
-- **Auto-checkpointing.** Background `git add -A && git commit` every N file writes, plus a recovery checkpoint so a crash never loses work.
-- **History persistence.** Every session is archived with a smart auto-generated title; rename, browse, or replay any past run from the drawer.
+- **Atomic commits per task.** Each completed task = one git commit. Bisectable, revertable, traceable.
+- **Auto-checkpointing.** Background git commits every N file writes + crash recovery checkpoint.
 - **Maintainer mode.** Opt-in continuous repo maintenance — triage issues, fix, test, review, batch into a release.
 - **Token budgets.** Set a budget per session and get warned at 80%.
-- **GitHub integration.** One-click commit + push to your remote, even from inside the dashboard.
+- **GitHub integration.** One-click commit + push to your remote from the dashboard.
 
 ---
 
@@ -32,12 +37,26 @@ A real-time **pixel-art dashboard** ships with the plugin so you can watch the w
 curl -fsSL https://raw.githubusercontent.com/randomittin/superx/main/install.sh | bash
 ```
 
-This clones superx to `~/.superx`, adds it to your PATH, and you're done. Then:
+This installs Node.js (if missing) → Claude Code → superx → companion plugins (caveman, superpowers, claude-mem). Then:
 
 ```bash
-# Open a new terminal (or `source ~/.zshrc`), cd to any project, and go:
+source ~/.zshrc   # or open a new terminal
 cd /path/to/your/project
 superx "build a real-time dashboard with auth and charts"
+```
+
+### Or install via Homebrew
+
+```bash
+brew tap randomittin/superx
+brew install superx
+```
+
+### Or install via Claude Code plugin marketplace
+
+```bash
+claude plugins marketplace add randomittin/superx-marketplace
+claude plugins install superx
 ```
 
 ### Or install manually
@@ -58,14 +77,21 @@ export PATH="$PATH:$HOME/.superx/bin"
 ## Usage
 
 ```bash
-superx "deploy to vercel"     # Run a task end-to-end in the current dir
+superx "deploy to vercel"     # Run a task end-to-end
 superx                        # Interactive Claude session with superx powers
 superx --dashboard            # Start the pixel dashboard (http://localhost:8080)
 superx --update               # Pull latest version from GitHub
+superx --setup                # Re-run companion plugin setup
 superx --help                 # Show help
 ```
 
-All three modes give Claude full autonomy: `--dangerously-skip-permissions`, the superx plugin loaded, parallel agent spawning, any installed skill, and quality gates enforced.
+superx launches Claude Code with:
+- `--dangerously-skip-permissions` — full autonomy
+- `--plugin-dir <superx>` — all superx agents + skills loaded
+- `--agent superx` — CTO-level orchestrator as main agent
+- **caveman** — token compression (~65-75% savings)
+- **superpowers** — brainstorming, debugging, skill-creator
+- **claude-mem** — persistent memory across sessions
 
 ### Dashboard mode
 
@@ -75,34 +101,174 @@ superx --dashboard
 # open http://localhost:8080
 ```
 
-Auto-sets the current directory as the project. The dashboard handles prompt entry, image attachments, GitHub remote setup, and gives you live observability — isometric city map, war room, streaming logs, session history.
-
-### Install as a Claude Code plugin
-
-```bash
-claude plugins marketplace add randomittin/superx-marketplace
-claude plugins install superx
-```
-
-Or load directly: `claude --plugin-dir ~/.superx`
+Auto-sets the current directory as the project. Click `+ NEW` to start a fresh project with a native folder picker.
 
 ---
 
-## How the dashboard works
+## How it works — the hybrid pipeline
 
-1. **Set the project directory** (click the GitHub icon in the top right, paste a path).
-2. **Type a task** in the prompt bar at the bottom and hit RUN.
-3. Watch the **timeline** (left) show each decision, tool use, and agent spawn in real time. The **logs panel** (right) streams the raw Claude output. The **map tab** (right, default) renders your project as an isometric city — buildings light up as their packages are touched, agent sprites animate over them.
-4. If Claude needs input, the bottom prompt bar transforms into an **awaiting-input panel** with the question highlighted, auto-detected option buttons (`(A)`, `(B)`, …), and a SEND button. Reply and Claude resumes the same conversation.
-5. When the task finishes, the status badge returns to **IDLE** and the session is archived to the history drawer (clock icon, top right). Click any past session to replay its full timeline + logs.
+superx assesses every incoming task and routes it through the right level of planning:
+
+```
+User prompt
+    ↓
+Assess complexity
+    ├── Simple (single-file fix, config, question)
+    │     → Execute directly. No planning overhead.
+    │
+    ├── Medium (feature addition, 2-5 file bug)
+    │     → Lightweight plan with acceptance criteria → execute → verify
+    │
+    └── Complex (new project, major feature, 6+ files)
+          → Full pipeline ↓
+
+Init .planning/ in project dir
+    ↓
+Discuss — analyze codebase, surface assumptions → CONTEXT.md
+    ↓
+Plan — planner agent creates PLAN-{phase}.md
+    • Tasks grouped into dependency waves
+    • Each task: read_first, action, acceptance_criteria, verify, done
+    • Self-verification loop (max 3 iterations)
+    ↓
+Execute — wave by wave, parallel within each wave
+    • Wave 1 (no deps) → fresh context, parallel subagents
+    • Wave 2 (depends on 1) → fresh context, parallel subagents
+    • Each task = atomic git commit
+    • Acceptance criteria BLOCK progression
+    ↓
+Verify — verifier checks ALL criteria + requirement coverage
+    • PASS → ship
+    • FAIL → diagnosis + fix plan → re-execute
+```
+
+### Why fresh context per wave?
+
+After 4-5 agents complete work and report back, accumulated conversation history can exceed 100K+ tokens. The next wave's agents would be working in degraded context. Instead, each wave gets a clean 200K-token window — just the plan, the context doc, and the source files it needs. No garbage from prior waves.
+
+### Why acceptance criteria as gates?
+
+A task like "Create login API" isn't done when code is written. It's done when:
+```
+grep "export const login" src/api.ts       # function exists
+curl -s localhost:3000/api/login | jq .    # endpoint responds
+npm test -- --grep "auth"                   # tests pass
+```
+
+These are blocking — the wave-executor won't commit until all pass. If they fail after 2 fix attempts, the task is marked BLOCKED and the orchestrator escalates.
+
+---
+
+## `.planning/` state directory
+
+All planning state lives as human-readable Markdown in your project's `.planning/` directory:
+
+| File | Purpose |
+|---|---|
+| `PROJECT.md` | Vision, constraints, tech stack |
+| `REQUIREMENTS.md` | v1 (must-have), v2 (next), out-of-scope |
+| `STATE.md` | Living memory: current phase, decisions, blockers, metrics. YAML frontmatter derived from body content (rebuilt on every write). |
+| `CONTEXT.md` | Per-phase user preferences + codebase assumptions |
+| `PLAN-{phase}.md` | Task specifications with waves, acceptance criteria, dependencies |
+| `SUMMARY-{phase}.md` | Execution results with commit hashes |
+
+These files are:
+- **Human-readable** — open them in any editor
+- **Git-committable** — track planning decisions in version history
+- **Session-surviving** — persist across `/clear` and server restarts
+- **Concurrent-safe** — lockfile-based mutual exclusion for parallel agents
+
+---
+
+## Agent roster
+
+| Agent | Role | Model | When spawned |
+|---|---|---|---|
+| `superx` | Main orchestrator | Opus | Always (session agent) |
+| `architect` | Decomposition + planning | Opus | Complex tasks |
+| `planner` | Structured plan creation with acceptance criteria | Opus | Medium + complex tasks |
+| `wave-executor` | Execute one wave in parallel | Opus | Per wave during execution |
+| `verifier` | Post-execution verification | Sonnet | After each phase |
+| `coder` | Feature implementation | Opus | Simple + within waves |
+| `design` | UI/UX design | Opus | When UI work detected |
+| `test-runner` | Test writing and execution | Sonnet | Quality gate |
+| `lint-quality` | Lint and formatting | Haiku | Quality gate |
+| `docs-writer` | Documentation | Sonnet | Post-execution |
+| `reviewer` | Code review before push | Opus | Quality gate |
+
+---
+
+## Architecture
+
+```
+superx/
+├── .claude-plugin/plugin.json    # Plugin manifest (v1.0.0)
+├── agents/                       # 11 specialized agent definitions
+│   ├── superx.md                 # Main orchestrator (Opus)
+│   ├── architect.md              # Decomposition + planning (Opus)
+│   ├── planner.md                # Structured plans with acceptance criteria
+│   ├── wave-executor.md          # Per-wave parallel execution
+│   ├── verifier.md               # Post-execution verification
+│   ├── coder.md                  # Implementation (Opus)
+│   ├── design.md                 # UI/UX (Opus)
+│   ├── test-runner.md            # Tests (Sonnet)
+│   ├── lint-quality.md           # Lint (Haiku)
+│   ├── docs-writer.md            # Docs (Sonnet)
+│   └── reviewer.md               # Code review (Opus)
+├── skills/superx/                # Main skill + reference docs
+├── commands/                     # Slash commands
+├── hooks/hooks.json              # Quality gate hooks
+├── bin/                          # CLI tools
+│   ├── superx                    # Main launcher (self-bootstrapping)
+│   ├── lib/planning.sh           # .planning/ state management
+│   ├── superx-state              # State CRUD
+│   ├── detect-skills             # Skill inventory
+│   ├── conflict-log              # Conflict tracking
+│   └── authenticity-check        # Package verification
+├── ui/                           # Pixel dashboard
+│   ├── server.py                 # Stdlib HTTP + SSE server (auto-updates on startup)
+│   └── static/                   # HTML/CSS/JS + 35 sprite tiles
+├── docs/superpowers/specs/       # Design docs
+├── install.sh                    # One-line installer
+├── settings.json                 # Default settings
+├── CHANGELOG.md
+├── LICENSE                       # MIT
+└── README.md                     # This file
+```
+
+---
+
+## Companion plugins (auto-installed)
+
+| Plugin | What it does | Impact |
+|---|---|---|
+| **[caveman](https://github.com/juliusbrussee/caveman)** | Terse output compression | ~65-75% output token savings |
+| **[superpowers](https://github.com/anthropics/claude-plugins-official)** | Brainstorming, debugging, skill-creator | Better planning + design quality |
+| **[claude-mem](https://github.com/thedotmack/claude-mem)** | Persistent memory across sessions | No repeated context between sessions |
+
+All three are installed automatically on first run (`superx --setup` to re-run).
+
+---
+
+## Dashboard
+
+### How it works
+
+1. **Set the project directory** — click `+ NEW` or the GitHub icon, browse for a folder or type a path.
+2. **Type a task** in the prompt bar and hit RUN.
+3. Watch the **timeline** (left) and **logs panel** (right) update in real time. The **map tab** renders your project as an isometric city.
+4. If Claude needs input, the **awaiting-input panel** opens with the question, auto-detected option buttons, and a SEND button.
+5. When done, the session is archived to the **history drawer** (clock icon).
 
 ### Map controls
 
-- **+ / −** zoom
-- **Sun/Moon** toggle day / dawn / dusk / night theme
-- **⛶** fullscreen
-- **Drag** to pan
-- **Hover** any building for a tooltip with the package name and file count
+| Control | Action |
+|---|---|
+| **+ / −** | Zoom |
+| **Sun/Moon** | Day / dawn / dusk / night theme |
+| **⛶** | Fullscreen |
+| **Drag** | Pan |
+| **Hover** | Building tooltip with package name + file count |
 
 ### Status badges
 
@@ -115,72 +281,6 @@ Or load directly: `claude --plugin-dir ~/.superx`
 
 ---
 
-## Architecture
-
-```
-superx/
-├── .claude-plugin/plugin.json    # Plugin manifest (v1.0.0)
-├── agents/                       # Specialized agent definitions
-│   ├── superx.md                 # Main orchestrator (Opus)
-│   ├── architect.md              # Decomposition + planning (Opus)
-│   ├── coder.md                  # Implementation (Opus)
-│   ├── design.md                 # UI/UX (Opus)
-│   ├── test-runner.md            # Test execution (Sonnet)
-│   ├── lint-quality.md           # Lint/format (Haiku)
-│   ├── docs-writer.md            # Docs (Sonnet)
-│   └── reviewer.md               # Code review (Opus)
-├── skills/superx/                # Main skill + reference docs
-│   ├── SKILL.md
-│   └── references/               # Agent templates, quality gates, maintainer guide
-├── commands/                     # Slash commands
-│   ├── level.md                  # /superx:level
-│   ├── status.md                 # /superx:status
-│   ├── maintain.md               # /superx:maintain
-│   ├── maintain-check.md         # /superx:maintain-check
-│   └── reflect.md                # /superx:reflect
-├── hooks/hooks.json              # PreToolUse + PostToolUse quality gates
-├── bin/                          # CLI tools (launcher, state, helpers)
-│   ├── superx                    # Main launcher
-│   ├── superx-state              # State CRUD
-│   ├── detect-skills             # Match installed skills to required domains
-│   ├── conflict-log              # Conflict logging
-│   └── authenticity-check        # Plugin/package marketplace verification
-├── ui/                           # Pixel dashboard
-│   ├── server.py                 # Stdlib HTTP + SSE server
-│   └── static/                   # HTML/CSS/JS + sprite tiles
-├── docs/superpowers/specs/       # Design docs
-├── settings.json                 # Default settings
-├── CHANGELOG.md
-├── LICENSE                       # MIT
-└── README.md                     # This file
-```
-
----
-
-## Single-phase flow
-
-superx runs Claude end-to-end with a tiny state machine:
-
-```
-idle ──submit prompt──> running ──stream ends──> idle
-                          │              │
-                          │              └── (ends with "?") ──> awaiting_user_input
-                          │                                              │
-                          └──────────────── (user reply) <───────────────┘
-```
-
-The server prepends an **INPUT PROTOCOL** instruction to every prompt so Claude knows: end with `?` only if you need user input, otherwise complete the task and finish with a statement. The detector looks at the last assistant text (after stripping trailing whitespace and closing markdown punctuation) and only opens the awaiting panel when it actually sees a `?`.
-
-All Claude capabilities are preserved across the boundary:
-- `--dangerously-skip-permissions`
-- `--plugin-dir <superx>`
-- `--output-format stream-json --verbose`
-- Agent spawning, skill use, file writes, bash execution
-
-User replies use `claude --resume <session_id>` so Claude has the full conversation in context.
-
----
-
 ## Autonomy levels
 
 | Level | Name | Behavior |
@@ -189,7 +289,7 @@ User replies use `claude --resume <session_id>` so Claude has the full conversat
 | 2 | Checkpoint | Runs autonomously, pauses at milestones (default) |
 | 3 | Full Auto | Runs until complete or blocked |
 
-Change with `/superx:level <1\|2\|3>` or cycle with `/superx:level +` / `-`.
+Change with `/superx:level <1|2|3>` or cycle with `/superx:level +` / `-`.
 
 ---
 
@@ -199,8 +299,8 @@ Change with `/superx:level <1\|2\|3>` or cycle with `/superx:level +` / `-`.
 |---|---|
 | `/superx:level <1\|2\|3\|+\|->` | Set or cycle autonomy level |
 | `/superx:status` | Show project state and quality gates |
-| `/superx:maintain [on\|off\|status]` | Activate maintainer mode (guided setup wizard) |
-| `/superx:maintain-check [--dry-run]` | Run one maintenance cycle (or preview) |
+| `/superx:maintain [on\|off\|status]` | Activate maintainer mode |
+| `/superx:maintain-check [--dry-run]` | Run one maintenance cycle |
 | `/superx:reflect` | Force a conflict reflection pass |
 
 ---
@@ -214,93 +314,62 @@ Every push must pass:
 4. Code review completed
 5. No dirty (untested) changes
 
-These are enforced via the `hooks/hooks.json` PreToolUse hook on `git push`.
+Enforced via `hooks/hooks.json` PreToolUse hook on `git push`.
 
 ---
 
 ## Maintainer mode
 
-Opt-in continuous repo maintenance with one command:
-
 ```bash
 /superx:maintain
 ```
 
-Walks you through setup (issue sources, check frequency, optional Slack notifications) and then runs continuously: triage → fix → test → review → batch release.
+Continuous repo maintenance: triage → fix → test → review → batch release.
 
-| Severity × Confidence | What happens |
+| Severity x Confidence | Action |
 |---|---|
-| Critical × Any | Alert + hotfix + human approval |
-| High × High | Auto-fix + PR + request review |
-| Medium/Low × High | Auto-fix, batch into a patch release |
-| Any × Low | Escalate with full context |
-
-Communicates like a colleague: "Spotted a regression in v1.2.3 — investigating."
+| Critical x Any | Alert + hotfix + human approval |
+| High x High | Auto-fix + PR + request review |
+| Medium/Low x High | Auto-fix, batch into patch release |
+| Any x Low | Escalate with context |
 
 ---
 
 ## Requirements
 
-- **Claude Code** 1.0+ with valid auth ([install guide](https://docs.claude.com/en/docs/claude-code/setup))
-- **Python** 3.11+ (for the dashboard; stdlib only)
-- **Git** (for auto-checkpointing and pushes)
-- **`jq`** (for state CLI helpers): `brew install jq` (macOS) / `apt-get install jq` (Linux)
-- **`gh` CLI** (optional, for GitHub integration): `brew install gh`
+- **Claude Code** 1.0+ ([install guide](https://docs.claude.com/en/docs/claude-code/setup))
+- **Python** 3.11+ (stdlib only)
+- **Git**
+- **`jq`** (for state helpers): `brew install jq`
+- **`gh` CLI** (optional): `brew install gh`
 
 ---
 
 ## Troubleshooting
 
-### Dashboard says "Set a project directory first"
-Click the GitHub icon (top right of the header), enter the absolute path to the project where Claude should write code, then optionally a remote URL. The path is persisted in `superx-github.json`.
-
-### Claude finishes but the dashboard says it's still running
-Check `ps aux | grep claude` — the subprocess should be gone. If it's hung, click STOP. If the dashboard's status badge is wrong, refresh the page (the SSE handshake replays the current state).
-
-### Approval panel never appears even though Claude asked something
-Claude's response must end with a literal `?` for the detector to fire. The system prompt teaches Claude this convention, but if you've added your own wrapper that overrides it, restore the rule. See `docs/superpowers/specs/2026-04-10-single-phase-flow-design.md` for the protocol.
-
-### "Resuming from checkpoint" loop
-Stop superx (`/api/stop` or the STOP button). Delete `superx-checkpoint.json` and `superx-session.json`. Restart the server.
-
-### Server is running but the page won't load
-Default port is 8080. Override with `SUPERX_PORT=9090 python ui/server.py`. If the page loads but the map is blank, check the browser console — sprite tile loads can fail behind some content blockers.
+| Problem | Fix |
+|---|---|
+| "Set a project directory first" | Click `+ NEW` or GitHub icon, enter path |
+| Map shows old project | Click `+ NEW`, set the new path — map auto-refreshes |
+| Awaiting panel never appears | Claude's response must end with `?`. Check system preamble isn't overridden |
+| "Resuming from checkpoint" loop | Click STOP. Delete `superx-checkpoint.json` + `superx-session.json`. Restart server |
+| Page won't load | Default port 8080. Override: `SUPERX_PORT=9090 python ui/server.py` |
+| `superx: command not found` | Run `source ~/.zshrc` or add `export PATH="$PATH:$HOME/.superx/bin"` to your shell profile |
+| SSH permission denied on install | The marketplace uses HTTPS. Run `claude plugins marketplace update superx-marketplace` |
 
 ---
 
-## Local testing
+## Inspired by
 
-```bash
-# Initialize state in any project directory
-cd /path/to/your/project
-superx-state init
-superx-state status
-
-# Set a token budget (optional)
-superx-state set-budget 500000
-
-# Migrate older state files to latest schema
-superx-state migrate
-
-# Verify skill detection
-detect-skills | jq .
-
-# Test authenticity checker
-authenticity-check npm express
-authenticity-check github vercel/next.js
-
-# Preview maintainer actions without executing
-/superx:maintain-check --dry-run
-
-# Generate a changelog from git commits
-generate-changelog --version 1.3.0
-```
+- **[get-shit-done](https://github.com/gsd-build/get-shit-done)** — wave-based execution, acceptance criteria gates, `.planning/` state files, plan verification loops
+- **[caveman](https://github.com/juliusbrussee/caveman)** — token compression via terse communication
+- **[claude-mem](https://github.com/thedotmack/claude-mem)** — persistent cross-session memory
 
 ---
 
 ## Contributing
 
-PRs welcome! See [CHANGELOG.md](CHANGELOG.md) for the release history and [docs/superpowers/specs/](docs/superpowers/specs/) for design docs.
+PRs welcome. See [CHANGELOG.md](CHANGELOG.md) for release history and [docs/superpowers/specs/](docs/superpowers/specs/) for design docs.
 
 ---
 
