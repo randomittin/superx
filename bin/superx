@@ -140,10 +140,56 @@ if [[ "${1:-}" == "--help" || "${1:-}" == "-h" ]]; then
   exit 0
 fi
 
+# ── Futuristic theme setup ──
+
+apply_superx_theme() {
+  # Force 24-bit color for rich terminal rendering
+  export COLORTERM=truecolor
+  export TERM="${TERM:-xterm-256color}"
+
+  # Set Claude's theme to dark (matches superx aesthetic)
+  local claude_cfg="$HOME/.claude.json"
+  if [ -f "$claude_cfg" ] && command -v python3 &>/dev/null; then
+    python3 -c "
+import json, sys
+try:
+    with open('$claude_cfg') as f: cfg = json.load(f)
+    if cfg.get('theme') != 'dark':
+        cfg['theme'] = 'dark'
+        with open('$claude_cfg','w') as f: json.dump(cfg, f, indent=2)
+except Exception: pass
+" 2>/dev/null || true
+  fi
+}
+
+print_banner() {
+  # 24-bit RGB escapes: superx pink (#e056a0), cyan (#00d4ff), purple (#9b59b6)
+  local P='\033[38;2;224;86;160m'    # pink
+  local C='\033[38;2;0;212;255m'     # cyan
+  local V='\033[38;2;155;89;182m'    # violet
+  local G='\033[38;2;78;204;163m'    # neon green
+  local D='\033[38;2;100;100;120m'   # dim
+  local B='\033[1m'                  # bold
+  local R='\033[0m'                  # reset
+
+  printf "\n"
+  printf "  ${P}${B}░▒▓█${R} ${P}${B}S U P E R X${R} ${P}${B}█▓▒░${R}  ${D}v1.0.0${R}\n"
+  printf "  ${V}╭─────────────────────────────────────╮${R}\n"
+  printf "  ${V}│${R}  ${C}▸${R} autonomous orchestration          ${V}│${R}\n"
+  printf "  ${V}│${R}  ${C}▸${R} wave-based parallel execution     ${V}│${R}\n"
+  printf "  ${V}│${R}  ${C}▸${R} caveman ultra  ${G}~75%% tokens saved${R}  ${V}│${R}\n"
+  printf "  ${V}│${R}  ${C}▸${R} claude-mem     ${G}persistent memory${R}  ${V}│${R}\n"
+  printf "  ${V}╰─────────────────────────────────────╯${R}\n"
+  printf "  ${D}cwd:${R} ${C}$WORK_DIR${R}\n"
+  printf "\n"
+}
+
 # ── Main: ensure deps, then launch Claude ──
 
 ensure_claude
 first_run_setup
+apply_superx_theme
+print_banner
 
 # Terse system preamble (caveman style to save tokens)
 PREAMBLE="PROJECT: $WORK_DIR
