@@ -1,10 +1,17 @@
 # superx
 
-**Autonomous superskill manager for Claude Code.**
+**Autonomous Claude Code agent — one prompt to finished project.**
 
-Turn a single prompt into a finished project. superx assesses complexity, plans with acceptance criteria, executes in parallel waves with fresh context, verifies everything, and ships — with the judgment of a senior dev / CTO.
+[![Claude Code](https://img.shields.io/badge/Claude%20Code-plugin-e056a0?style=flat-square)](https://code.claude.com)
+[![License: MIT](https://img.shields.io/badge/License-MIT-9b59b6?style=flat-square)](LICENSE)
+[![Version](https://img.shields.io/badge/version-1.0.0-00d4ff?style=flat-square)](CHANGELOG.md)
+[![Homebrew](https://img.shields.io/badge/brew-install-4ecca3?style=flat-square)](https://github.com/randomittin/homebrew-superx)
 
-A real-time **pixel-art dashboard** ships with the plugin so you can watch the work happen: a live isometric city map of your project, a war room of agents, streaming logs, and a timeline of every decision.
+> Autonomous superskill manager for [Claude Code](https://code.claude.com) by [Anthropic](https://www.anthropic.com). superx assesses complexity, plans with acceptance criteria, executes in parallel waves with fresh context, verifies everything, and ships — with the judgment of a senior dev / CTO.
+>
+> A real-time **pixel-art dashboard** ships with the plugin so you can watch the work happen: a live isometric city map of your project, a war room of agents, streaming logs, and a timeline of every decision.
+
+**Keywords:** Claude Code plugin, Claude AI agent, Anthropic, autonomous coding agent, multi-agent orchestration, AI pair programmer, LLM agent framework, developer automation, CTO-level AI, parallel agent execution, pixel-art dashboard, wave-based execution, acceptance criteria gates, token compression, caveman mode, cross-session memory, autonomous repo maintenance.
 
 ---
 
