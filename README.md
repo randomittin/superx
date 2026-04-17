@@ -5,7 +5,7 @@
 [![Claude Code](https://img.shields.io/badge/Claude%20Code-plugin-e056a0?style=flat-square)](https://code.claude.com)
 [![License: MIT](https://img.shields.io/badge/License-MIT-9b59b6?style=flat-square)](LICENSE)
 [![Version](https://img.shields.io/badge/version-1.0.0-00d4ff?style=flat-square)](CHANGELOG.md)
-[![Homebrew](https://img.shields.io/badge/brew-install-4ecca3?style=flat-square)](https://github.com/randomittin/homebrew-superx)
+[![Install](https://img.shields.io/badge/install-curl-4ecca3?style=flat-square)](#quick-start)
 
 > Autonomous superskill manager for [Claude Code](https://code.claude.com) by [Anthropic](https://www.anthropic.com). superx assesses complexity, plans with acceptance criteria, executes in parallel waves with fresh context, verifies everything, and ships — with the judgment of a senior dev / CTO.
 >
@@ -50,13 +50,6 @@ This installs Node.js (if missing) → Claude Code → superx → companion plug
 source ~/.zshrc   # or open a new terminal
 cd /path/to/your/project
 superx "build a real-time dashboard with auth and charts"
-```
-
-### Or install via Homebrew
-
-```bash
-brew tap randomittin/superx
-brew install superx
 ```
 
 ### Or install via Claude Code plugin marketplace
