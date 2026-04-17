@@ -1,38 +1,48 @@
 # superx
 
-**Autonomous Claude Code agent — one prompt to finished project.**
+**One prompt → finished project.** Autonomous [Claude Code](https://code.claude.com) agent that plans, executes in parallel, verifies, and ships.
 
 [![Claude Code](https://img.shields.io/badge/Claude%20Code-plugin-e056a0?style=flat-square)](https://code.claude.com)
 [![License: MIT](https://img.shields.io/badge/License-MIT-9b59b6?style=flat-square)](LICENSE)
 [![Version](https://img.shields.io/badge/version-1.0.0-00d4ff?style=flat-square)](CHANGELOG.md)
 [![Install](https://img.shields.io/badge/install-curl-4ecca3?style=flat-square)](#quick-start)
 
-> Autonomous superskill manager for [Claude Code](https://code.claude.com) by [Anthropic](https://www.anthropic.com). superx assesses complexity, plans with acceptance criteria, executes in parallel waves with fresh context, verifies everything, and ships — with the judgment of a senior dev / CTO.
->
-> A real-time **pixel-art dashboard** ships with the plugin so you can watch the work happen: a live isometric city map of your project, a war room of agents, streaming logs, and a timeline of every decision.
+```bash
+curl -fsSL https://raw.githubusercontent.com/randomittin/superx/main/install.sh | bash
+```
+
+<details>
+<summary><strong>What is superx?</strong></summary>
+
+superx is an autonomous superskill manager for [Claude Code](https://code.claude.com) by [Anthropic](https://www.anthropic.com). It assesses task complexity, creates structured plans with acceptance criteria, executes in parallel waves with fresh context per wave, verifies everything, and ships — with the judgment of a senior dev / CTO.
+
+A real-time **pixel-art dashboard** ships with the plugin so you can watch the work happen: a live isometric city map of your project, a war room of agents, streaming logs, and a timeline of every decision.
 
 **Keywords:** Claude Code plugin, Claude AI agent, Anthropic, autonomous coding agent, multi-agent orchestration, AI pair programmer, LLM agent framework, developer automation, CTO-level AI, parallel agent execution, pixel-art dashboard, wave-based execution, acceptance criteria gates, token compression, caveman mode, cross-session memory, autonomous repo maintenance.
 
----
+</details>
 
-## Features
+<details>
+<summary><strong>Features</strong></summary>
 
 - **One prompt → finished project.** Drop a task in, get a working repo back.
-- **Hybrid planning pipeline.** Complexity-aware: simple tasks execute directly, complex tasks go through structured planning → wave execution → verification.
+- **Hybrid planning pipeline.** Complexity-aware: simple tasks execute directly, medium/complex go through planning → parallel execution → verification.
 - **Wave-based parallel execution.** Tasks grouped into dependency waves. Each wave runs in parallel with fresh 200K-token context — no context rot.
 - **Acceptance criteria as blocking gates.** Every task has runnable checks (grep, curl, test commands). Tasks cannot advance until all criteria pass.
-- **Plan verification before execution.** Plans are validated up to 3 iterations before any code is written — catches requirement misses before you waste time building the wrong thing.
-- **File-based state in `.planning/`.** Human-readable Markdown (PROJECT.md, REQUIREMENTS.md, STATE.md, CONTEXT.md, PLAN, SUMMARY) committed to git. Survives `/clear`, inspectable by humans.
-- **Question-mark protocol.** Claude only stops to ask when it actually needs you. The dashboard surfaces the question with quick-pick buttons and a free-form input.
-- **Conversation continuity.** User replies use `claude --resume <session_id>` so Claude has the full prior turn in context.
-- **Real-time pixel dashboard.** Isometric city map, war room of agents, streaming logs, day/night theme, fullscreen, hover tooltips, drag-to-pan, zoom, history drawer.
-- **Companion plugins auto-installed.** caveman (~65-75% token savings), superpowers (brainstorming, debugging), claude-mem (persistent cross-session memory).
-- **Quality gates.** Tests, lint, code review, conflict reflection — enforced via PreToolUse hooks before any push.
-- **Atomic commits per task.** Each completed task = one git commit. Bisectable, revertable, traceable.
-- **Auto-checkpointing.** Background git commits every N file writes + crash recovery checkpoint.
-- **Maintainer mode.** Opt-in continuous repo maintenance — triage issues, fix, test, review, batch into a release.
-- **Token budgets.** Set a budget per session and get warned at 80%.
-- **GitHub integration.** One-click commit + push to your remote from the dashboard.
+- **Plan verification before execution.** Plans validated up to 3 iterations before code is written.
+- **File-based state in `.planning/`.** Human-readable Markdown committed to git. Survives `/clear`.
+- **Question-mark protocol.** Claude only stops to ask when it actually needs you. Dashboard surfaces the question with quick-pick buttons.
+- **Conversation continuity.** Replies use `claude --resume <session_id>` for full context.
+- **Real-time pixel dashboard.** Isometric city map, war room, streaming logs, day/night theme, history drawer.
+- **Companion plugins auto-installed.** caveman (~75% token savings), superpowers (brainstorming), claude-mem (persistent memory).
+- **Quality gates.** Tests, lint, code review — enforced via hooks before any push.
+- **Atomic commits per task.** Each task = one git commit. Bisectable, revertable.
+- **Auto-checkpointing.** Background git commits + crash recovery.
+- **Maintainer mode.** Autonomous repo maintenance — triage, fix, test, batch release.
+- **Token budgets.** Set a budget, get warned at 80%.
+- **GitHub integration.** One-click commit + push from the dashboard.
+
+</details>
 
 ---
 
