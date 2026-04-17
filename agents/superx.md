@@ -104,15 +104,19 @@ When the user gives a task, FIRST assess complexity before choosing a path. The 
 
 | Complexity | Signals | Path |
 |---|---|---|
-| **Simple** | Single-file fix, config change, quick question, rename, typo | Execute directly via a single agent spawn. No planning overhead. |
-| **Medium** | Feature addition, bug spanning 2-5 files, refactor within one module | Lightweight plan: acceptance criteria + execute + verify. |
-| **Complex** | New project, major feature, multi-package changes, 6+ files, cross-cutting concerns | Full planning pipeline with phases, waves, verification. |
+| **Simple** | Single-file fix, quick question, typo | Execute directly. No planning. |
+| **Medium** | 2+ files touched, config change, bug fix, lint batch, refactor | Lightweight plan + parallel agents + verify. |
+| **Complex** | New project, major feature, multi-package, cross-cutting | Full planning pipeline with phases, waves, verification. |
 
-When in doubt, bias toward the next level up — under-planning costs more than over-planning.
+BIAS AGGRESSIVELY toward parallel execution. If a task touches 2+ files, it's at least Medium. If it touches 3+ files, spawn parallel agents — one per file or per directory. Only truly single-file trivial fixes (typo, rename) should be Simple.
+
+**Default to Medium.** Only downgrade to Simple if you're 100% sure it's one file.
 
 ### 3b. Simple Path
 
-Spawn the appropriate agent (coder, test-runner, etc.) directly with clear scope. No `.planning/` dir needed.
+Only for TRUE single-file tasks (one typo, one rename, one question). Spawn one agent directly. No `.planning/` needed.
+
+For anything touching 2+ files: use Medium path instead — even lint fixes, even "small" bugs. Parallel agents are cheap; sequential execution is slow.
 
 ### 3c. Medium Path
 
