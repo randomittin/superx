@@ -133,7 +133,7 @@ if [[ "${1:-}" == "--resume" || "${1:-}" == "-r" ]]; then
 
   exec claude --continue \
     --agent superx \
-    --dangerously-skip-permissions \
+    $PERMISSION_FLAG \
     --plugin-dir "$PLUGIN_DIR"
 fi
 
@@ -146,6 +146,7 @@ if [[ "${1:-}" == "--help" || "${1:-}" == "-h" ]]; then
   echo "  superx                  Interactive Claude session with superx powers"
   echo "  superx --resume         Resume last session (conversation + .planning state)"
   echo "  superx --dashboard      Start the pixel dashboard (http://localhost:8080)"
+  echo "  superx --auto           Use auto-mode (safer alternative to skip-permissions)"
   echo "  superx --update         Pull latest superx from GitHub"
   echo "  superx --setup          Re-run first-time plugin setup"
   echo "  superx --help           Show this help"
@@ -169,6 +170,12 @@ apply_superx_theme() {
   export COLORTERM=truecolor
   export TERM="${TERM:-xterm-256color}"
 
+  # Flicker-free alt-screen rendering (Claude Code research preview)
+  export CLAUDE_CODE_NO_FLICKER=1
+
+  # Agent teams support (experimental)
+  export CLAUDE_CODE_EXPERIMENTAL_AGENT_TEAMS=1
+
   # Set Claude's theme to dark (matches superx aesthetic)
   local claude_cfg="$HOME/.claude.json"
   if [ -f "$claude_cfg" ] && command -v python3 &>/dev/null; then
@@ -182,6 +189,41 @@ try:
 except Exception: pass
 " 2>/dev/null || true
   fi
+}
+
+# Generate a project CLAUDE.md with superx conventions if one doesn't exist.
+# This gives Claude persistent project memory — surviving /clear and restarts.
+ensure_project_claude_md() {
+  local project_md="$WORK_DIR/CLAUDE.md"
+  [ -f "$project_md" ] && return 0
+
+  cat > "$project_md" <<'CLAUDEMD'
+# Project Conventions (managed by superx)
+
+## Architecture
+<!-- superx will fill this in during the first planning phase -->
+
+## Rules
+- All code, configs, docs go in this project directory
+- Planning state lives in `.planning/` (human-readable, git-committed)
+- Each completed task = one atomic git commit
+- Acceptance criteria must be runnable (grep, curl, test commands)
+
+## Quality Gates (enforced before git push)
+- All tests passing
+- Lint clean (zero warnings)
+- Code review completed
+- No untested changes
+
+## Style
+- Follow existing patterns in the codebase
+- Prefer small, focused files over large monoliths
+- Name things clearly — a reader should understand without context
+
+## Token Efficiency
+- Caveman ultra mode active: terse output, abbreviations, arrows for causality
+- Drop articles, filler, hedging — code and paths stay exact
+CLAUDEMD
 }
 
 print_banner() {
@@ -206,11 +248,19 @@ print_banner() {
   printf "\n"
 }
 
+# --auto: use auto-mode instead of dangerously-skip-permissions (safer)
+PERMISSION_FLAG="--dangerously-skip-permissions"
+if [[ "${1:-}" == "--auto" ]]; then
+  PERMISSION_FLAG="--permission-mode auto"
+  shift
+fi
+
 # ── Main: ensure deps, then launch Claude ──
 
 ensure_claude
 first_run_setup
 apply_superx_theme
+ensure_project_claude_md
 print_banner
 
 # Terse system preamble (caveman style to save tokens)
@@ -233,13 +283,13 @@ if [ $# -gt 0 ]; then
   # Non-interactive: run the prompt
   exec claude \
     --agent superx \
-    --dangerously-skip-permissions \
+    $PERMISSION_FLAG \
     --plugin-dir "$PLUGIN_DIR" \
     -p "${PREAMBLE}${*}"
 else
   # Interactive mode
   exec claude \
     --agent superx \
-    --dangerously-skip-permissions \
+    $PERMISSION_FLAG \
     --plugin-dir "$PLUGIN_DIR"
 fi

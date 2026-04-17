@@ -366,11 +366,87 @@ Continuous repo maintenance: triage → fix → test → review → batch releas
 
 ---
 
+## Tips and tricks
+
+### Safer alternative to skip-permissions
+
+```bash
+superx --auto "build X"     # uses --permission-mode auto instead
+```
+
+Auto-mode uses a background safety classifier — blocks prompt injection and risky escalation while still letting superx work autonomously.
+
+### Project memory via CLAUDE.md
+
+superx auto-generates a `CLAUDE.md` in your project root on first run. This file survives `/clear` and session restarts — Claude reads it on every new session for persistent project conventions, architecture notes, and style rules.
+
+### Flicker-free rendering
+
+superx sets `CLAUDE_CODE_NO_FLICKER=1` automatically for stable alt-screen rendering with mouse support. No configuration needed.
+
+### Recovery from errors
+
+```bash
+# Inside Claude Code:
+/rewind                    # undo recent changes
+# or press Esc Esc
+
+# Outside:
+superx --resume            # continue last conversation with full context
+```
+
+### Voice input
+
+```bash
+# Inside a superx session:
+/voice                     # push-to-talk, 20 languages
+```
+
+### Remote control
+
+```bash
+# Inside a superx session:
+/rc                        # continue from phone/tablet/browser
+```
+
+### Parallel sessions with git worktrees
+
+superx's wave-executor already uses `isolation: worktree` for parallel tasks. For manual multi-session work:
+
+```bash
+# Terminal 1:
+cd /project && superx "build auth"
+
+# Terminal 2:
+cd /project && superx "build dashboard"
+```
+
+Each gets its own git worktree — no conflicts.
+
+### Chrome integration
+
+```bash
+claude --chrome --plugin-dir ~/.superx   # browser automation
+```
+
+Test web apps, debug console, automate forms, extract data.
+
+### Scheduled background tasks
+
+```bash
+# Inside a superx session:
+/loop "run tests and report failures"     # local, recurring
+/schedule "check for dependency updates"  # cloud, Anthropic infrastructure
+```
+
+---
+
 ## Inspired by
 
 - **[get-shit-done](https://github.com/gsd-build/get-shit-done)** — wave-based execution, acceptance criteria gates, `.planning/` state files, plan verification loops
 - **[caveman](https://github.com/juliusbrussee/caveman)** — token compression via terse communication
 - **[claude-mem](https://github.com/thedotmack/claude-mem)** — persistent cross-session memory
+- **[claude-code-best-practice](https://github.com/shanraisshan/claude-code-best-practice)** — comprehensive tips, tricks, and workflow patterns
 
 ---
 
