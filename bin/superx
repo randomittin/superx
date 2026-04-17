@@ -236,6 +236,72 @@ if [[ "${1:-}" == "--update" ]]; then
   exit 0
 fi
 
+# --uninstall: remove superx completely
+if [[ "${1:-}" == "--uninstall" ]]; then
+  apply_superx_theme 2>/dev/null || true
+
+  # Sad banner
+  local P='\033[38;2;224;86;160m' D='\033[38;2;100;100;120m'
+  local B='\033[1m' R='\033[0m'
+  printf "\n"
+  printf "  ${P}${B}"
+  type_text "░▒▓█" 0.04
+  printf " "
+  type_text "G O O D B Y E" 0.06
+  printf " "
+  type_text "█▓▒░" 0.04
+  printf "${R}\n\n"
+
+  printf "  ${D}╭─────────────────────────────────────╮${R}\n"
+  sleep 0.05
+  printf "  ${D}│${R}  ${P}(╥_╥)${R}  we had a good run...        ${D}│${R}\n"
+  sleep 0.05
+  printf "  ${D}╰─────────────────────────────────────╯${R}\n\n"
+
+  read -p "  Remove superx from ~/.superx and PATH? [y/N] " confirm
+  if [[ "${confirm:-n}" != [yY]* ]]; then
+    printf "\n  ${P}${B}(ᵔᴥᵔ)${R}  ${D}phew! welcome back.${R}\n\n"
+    exit 0
+  fi
+
+  printf "\n"
+  # Remove PATH entry from shell RC
+  for rc in "$HOME/.zshrc" "$HOME/.bashrc" "$HOME/.bash_profile"; do
+    if [ -f "$rc" ] && grep -q '\.superx/bin' "$rc"; then
+      sed -i '' '/superx.*autonomous/d;/\.superx\/bin/d' "$rc" 2>/dev/null || \
+      sed -i '/superx.*autonomous/d;/\.superx\/bin/d' "$rc" 2>/dev/null || true
+      printf "  ${D}×${R} PATH entry removed from $(basename "$rc")\n"
+    fi
+  done
+  sleep 0.1
+  # Remove the install directory
+  if [ -d "$HOME/.superx" ]; then
+    rm -rf "$HOME/.superx"
+    printf "  ${D}×${R} ~/.superx removed\n"
+  fi
+  sleep 0.1
+  # Uninstall companion plugins (optional)
+  read -p "  Also uninstall companion plugins (caveman, claude-mem)? [y/N] " plugins
+  if [[ "${plugins:-n}" == [yY]* ]]; then
+    claude plugins uninstall caveman 2>/dev/null && printf "  ${D}×${R} caveman removed\n" || true
+    claude plugins uninstall superpowers 2>/dev/null && printf "  ${D}×${R} superpowers removed\n" || true
+    claude plugins marketplace remove superx-marketplace 2>/dev/null && printf "  ${D}×${R} marketplace removed\n" || true
+  fi
+
+  printf "\n"
+  printf "  ${D}━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━${R}\n"
+  sleep 0.1
+  printf "  ${D}superx uninstalled.${R}\n"
+  printf "  ${D}Open a new terminal for PATH changes.${R}\n"
+  sleep 0.1
+  printf "\n"
+  printf "  ${D}Want us back? Just run:${R}\n"
+  printf "  ${P}curl -fsSL https://raw.githubusercontent.com/randomittin/superx/main/install.sh | bash${R}\n"
+  printf "\n"
+  printf "  ${D}(╥_╥)  bye bye...${R}\n\n"
+  exit 0
+fi
+
 # --setup: re-run plugin installation
 if [[ "${1:-}" == "--setup" ]]; then
   rm -f "$SETUP_MARKER"
@@ -277,6 +343,7 @@ if [[ "${1:-}" == "--help" || "${1:-}" == "-h" ]]; then
   echo "  superx --auto           Use auto-mode (safer alternative to skip-permissions)"
   echo "  superx --update         Pull latest superx from GitHub"
   echo "  superx --setup          Re-run first-time plugin setup"
+  echo "  superx --uninstall      Remove superx completely"
   echo "  superx --help           Show this help"
   echo ""
   echo "superx launches Claude Code with:"
