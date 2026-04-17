@@ -240,9 +240,9 @@ fi
 if [[ "${1:-}" == "--uninstall" ]]; then
   apply_superx_theme 2>/dev/null || true
 
-  # Sad banner
-  local P='\033[38;2;224;86;160m' D='\033[38;2;100;100;120m'
-  local B='\033[1m' R='\033[0m'
+  # Sad banner (reuse top-level color vars from print_banner's fallback chain)
+  P='\033[38;2;224;86;160m' D='\033[38;2;100;100;120m'
+  B='\033[1m' R='\033[0m'
   printf "\n"
   printf "  ${P}${B}"
   type_text "░▒▓█" 0.04
