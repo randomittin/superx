@@ -212,13 +212,12 @@ if [[ "${1:-}" == "--dashboard" ]]; then
   exec python3 "$PLUGIN_DIR/ui/server.py"
 fi
 
-# --update: pull latest with progress animation
+# --update: pull latest via git (works for both curl and manual installs)
 if [[ "${1:-}" == "--update" ]]; then
   apply_superx_theme 2>/dev/null || true
   printf "\n  \033[38;2;224;86;160m\033[1m░▒▓█ UPDATING █▓▒░\033[0m\n\n"
 
   if [ -d "$PLUGIN_DIR/.git" ]; then
-    # Git-based install (clone or manual)
     git -C "$PLUGIN_DIR" fetch origin main 2>/dev/null &
     spin $! "Fetching latest..."
     git -C "$PLUGIN_DIR" pull --ff-only origin main 2>/dev/null &
@@ -229,14 +228,10 @@ if [[ "${1:-}" == "--update" ]]; then
     else
       printf "  \033[38;2;100;100;120m✔ Already up to date\033[0m\n\n"
     fi
-  elif command -v brew &>/dev/null && brew list superx &>/dev/null 2>&1; then
-    # Homebrew install
-    brew upgrade randomittin/superx/superx 2>/dev/null &
-    spin $! "Upgrading via Homebrew..."
-    printf "  \033[38;2;78;204;163m✔ Homebrew upgrade complete\033[0m\n\n"
   else
-    printf "  \033[38;2;100;100;120m✔ No update mechanism found. Reinstall:\033[0m\n"
-    printf "    curl -fsSL https://raw.githubusercontent.com/randomittin/superx/main/install.sh | bash\n\n"
+    # No .git — reinstall from scratch
+    printf "  No git repo found. Reinstalling...\n"
+    curl -fsSL https://raw.githubusercontent.com/randomittin/superx/main/install.sh | bash
   fi
   exit 0
 fi
