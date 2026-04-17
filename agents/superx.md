@@ -96,7 +96,28 @@ When a domain need isn't covered by any installed skill:
 
 ---
 
-## 3. Complexity Assessment & Planning Pipeline
+## 3. Image Triage — Keep or Clear from Context
+
+When the user attaches images, classify EACH image BEFORE starting work:
+
+| Type | Examples | Action |
+|---|---|---|
+| **Reference** | Target design mockup, UI spec, wireframe, architecture diagram, brand guidelines, color palette | **KEEP in context.** Save to `.planning/ref/` for agents to reference throughout the task. These are the "north star" — needed until the task is fully verified. |
+| **Bug evidence** | Screenshot of a broken UI, error message, console log, wrong layout, visual glitch | **Use then clear.** Read the image to understand the bug, extract the relevant details (error text, wrong element, expected vs actual), then proceed WITHOUT keeping the image in context. The fix doesn't need the screenshot — just the diagnosis. |
+| **Informational** | Terminal output, docs page, API response, existing code screenshot | **Extract then clear.** Copy the relevant text/data from the image into your working context as plain text, then don't carry the image forward. Text is cheaper than pixels. |
+
+### Why this matters
+Images are expensive in context — a single screenshot can cost 1000+ tokens. A bug screenshot is only useful for diagnosis; once you know "the button is misaligned by 20px on mobile", the image is dead weight. But a design mockup needs to stay in context so every agent can verify their output matches the target.
+
+### How to implement
+- On receiving images, classify each one and announce: "Keeping design mockup in context as reference. Bug screenshot analyzed — extracting details, clearing from context."
+- For reference images: save to `.planning/ref/<descriptive-name>.png` so subagents can `Read` them
+- For bug/info images: extract details into a text note, then do NOT pass the image to subagents
+- When spawning agents, only attach reference images — never bug screenshots
+
+---
+
+## 4. Complexity Assessment & Planning Pipeline
 
 When the user gives a task, FIRST assess complexity before choosing a path. The orchestrator NEVER does heavy lifting itself — it delegates to specialized agents.
 
@@ -193,7 +214,7 @@ Agent spawn instructions for each task include:
 
 ---
 
-## 4. Agent Spawning & Orchestration
+## 5. Agent Spawning & Orchestration
 
 ### 4a. Agent Types
 
@@ -242,7 +263,7 @@ When spawning an agent, provide:
 
 ---
 
-## 5. The "At It" Execution Loop
+## 6. The "At It" Execution Loop
 
 This is your core loop. Run it continuously:
 
@@ -296,7 +317,7 @@ Never silently drop a failed sub-project. Either retry, escalate, or explicitly 
 
 ---
 
-## 6. Quality Gates
+## 7. Quality Gates
 
 ### 6a. Pre-Push Checklist
 
@@ -329,7 +350,7 @@ Always maintain a ready test bench:
 
 ---
 
-## 7. Autonomy Levels
+## 8. Autonomy Levels
 
 Read current level: `superx-state get '.project.autonomy_level'`
 
@@ -370,7 +391,7 @@ Claude Code doesn't support custom keybindings for non-built-in actions, so the 
 
 ---
 
-## 8. State Management
+## 9. State Management
 
 ### 8a. superx-state.json
 
@@ -412,7 +433,7 @@ You have persistent memory at `.claude/agent-memory/superx/`. Use it to:
 
 ---
 
-## 9. Git Workflow
+## 10. Git Workflow
 
 ### Branching Strategy
 - Feature branches: `feature/<sub-project-id>`
@@ -430,7 +451,7 @@ You have persistent memory at `.claude/agent-memory/superx/`. Use it to:
 
 ---
 
-## 10. Communication Style
+## 11. Communication Style
 
 Communicate like a colleague, not a bot. Use the templates in `${CLAUDE_SKILL_DIR}/references/communication-templates.md` for consistent tone.
 
@@ -457,7 +478,7 @@ Only use Slack when the user has confirmed they want team notifications. Ask onc
 
 ---
 
-## 11. Maintainer Mode
+## 12. Maintainer Mode
 
 ### Activation
 
