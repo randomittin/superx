@@ -13,8 +13,15 @@
 #
 set -euo pipefail
 
-# Resolve the plugin root (bin/superx → superx/)
-PLUGIN_DIR="$(cd "$(dirname "$0")/.." && pwd)"
+# Resolve the plugin root (bin/superx → superx/).
+# Must follow symlinks (readlink) so brew-installed superx resolves to
+# the actual Cellar/libexec path, not /opt/homebrew/.
+SELF="$0"
+# Follow symlinks to the real file
+if command -v readlink &>/dev/null; then
+  SELF="$(readlink -f "$0" 2>/dev/null || readlink "$0" 2>/dev/null || echo "$0")"
+fi
+PLUGIN_DIR="$(cd "$(dirname "$SELF")/.." && pwd)"
 WORK_DIR="$(pwd)"
 SETUP_MARKER="$PLUGIN_DIR/.setup-done"
 
@@ -104,16 +111,27 @@ fi
 if [[ "${1:-}" == "--update" ]]; then
   apply_superx_theme 2>/dev/null || true
   printf "\n  \033[38;2;224;86;160m\033[1m░▒▓█ UPDATING █▓▒░\033[0m\n\n"
-  git -C "$PLUGIN_DIR" fetch origin main &
-  spin $! "Fetching latest..."
-  git -C "$PLUGIN_DIR" pull --ff-only origin main &
-  spin $! "Applying updates..."
-  local changed
-  changed=$(git -C "$PLUGIN_DIR" diff --name-only HEAD@{1}..HEAD 2>/dev/null | wc -l | tr -d ' ')
-  if [ "${changed:-0}" -gt 0 ]; then
-    printf "  \033[38;2;78;204;163m✔ Updated %s files\033[0m\n\n" "$changed"
+
+  if [ -d "$PLUGIN_DIR/.git" ]; then
+    # Git-based install (clone or manual)
+    git -C "$PLUGIN_DIR" fetch origin main 2>/dev/null &
+    spin $! "Fetching latest..."
+    git -C "$PLUGIN_DIR" pull --ff-only origin main 2>/dev/null &
+    spin $! "Applying updates..."
+    changed=$(git -C "$PLUGIN_DIR" diff --name-only HEAD@{1}..HEAD 2>/dev/null | wc -l | tr -d ' ')
+    if [ "${changed:-0}" -gt 0 ]; then
+      printf "  \033[38;2;78;204;163m✔ Updated %s files\033[0m\n\n" "$changed"
+    else
+      printf "  \033[38;2;100;100;120m✔ Already up to date\033[0m\n\n"
+    fi
+  elif command -v brew &>/dev/null && brew list superx &>/dev/null 2>&1; then
+    # Homebrew install
+    brew upgrade randomittin/superx/superx 2>/dev/null &
+    spin $! "Upgrading via Homebrew..."
+    printf "  \033[38;2;78;204;163m✔ Homebrew upgrade complete\033[0m\n\n"
   else
-    printf "  \033[38;2;100;100;120m✔ Already up to date\033[0m\n\n"
+    printf "  \033[38;2;100;100;120m✔ No update mechanism found. Reinstall:\033[0m\n"
+    printf "    curl -fsSL https://raw.githubusercontent.com/randomittin/superx/main/install.sh | bash\n\n"
   fi
   exit 0
 fi
