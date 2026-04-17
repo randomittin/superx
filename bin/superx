@@ -89,6 +89,111 @@ first_run_setup() {
   echo ""
 }
 
+# ── Theme, animation, and helper functions ──
+# (Must be defined before command handlers that use them)
+
+apply_superx_theme() {
+  export COLORTERM=truecolor
+  export TERM="${TERM:-xterm-256color}"
+  export CLAUDE_CODE_NO_FLICKER=1
+  export CLAUDE_CODE_EXPERIMENTAL_AGENT_TEAMS=1
+  local claude_cfg="$HOME/.claude.json"
+  if [ -f "$claude_cfg" ] && command -v python3 &>/dev/null; then
+    python3 -c "
+import json, sys
+try:
+    with open('$claude_cfg') as f: cfg = json.load(f)
+    if cfg.get('theme') != 'dark':
+        cfg['theme'] = 'dark'
+        with open('$claude_cfg','w') as f: json.dump(cfg, f, indent=2)
+except Exception: pass
+" 2>/dev/null || true
+  fi
+}
+
+ensure_project_claude_md() {
+  local project_md="$WORK_DIR/CLAUDE.md"
+  [ -f "$project_md" ] && return 0
+  cat > "$project_md" <<'CLAUDEMD'
+# Project Conventions (managed by superx)
+
+## Rules
+- All code, configs, docs go in this project directory
+- Planning state lives in `.planning/` (human-readable, git-committed)
+- Each completed task = one atomic git commit
+- Acceptance criteria must be runnable (grep, curl, test commands)
+
+## Quality Gates (enforced before git push)
+- All tests passing
+- Lint clean (zero warnings)
+- Code review completed
+- No untested changes
+
+## Style
+- Follow existing patterns in the codebase
+- Prefer small, focused files over large monoliths
+- Name things clearly — a reader should understand without context
+
+## Token Efficiency
+- Caveman ultra mode active: terse output, abbreviations, arrows for causality
+- Drop articles, filler, hedging — code and paths stay exact
+CLAUDEMD
+}
+
+type_text() {
+  local text="$1" delay="${2:-0.02}"
+  for (( i=0; i<${#text}; i++ )); do
+    printf "%s" "${text:$i:1}"
+    sleep "$delay"
+  done
+}
+
+spin() {
+  local pid=$1 msg="$2"
+  local frames=('⠋' '⠙' '⠹' '⠸' '⠼' '⠴' '⠦' '⠧' '⠇' '⠏')
+  local i=0
+  while kill -0 "$pid" 2>/dev/null; do
+    printf "\r  ${frames[$((i % 10))]} %s" "$msg"
+    sleep 0.08
+    i=$((i + 1))
+  done
+  printf "\r  ✔ %s\n" "$msg"
+}
+
+print_banner() {
+  local P C V G D B R
+  B='\033[1m'
+  R='\033[0m'
+  if [[ "${COLORTERM:-}" == "truecolor" || "${COLORTERM:-}" == "24bit" ]]; then
+    P='\033[38;2;224;86;160m'; C='\033[38;2;0;212;255m'
+    V='\033[38;2;155;89;182m'; G='\033[38;2;78;204;163m'
+    D='\033[38;2;100;100;120m'
+  elif [[ "${TERM:-}" == *256color* ]]; then
+    P='\033[38;5;205m'; C='\033[38;5;39m'
+    V='\033[38;5;134m'; G='\033[38;5;78m'
+    D='\033[38;5;242m'
+  else
+    P='\033[35m'; C='\033[36m'; V='\033[34m'; G='\033[32m'; D='\033[37m'
+  fi
+  printf "\n"
+  printf "  ${P}${B}"
+  type_text "░▒▓█" 0.04
+  printf " "
+  type_text "S U P E R X" 0.05
+  printf " "
+  type_text "█▓▒░" 0.04
+  printf "${R}  ${D}v1.0.1${R}\n"
+  sleep 0.1
+  printf "  ${V}╭─────────────────────────────────────╮${R}\n"; sleep 0.05
+  printf "  ${V}│${R}  ${C}▸${R} autonomous orchestration          ${V}│${R}\n"; sleep 0.05
+  printf "  ${V}│${R}  ${C}▸${R} wave-based parallel execution     ${V}│${R}\n"; sleep 0.05
+  printf "  ${V}│${R}  ${C}▸${R} caveman ultra  ${G}~75%% tokens saved${R}  ${V}│${R}\n"; sleep 0.05
+  printf "  ${V}│${R}  ${C}▸${R} claude-mem     ${G}persistent memory${R}  ${V}│${R}\n"; sleep 0.05
+  printf "  ${V}╰─────────────────────────────────────╯${R}\n"
+  local short_cwd; short_cwd=$(echo "$WORK_DIR" | sed "s|$HOME|~|")
+  printf "  ${D}cwd:${R} ${C}%s${R}\n\n" "$short_cwd"
+}
+
 # ── Command handlers ──
 
 # --dashboard: start the web UI server
@@ -190,154 +295,6 @@ if [[ "${1:-}" == "--help" || "${1:-}" == "-h" ]]; then
   echo "All files are written to the current directory."
   exit 0
 fi
-
-# ── Futuristic theme setup ──
-
-apply_superx_theme() {
-  # Force 24-bit color for rich terminal rendering
-  export COLORTERM=truecolor
-  export TERM="${TERM:-xterm-256color}"
-
-  # Flicker-free alt-screen rendering (Claude Code research preview)
-  export CLAUDE_CODE_NO_FLICKER=1
-
-  # Agent teams support (experimental)
-  export CLAUDE_CODE_EXPERIMENTAL_AGENT_TEAMS=1
-
-  # Set Claude's theme to dark (matches superx aesthetic)
-  local claude_cfg="$HOME/.claude.json"
-  if [ -f "$claude_cfg" ] && command -v python3 &>/dev/null; then
-    python3 -c "
-import json, sys
-try:
-    with open('$claude_cfg') as f: cfg = json.load(f)
-    if cfg.get('theme') != 'dark':
-        cfg['theme'] = 'dark'
-        with open('$claude_cfg','w') as f: json.dump(cfg, f, indent=2)
-except Exception: pass
-" 2>/dev/null || true
-  fi
-}
-
-# Generate a project CLAUDE.md with superx conventions if one doesn't exist.
-# This gives Claude persistent project memory — surviving /clear and restarts.
-ensure_project_claude_md() {
-  local project_md="$WORK_DIR/CLAUDE.md"
-  [ -f "$project_md" ] && return 0
-
-  cat > "$project_md" <<'CLAUDEMD'
-# Project Conventions (managed by superx)
-
-## Architecture
-<!-- superx will fill this in during the first planning phase -->
-
-## Rules
-- All code, configs, docs go in this project directory
-- Planning state lives in `.planning/` (human-readable, git-committed)
-- Each completed task = one atomic git commit
-- Acceptance criteria must be runnable (grep, curl, test commands)
-
-## Quality Gates (enforced before git push)
-- All tests passing
-- Lint clean (zero warnings)
-- Code review completed
-- No untested changes
-
-## Style
-- Follow existing patterns in the codebase
-- Prefer small, focused files over large monoliths
-- Name things clearly — a reader should understand without context
-
-## Token Efficiency
-- Caveman ultra mode active: terse output, abbreviations, arrows for causality
-- Drop articles, filler, hedging — code and paths stay exact
-CLAUDEMD
-}
-
-type_text() {
-  # Animated typing: prints text char by char
-  local text="$1" delay="${2:-0.02}"
-  for (( i=0; i<${#text}; i++ )); do
-    printf "%s" "${text:$i:1}"
-    sleep "$delay"
-  done
-}
-
-spin() {
-  # Spinner for a background process
-  local pid=$1 msg="$2"
-  local frames=('⠋' '⠙' '⠹' '⠸' '⠼' '⠴' '⠦' '⠧' '⠇' '⠏')
-  local i=0
-  while kill -0 "$pid" 2>/dev/null; do
-    printf "\r  ${frames[$((i % 10))]} %s" "$msg"
-    sleep 0.08
-    i=$((i + 1))
-  done
-  printf "\r  ✔ %s\n" "$msg"
-}
-
-print_banner() {
-  # Color setup — detect 24-bit support, fall back to 256-color, then basic ANSI
-  local P C V G D B R
-  B='\033[1m'
-  R='\033[0m'
-
-  if [[ "${COLORTERM:-}" == "truecolor" || "${COLORTERM:-}" == "24bit" ]]; then
-    # 24-bit RGB (iTerm2, Warp, modern terminals)
-    P='\033[38;2;224;86;160m'    # pink
-    C='\033[38;2;0;212;255m'     # cyan
-    V='\033[38;2;155;89;182m'    # violet
-    G='\033[38;2;78;204;163m'    # neon green
-    D='\033[38;2;100;100;120m'   # dim
-  elif [[ "${TERM:-}" == *256color* ]]; then
-    # 256-color fallback
-    P='\033[38;5;205m'           # pink
-    C='\033[38;5;39m'            # cyan
-    V='\033[38;5;134m'           # violet
-    G='\033[38;5;78m'            # green
-    D='\033[38;5;242m'           # dim
-  else
-    # Basic ANSI fallback (works everywhere)
-    P='\033[35m'                 # magenta
-    C='\033[36m'                 # cyan
-    V='\033[34m'                 # blue
-    G='\033[32m'                 # green
-    D='\033[37m'                 # white/dim
-  fi
-
-  # Clear line and animate
-  printf "\n"
-
-  # Animated title — typing effect
-  printf "  ${P}${B}"
-  type_text "░▒▓█" 0.04
-  printf " "
-  type_text "S U P E R X" 0.05
-  printf " "
-  type_text "█▓▒░" 0.04
-  printf "${R}  ${D}v1.0.0${R}\n"
-
-  sleep 0.1
-
-  # Box with staggered reveal
-  printf "  ${V}╭─────────────────────────────────────╮${R}\n"
-  sleep 0.05
-  printf "  ${V}│${R}  ${C}▸${R} autonomous orchestration          ${V}│${R}\n"
-  sleep 0.05
-  printf "  ${V}│${R}  ${C}▸${R} wave-based parallel execution     ${V}│${R}\n"
-  sleep 0.05
-  printf "  ${V}│${R}  ${C}▸${R} caveman ultra  ${G}~75%% tokens saved${R}  ${V}│${R}\n"
-  sleep 0.05
-  printf "  ${V}│${R}  ${C}▸${R} claude-mem     ${G}persistent memory${R}  ${V}│${R}\n"
-  sleep 0.05
-  printf "  ${V}╰─────────────────────────────────────╯${R}\n"
-
-  # Project path
-  local short_cwd
-  short_cwd=$(echo "$WORK_DIR" | sed "s|$HOME|~|")
-  printf "  ${D}cwd:${R} ${C}%s${R}\n" "$short_cwd"
-  printf "\n"
-}
 
 # --auto: use auto-mode instead of dangerously-skip-permissions (safer)
 PERMISSION_FLAG="--dangerously-skip-permissions"
