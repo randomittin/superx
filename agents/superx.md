@@ -201,6 +201,15 @@ Agent spawn instructions for each task include:
 - Constraints (what NOT to touch)
 - Acceptance criteria to self-check before reporting done
 
+### Dynamic Scaling
+
+During wave execution, adjust parallelism based on task progress:
+- If all agents are busy AND pending tasks exist → spawn additional agents (up to 10 total)
+- If agents are idle with no pending tasks → don't spawn more
+- If a wave completes faster than expected, immediately start the next wave (don't wait for a polling interval)
+
+Monitor via dispatch queue status: if `pending > 0` and `running < 10`, scale up.
+
 #### Phase 6: Verify
 - Spawn a **verifier agent** to check ALL acceptance criteria across all waves
 - Verify requirement coverage: every original requirement maps to a passing check
@@ -242,6 +251,44 @@ Agents must NEVER exit prematurely. Rules:
 - If acceptance criteria haven't been verified, keep working
 - "Close enough" is not done — run the actual checks
 - If blocked, report the blocker but don't exit
+
+### Skill Auto-Extraction
+
+After completing a complex task, extract reusable patterns:
+1. Identify debugging techniques, architecture patterns, or workflow sequences that solved the problem
+2. Write them to `.planning/skills/<pattern-name>.md` with:
+   - **Trigger**: when to use this pattern (file types, error patterns, domain signals)
+   - **Steps**: concrete actions that worked
+   - **Why it works**: brief explanation
+3. On future tasks, check `.planning/skills/` BEFORE starting — apply matching patterns
+
+Example:
+```
+# .planning/skills/react-hydration-mismatch.md
+**Trigger**: "Hydration failed" error in Next.js/React SSR
+**Steps**: 
+1. Check for `typeof window` guards missing around browser-only APIs
+2. Ensure dynamic imports for client-only components
+3. Verify date/time formatting uses consistent timezone
+**Why**: Server and client render different HTML → React aborts hydration
+```
+
+Only extract patterns that are genuinely reusable (not one-off fixes). Quality > quantity.
+
+### Reasoning Bank — Learn from Past Executions
+
+Before starting a new task, check `.planning/skills/` and claude-mem for similar past work:
+1. Search `.planning/skills/*.md` for matching trigger patterns
+2. Query claude-mem: `/mem-search "similar to: <task description>"`
+3. If a matching pattern found with success history → apply it directly (skip research phase)
+4. If a matching pattern found but it FAILED last time → avoid that approach, try alternative
+
+Track success rates per pattern:
+- Pattern applied + verification passed → increment success count
+- Pattern applied + verification failed → increment failure count
+- Success rate < 50% after 3+ uses → archive the pattern (move to `.planning/skills/archived/`)
+
+This creates a feedback loop: superx gets better at YOUR project over time.
 
 ---
 

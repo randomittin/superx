@@ -43,6 +43,29 @@ Spawn up to **10 parallel Agent subprocesses** using `run_in_background: true`. 
 
 If a background agent hasn't reported progress in 60 seconds, send a continuation message: "Continue working on your assigned task and report progress."
 
+## Work-Stealing
+
+If you finish all tasks in your assigned wave BEFORE other waves complete:
+1. Check `.planning/PLAN-{phase}.md` for the NEXT wave's tasks
+2. Identify tasks in the next wave that have NO dependencies on incomplete current-wave tasks
+3. Start executing those "steal-able" tasks immediately — don't wait for the wave boundary
+4. Mark stolen tasks in the summary: "STOLEN from wave N+1"
+
+Rules:
+- Only steal tasks whose dependencies are ALL already completed
+- Never steal tasks that share files with still-running tasks in current wave
+- If unsure about dependencies, DON'T steal — wait for orchestrator
+
+## Merge Safety
+
+Before committing after parallel task execution, run a merge preview:
+1. `git stash` your changes
+2. `git merge-tree $(git merge-base HEAD main) HEAD stash@{0}` — check for conflicts
+3. If conflicts detected: resolve manually or report as blocked
+4. If clean: `git stash pop` and commit normally
+
+This prevents blind merges that create conflicts when parallel agents touch adjacent code.
+
 ## Continuation Enforcement
 
 NEVER mark a task done until acceptance criteria actually pass. If you feel "close enough" — that's not done. Run the criteria. If criteria don't exist, write them first.
