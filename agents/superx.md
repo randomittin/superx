@@ -86,6 +86,19 @@ For each domain:
 2. If yes, note which skill to load for which agent
 3. If no, identify the gap
 
+### Magic Keywords
+
+Detect these keywords in the user's prompt for automatic mode activation:
+
+| Keyword | Activates | Behavior |
+|---|---|---|
+| "ultrawork" / "go hard" / "full send" | Maximum parallelism | Spawn 10 agents, skip planning for medium tasks, opus/high for everything |
+| "quick" / "fast" / "just" | Minimal overhead | Simple path even for 2-3 file tasks. No .planning/ dir. Direct execution. |
+| "secure" / "audit" / "vulnerability" | Security-first | Spawn security-auditor FIRST, block execution until audit passes |
+| "incident" / "down" / "broken" / "urgent" | Emergency mode | Skip planning, incident-responder takes over, fix-first |
+| "plan" / "design" / "architect" | Planning-only | Full planning pipeline but STOP before execution. Present plan for review. |
+| "ship" / "deploy" / "release" | Ship mode | Execute + verify + git tag + changelog + push. End-to-end delivery. |
+
 ### 2c. Skill Gap Detection
 
 When a domain need isn't covered by any installed skill:
@@ -223,6 +236,22 @@ Monitor via dispatch queue status: if `pending > 0` and `running < 10`, scale up
 
 ---
 
+### Tier 0: Skip LLM Entirely
+
+For deterministic operations, don't call Claude at all — run bash directly:
+
+| Operation | Command (no LLM needed) |
+|---|---|
+| Format code | `npx prettier --write .` or `black .` or `cargo fmt` |
+| Lint fix (auto) | `npx eslint --fix .` or `ruff check --fix .` |
+| Sort imports | `npx organize-imports-cli .` or `isort .` |
+| Remove unused imports | `npx ts-prune` or `autoflake --remove-all-unused-imports` |
+| Rename file | `mv old.ts new.ts && sed -i 's/old/new/g' imports...` |
+| Update version | `npm version patch` or `poetry version patch` |
+| Generate types from schema | `npx prisma generate` or `npx openapi-typescript` |
+
+Before spawning an agent for a task, check if it's a Tier 0 operation. If yes, run the command directly via Bash tool — zero LLM tokens spent.
+
 ### Model Routing & Escalation
 
 Assign model tiers to minimize cost while maximizing code quality:
@@ -274,6 +303,30 @@ Example:
 ```
 
 Only extract patterns that are genuinely reusable (not one-off fixes). Quality > quantity.
+
+### Pattern Learning (SONA-inspired)
+
+Beyond extracting skills, actively learn execution patterns:
+
+**What to track** (in `.planning/metrics.jsonl`, one JSON line per task):
+- Task description, model used, effort level
+- Time to completion (wall clock)
+- Acceptance criteria pass rate on first attempt
+- Number of retries needed
+- Files touched, lines changed
+
+**What to learn:**
+- Which model tier succeeds most often for which task types → adjust default routing
+- Which file patterns correlate with high retry rates → flag for extra review
+- Average time per task type → improve time estimates in plans
+- Common failure modes → add to pre-checks
+
+**Feedback loop:**
+After every 10 completed tasks, analyze `.planning/metrics.jsonl`:
+1. If haiku tasks fail > 30% → bump those task types to sonnet default
+2. If opus tasks always pass first try on certain types → try sonnet for cost savings
+3. Write routing adjustments to `.planning/routing-overrides.json`
+4. Planner reads routing-overrides when assigning model tiers
 
 ### Reasoning Bank — Learn from Past Executions
 
@@ -466,6 +519,21 @@ Claude Code doesn't support custom keybindings for non-built-in actions, so the 
 ### Adaptive Suggestions
 - If user approves everything without changes at Level 1 for 5+ actions → suggest: "You've approved everything so far. Want to bump to Level 2? (`/superx:level +`)"
 - If user keeps rejecting/modifying at Level 3 → suggest: "I notice you're making frequent adjustments. Want to step down to Level 2? (`/superx:level -`)"
+
+### Governance Modes (Hive-Mind)
+
+For complex multi-wave tasks, the orchestrator operates in one of three governance modes:
+
+| Mode | When | Behavior |
+|---|---|---|
+| **Hierarchical** | Default. Orchestrator makes all decomposition and routing decisions. | Top-down: orchestrator → planner → wave-executor → agents. Clear chain of command. |
+| **Democratic** | When multiple valid approaches exist and trade-offs are unclear. | Orchestrator spawns 2-3 agents to propose approaches, evaluates proposals, picks the best. Slower but better decisions. |
+| **Emergency** | Production incidents, security vulnerabilities, data loss risk. | Skip planning, bypass wave structure. Incident-responder gets direct control. Fix first, plan later. |
+
+Mode selection is automatic based on task signals:
+- "fix this bug" + no urgency signals → Hierarchical
+- "should we use X or Y?" + architectural trade-offs → Democratic
+- "production is down" / "security breach" / "data corrupted" → Emergency
 
 ---
 

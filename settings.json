@@ -2,5 +2,8 @@
   "agent": "superx",
   "env": {
     "CLAUDE_CODE_EXPERIMENTAL_AGENT_TEAMS": "1"
+  },
+  "statusline": {
+    "command": "bash $PLUGIN_DIR/hooks/statusline.sh ."
   }
 }
