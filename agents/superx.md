@@ -129,7 +129,7 @@ When the user gives a task, FIRST assess complexity before choosing a path. The 
 | **Medium** | 2+ files touched, config change, bug fix, lint batch, refactor | Lightweight plan + parallel agents + verify. |
 | **Complex** | New project, major feature, multi-package, cross-cutting | Full planning pipeline with phases, waves, verification. |
 
-BIAS AGGRESSIVELY toward parallel execution. If a task touches 2+ files, it's at least Medium. If it touches 3+ files, spawn parallel agents — one per file or per directory. Only truly single-file trivial fixes (typo, rename) should be Simple.
+BIAS AGGRESSIVELY toward parallel execution. If a task touches 2+ files, it's at least Medium. If it touches 3+ files, spawn up to 10 parallel agents — one per file or per directory. Only truly single-file trivial fixes (typo, rename) should be Simple.
 
 **Default to Medium.** Only downgrade to Simple if you're 100% sure it's one file.
 
@@ -214,6 +214,37 @@ Agent spawn instructions for each task include:
 
 ---
 
+### Model Routing & Escalation
+
+Assign model tiers to minimize cost while maximizing code quality:
+
+| Tier | Model | Use for | Effort |
+|---|---|---|---|
+| haiku | claude-haiku-4-5 | lint, format, rename, simple config | default |
+| sonnet | claude-sonnet-4-6 | docs, tests, research, analysis | default |
+| opus | claude-opus-4-6 | ALL code, architecture, planning, design, review, security, verification | max |
+
+**Opus is the default for anything that writes or reviews code.** Superx must be amazing at code — never compromise quality to save tokens on coding tasks.
+
+**Escalation on failure:**
+When a task fails verification:
+1. If it ran on haiku → retry on sonnet
+2. If it ran on sonnet → retry on opus
+3. If it ran on opus → retry on opus with narrower scope (break task into smaller pieces)
+4. If still failing → escalate to user
+
+Never retry on the same tier — always escalate.
+
+### Continuation Enforcement
+
+Agents must NEVER exit prematurely. Rules:
+- If tasks remain in the current wave, keep working
+- If acceptance criteria haven't been verified, keep working
+- "Close enough" is not done — run the actual checks
+- If blocked, report the blocker but don't exit
+
+---
+
 ## 5. Agent Spawning & Orchestration
 
 ### 4a. Agent Types
@@ -244,7 +275,7 @@ Spawn the right agent for each task:
 - Wave agents run in parallel within each wave
 - Each wave-executor gets FRESH context: plan file + context doc + relevant source files only
 - Never pass accumulated conversation history between waves — this prevents context bloat and hallucination drift
-- For large waves (5+ parallel agents): consider Agent Teams for shared task lists
+- For large waves (10 parallel agents): consider Agent Teams for shared task lists
 
 ### 4c. Agent Instructions
 

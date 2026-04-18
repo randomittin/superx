@@ -38,10 +38,26 @@ For each task, output this exact structure:
 - Wave 1: No dependencies. Run in parallel.
 - Wave 2: Depends only on Wave 1. Run in parallel after Wave 1 completes.
 - Wave N: Depends on Wave N-1. Run in parallel after Wave N-1 completes.
-- **Max 3 tasks per wave** (API concurrency cap — more than 3 parallel Agent spawns can trigger Claude Code 400 errors).
-- If a wave naturally has >3 tasks, split it into sub-waves (1a, 1b) executed sequentially.
+- **Max 10 tasks per wave** (background agents bypass the per-turn tool_use limit).
+- If a wave naturally has >10 tasks, split it into sub-waves (1a, 1b) executed sequentially.
 - Each task = one atomic git commit on completion.
 - Tasks in the same wave MUST touch disjoint files (no shared writes → no merge conflicts when parallel).
+
+## Model Assignment
+
+Assign each task a model tier:
+
+| Tier | Model | Use for |
+|---|---|---|
+| `haiku` | claude-haiku-4-5 | lint, format, simple config, file rename |
+| `sonnet` | claude-sonnet-4-6 | docs, test writing, research, analysis |
+| `opus` | claude-opus-4-6 | ALL code writing, architecture, design, review, security, verification |
+
+**Default to opus for any task involving code changes. Opus is non-negotiable for code quality.**
+
+### Escalation Rule
+
+If a task fails verification, the orchestrator will retry with the next model tier up (haiku->sonnet->opus). Plan for this by marking the initial tier in each task specification.
 
 ## Verification Loop
 
