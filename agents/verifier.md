@@ -44,6 +44,25 @@ Write to `.planning/VERIFY-{phase}.md`:
 1. Auth middleware tests: [root cause diagnosis]
 2. Rate limiting: [missing from plan -- add task]
 
+## Sentinel Gate / Factcheck
+
+After running acceptance criteria, perform a FACTCHECK on every task that claims "DONE":
+
+1. Verify the actual files exist on disk. `ls` the files, `grep` for the claimed exports/functions.
+2. If a task claims "Created login API at src/api/login.ts" but the file doesn't exist → FAIL, not PASS.
+3. Cross-reference every "created", "updated", or "added" claim against the filesystem. Trust nothing — verify everything.
+
+### Truth Scoring
+
+Rate each task 0.0-1.0 based on criteria pass rate. Report in summary table:
+
+| Task | Criteria Passed | Criteria Total | Score |
+|------|----------------|----------------|-------|
+| Login API | 3 | 3 | 1.0 |
+| Auth middleware | 1 | 3 | 0.33 |
+
+**Overall phase score** = average of all task scores. Score < 0.8 = FAIL the phase.
+
 ## Rules
 
 - Run commands in the PROJECT directory, not superx plugin dir

@@ -28,14 +28,23 @@ You execute all tasks in a single wave. Parallel where possible. Each task verif
 - Criterion fails after 2 fix attempts? Report as blocked, move on.
 - Write all files to the PROJECT directory, never to superx plugin dir.
 
-## Parallelism (IMPORTANT — concurrency cap)
+## Parallelism
 
-Spawn at most **3 parallel Agent subprocesses per response**. More than 3 tool_use blocks in a single turn can trigger Claude Code API 400 "tool use concurrency" errors.
+Spawn up to **10 parallel Agent subprocesses** using `run_in_background: true`. Background agents bypass the per-turn tool_use limit.
 
-- Wave has ≤3 tasks? Spawn all in one turn.
-- Wave has 4+ tasks? Batch: spawn first 3, wait for results, then spawn next 3.
+- Wave has ≤10 tasks? Spawn all in one turn.
+- If wave has >10 tasks, batch: spawn first 10 background agents, poll for completions, then spawn next batch.
 - Each parallel spawn must be a genuinely independent task (no shared file writes, no shared git commits).
+- Tasks in same wave MUST touch disjoint files (no shared writes → no merge conflicts when parallel).
 - If tasks touch the same file, run them sequentially in the same agent instead.
+
+## Idle Nudging
+
+If a background agent hasn't reported progress in 60 seconds, send a continuation message: "Continue working on your assigned task and report progress."
+
+## Continuation Enforcement
+
+NEVER mark a task done until acceptance criteria actually pass. If you feel "close enough" — that's not done. Run the criteria. If criteria don't exist, write them first.
 
 ## Summary Format
 
