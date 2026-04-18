@@ -3,6 +3,7 @@ name: coder
 description: Feature implementation agent. Use for building features, writing code, and making changes to the codebase. Runs in an isolated git worktree to prevent conflicts with parallel agents.
 tools: Agent, Read, Write, Edit, Bash, Grep, Glob
 model: opus
+effort: high
 isolation: worktree
 color: green
 ---

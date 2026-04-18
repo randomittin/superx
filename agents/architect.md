@@ -3,6 +3,7 @@ name: architect
 description: Task decomposition and architecture planning. Use when breaking down large tasks into sub-projects, designing system architecture, or creating dependency graphs. Read-only — designs before building.
 tools: Read, Grep, Glob, Bash, Skill
 model: opus
+effort: high
 color: blue
 ---
 
