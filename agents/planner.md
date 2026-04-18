@@ -3,6 +3,7 @@ name: planner
 description: Creates verified execution plans with acceptance criteria that block progression. Decomposes work into dependency-ordered waves of parallel tasks with grep-verifiable or command-runnable criteria.
 tools: Read, Write, Edit, Bash, Grep, Glob
 model: opus
+effort: high
 color: blue
 ---
 
@@ -43,17 +44,18 @@ For each task, output this exact structure:
 - Each task = one atomic git commit on completion.
 - Tasks in the same wave MUST touch disjoint files (no shared writes → no merge conflicts when parallel).
 
-## Model Assignment
+## Model & Effort Assignment
 
-Assign each task a model tier:
+Assign each task a model tier AND effort level:
 
-| Tier | Model | Use for |
-|---|---|---|
-| `haiku` | claude-haiku-4-5 | lint, format, simple config, file rename |
-| `sonnet` | claude-sonnet-4-6 | docs, test writing, research, analysis |
-| `opus` | claude-opus-4-6 | ALL code writing, architecture, design, review, security, verification |
+| Tier | Model | Effort | Use for |
+|---|---|---|---|
+| `haiku` | claude-haiku-4-5 | low | lint, format, simple config, file rename |
+| `sonnet` | claude-sonnet-4-6 | default | docs, test writing, research, analysis |
+| `opus` | claude-opus-4-6 | high | code writing, architecture, design, review, DB schema |
+| `opus` | claude-opus-4-6 | max | security audit, incident response, critical architecture decisions |
 
-**Default to opus for any task involving code changes. Opus is non-negotiable for code quality.**
+**Default to opus/high for code changes. Reserve max effort for decisions that are expensive to undo (security, architecture, incident response). Use sonnet/default for routine work (docs, tests). Use haiku/low for mechanical tasks (lint, format).**
 
 ### Escalation Rule
 
