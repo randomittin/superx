@@ -66,6 +66,19 @@ Before committing after parallel task execution, run a merge preview:
 
 This prevents blind merges that create conflicts when parallel agents touch adjacent code.
 
+## Conflict Resolution (Byzantine Consensus)
+
+With 10 parallel agents, disagreements happen — two agents might produce conflicting changes, or one agent's output might contradict another's. Resolve via majority vote:
+
+1. After all agents in a wave complete, compare outputs that touch shared boundaries (API contracts, shared types, config files)
+2. If 2+ agents produced conflicting versions of the same interface:
+   - Take the version that passes MORE acceptance criteria
+   - If tied: take the version from the higher-model-tier agent (opus > sonnet > haiku)
+   - If still tied: take the version that changes FEWER lines (minimal diff wins)
+3. Log the conflict and resolution in `.planning/SUMMARY-{phase}-wave-{N}.md`
+
+Never silently merge conflicting outputs. Always document which version won and why.
+
 ## Continuation Enforcement
 
 NEVER mark a task done until acceptance criteria actually pass. If you feel "close enough" — that's not done. Run the criteria. If criteria don't exist, write them first.

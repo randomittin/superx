@@ -331,6 +331,46 @@ if [[ "${1:-}" == "--resume" || "${1:-}" == "-r" ]]; then
     --plugin-dir "$PLUGIN_DIR"
 fi
 
+# --team N: spawn N parallel claude workers in tmux panes
+if [[ "${1:-}" == "--team" ]]; then
+  ensure_claude
+  first_run_setup
+  apply_superx_theme 2>/dev/null || true
+  print_banner 2>/dev/null || true
+
+  TEAM_SIZE="${2:-3}"
+  shift 2 || shift 1
+  TASK="${*:-}"
+
+  if ! command -v tmux &>/dev/null; then
+    echo "  tmux not found. Install: brew install tmux (macOS) / apt install tmux (Linux)"
+    exit 1
+  fi
+
+  SESSION="superx-team-$$"
+  echo "  Spawning $TEAM_SIZE workers in tmux session: $SESSION"
+
+  tmux new-session -d -s "$SESSION" -n "lead"
+  # Lead worker gets the task
+  tmux send-keys -t "$SESSION:lead" "cd $WORK_DIR && claude --agent superx $PERMISSION_FLAG --plugin-dir $PLUGIN_DIR" Enter
+
+  # Spawn additional worker panes
+  for i in $(seq 2 "$TEAM_SIZE"); do
+    tmux split-window -t "$SESSION" -h
+    tmux send-keys -t "$SESSION" "cd $WORK_DIR && claude --agent superx $PERMISSION_FLAG --plugin-dir $PLUGIN_DIR" Enter
+    tmux select-layout -t "$SESSION" tiled
+  done
+
+  if [ -n "$TASK" ]; then
+    sleep 2
+    tmux send-keys -t "$SESSION:lead.0" "$TASK" Enter
+  fi
+
+  echo "  Attach: tmux attach -t $SESSION"
+  echo "  Detach: Ctrl+B then D"
+  exec tmux attach -t "$SESSION"
+fi
+
 # --help
 if [[ "${1:-}" == "--help" || "${1:-}" == "-h" ]]; then
   echo "superx — autonomous superskill manager for Claude Code"
@@ -343,6 +383,7 @@ if [[ "${1:-}" == "--help" || "${1:-}" == "-h" ]]; then
   echo "  superx --auto           Use auto-mode (safer alternative to skip-permissions)"
   echo "  superx --update         Pull latest superx from GitHub"
   echo "  superx --setup          Re-run first-time plugin setup"
+  echo "  superx --team N \"task\"  Spawn N parallel Claude workers in tmux"
   echo "  superx --uninstall      Remove superx completely"
   echo "  superx --help           Show this help"
   echo ""
