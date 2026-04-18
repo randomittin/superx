@@ -192,19 +192,22 @@ These files are:
 
 ## Agent roster
 
-| Agent | Role | Model | When spawned |
-|---|---|---|---|
-| `superx` | Main orchestrator | Opus | Always (session agent) |
-| `architect` | Decomposition + planning | Opus | Complex tasks |
-| `planner` | Structured plan creation with acceptance criteria | Opus | Medium + complex tasks |
-| `wave-executor` | Execute one wave in parallel | Opus | Per wave during execution |
-| `verifier` | Post-execution verification | Sonnet | After each phase |
-| `coder` | Feature implementation | Opus | Simple + within waves |
-| `design` | UI/UX design | Opus | When UI work detected |
-| `test-runner` | Test writing and execution | Sonnet | Quality gate |
-| `lint-quality` | Lint and formatting | Haiku | Quality gate |
-| `docs-writer` | Documentation | Sonnet | Post-execution |
-| `reviewer` | Code review before push | Opus | Quality gate |
+| Agent | Role | Model | Effort | When spawned |
+|---|---|---|---|---|
+| `superx` | Main orchestrator | Opus | max | Always (session agent) |
+| `architect` | Decomposition + planning | Opus | high | Complex tasks |
+| `planner` | Wave-grouped plans + acceptance criteria | Opus | high | Medium + complex tasks |
+| `wave-executor` | Execute one wave (up to 10 parallel) | Opus | high | Per wave during execution |
+| `verifier` | Sentinel gate + truth scoring | Opus | high | After each phase |
+| `coder` | Feature implementation | Opus | high | Simple + within waves |
+| `design` | UI/UX design | Opus | high | When UI work detected |
+| `security-auditor` | OWASP, secrets scan, auth review | Opus | max | Complex tasks with auth/API |
+| `database-architect` | Schema, migrations, query optimization | Opus | high | Data layer tasks |
+| `incident-responder` | Triage, diagnose, mitigate, postmortem | Opus | max | Production fires |
+| `reviewer` | Code review before push | Opus | high | Quality gate |
+| `test-runner` | Test writing and execution | Sonnet | default | Quality gate |
+| `docs-writer` | Documentation | Sonnet | default | Post-execution |
+| `lint-quality` | Lint and formatting | Haiku | low | Quality gate |
 
 ---
 
@@ -213,24 +216,30 @@ These files are:
 ```
 superx/
 ├── .claude-plugin/plugin.json    # Plugin manifest (v1.0.0)
-├── agents/                       # 11 specialized agent definitions
+├── agents/                       # 14 specialized agent definitions
 │   ├── superx.md                 # Main orchestrator (Opus)
 │   ├── architect.md              # Decomposition + planning (Opus)
 │   ├── planner.md                # Structured plans with acceptance criteria
 │   ├── wave-executor.md          # Per-wave parallel execution
 │   ├── verifier.md               # Post-execution verification
-│   ├── coder.md                  # Implementation (Opus)
-│   ├── design.md                 # UI/UX (Opus)
-│   ├── test-runner.md            # Tests (Sonnet)
-│   ├── lint-quality.md           # Lint (Haiku)
-│   ├── docs-writer.md            # Docs (Sonnet)
-│   └── reviewer.md               # Code review (Opus)
+│   ├── coder.md                  # Implementation (Opus/high)
+│   ├── design.md                 # UI/UX (Opus/high)
+│   ├── security-auditor.md       # OWASP + secrets scan (Opus/max)
+│   ├── database-architect.md     # Schema + migrations (Opus/high)
+│   ├── incident-responder.md     # Production fires (Opus/max)
+│   ├── reviewer.md               # Code review (Opus/high)
+│   ├── test-runner.md            # Tests (Sonnet/default)
+│   ├── docs-writer.md            # Docs (Sonnet/default)
+│   └── lint-quality.md           # Lint (Haiku/low)
 ├── skills/superx/                # Main skill + reference docs
 ├── commands/                     # Slash commands
-├── hooks/hooks.json              # Quality gate hooks
+├── hooks/
+│   ├── hooks.json                # Quality gate hooks (4 event types)
+│   └── statusline.sh             # HUD for Claude Code status bar
 ├── bin/                          # CLI tools
 │   ├── superx                    # Main launcher (self-bootstrapping)
 │   ├── lib/planning.sh           # .planning/ state management
+│   ├── lib/dispatch.sh           # File-based task dispatch queue
 │   ├── superx-state              # State CRUD
 │   ├── detect-skills             # Skill inventory
 │   ├── conflict-log              # Conflict tracking

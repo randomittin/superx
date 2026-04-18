@@ -29,6 +29,12 @@ superx-workspace/
 docs/analysis/
 docs/superpowers/plans/
 
+# superx runtime artifacts
+.setup-done
+.planning/dispatch/
+.planning/metrics.jsonl
+.planning/routing-overrides.json
+
 # logs
 *.log
 /tmp/superx-*
