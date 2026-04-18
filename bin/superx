@@ -218,18 +218,32 @@ if [[ "${1:-}" == "--update" ]]; then
   printf "\n  \033[38;2;224;86;160m\033[1m░▒▓█ UPDATING █▓▒░\033[0m\n\n"
 
   if [ -d "$PLUGIN_DIR/.git" ]; then
+    local_hash=$(git -C "$PLUGIN_DIR" rev-parse HEAD 2>/dev/null)
     git -C "$PLUGIN_DIR" fetch origin main 2>/dev/null &
     spin $! "Fetching latest..."
     git -C "$PLUGIN_DIR" pull --ff-only origin main 2>/dev/null &
     spin $! "Applying updates..."
-    changed=$(git -C "$PLUGIN_DIR" diff --name-only HEAD@{1}..HEAD 2>/dev/null | wc -l | tr -d ' ')
-    if [ "${changed:-0}" -gt 0 ]; then
+    new_hash=$(git -C "$PLUGIN_DIR" rev-parse HEAD 2>/dev/null)
+
+    if [ "$local_hash" != "$new_hash" ]; then
+      changed=$(git -C "$PLUGIN_DIR" diff --name-only "$local_hash".."$new_hash" 2>/dev/null | wc -l | tr -d ' ')
       printf "  \033[38;2;78;204;163m✔ Updated %s files\033[0m\n\n" "$changed"
+
+      # Show what changed
+      printf "  \033[38;2;155;89;182mChanges:\033[0m\n"
+      git -C "$PLUGIN_DIR" log --oneline "$local_hash".."$new_hash" 2>/dev/null | while read -r line; do
+        printf "  \033[38;2;0;212;255m▸\033[0m %s\n" "$line"
+      done
+      printf "\n"
+      printf "  \033[38;2;100;100;120mFiles:\033[0m\n"
+      git -C "$PLUGIN_DIR" diff --stat "$local_hash".."$new_hash" 2>/dev/null | head -15 | while read -r line; do
+        printf "    %s\n" "$line"
+      done
+      printf "\n"
     else
       printf "  \033[38;2;100;100;120m✔ Already up to date\033[0m\n\n"
     fi
   else
-    # No .git — reinstall from scratch
     printf "  No git repo found. Reinstalling...\n"
     curl -fsSL https://raw.githubusercontent.com/randomittin/superx/main/install.sh | bash
   fi
@@ -406,6 +420,28 @@ if [[ "${1:-}" == "--auto" ]]; then
   shift
 fi
 
+# ── Check for updates (non-blocking, fast) ──
+
+check_for_update() {
+  [ -d "$PLUGIN_DIR/.git" ] || return 0
+  # Only check once per hour (cache in /tmp)
+  local cache="/tmp/superx-update-check-$$"
+  local last_check="/tmp/superx-last-update-check"
+  if [ -f "$last_check" ]; then
+    local age=$(( $(date +%s) - $(stat -f %m "$last_check" 2>/dev/null || stat -c %Y "$last_check" 2>/dev/null || echo 0) ))
+    [ "$age" -lt 3600 ] && return 0
+  fi
+  # Fast fetch in background, check result
+  git -C "$PLUGIN_DIR" fetch origin main --quiet 2>/dev/null || return 0
+  touch "$last_check"
+  local local_hash=$(git -C "$PLUGIN_DIR" rev-parse HEAD 2>/dev/null)
+  local remote_hash=$(git -C "$PLUGIN_DIR" rev-parse origin/main 2>/dev/null)
+  if [ "$local_hash" != "$remote_hash" ] && [ -n "$remote_hash" ]; then
+    local behind=$(git -C "$PLUGIN_DIR" rev-list HEAD..origin/main --count 2>/dev/null || echo "?")
+    printf "  \033[38;2;255;200;80m⚡ Update available (%s commits behind). Run: superx --update\033[0m\n\n" "$behind"
+  fi
+}
+
 # ── Main: ensure deps, then launch Claude ──
 
 ensure_claude
@@ -413,6 +449,7 @@ first_run_setup
 apply_superx_theme
 ensure_project_claude_md
 print_banner
+check_for_update
 
 # Terse system preamble (caveman style to save tokens)
 PREAMBLE="PROJECT: $WORK_DIR
