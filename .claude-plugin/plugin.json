@@ -1,7 +1,7 @@
 {
   "name": "superx",
   "description": "Autonomous superskill manager for Claude Code — turns a single prompt into a finished project. Decomposes work, spawns parallel agents, enforces quality gates, and ships with CTO-level judgment. Includes a real-time pixel-art dashboard for live observability.",
-  "version": "1.0.0",
+  "version": "1.1.0",
   "author": {
     "name": "superx contributors",
     "url": "https://github.com/randomittin/superx"
