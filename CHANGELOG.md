@@ -5,6 +5,66 @@ All notable changes to superx will be documented in this file.
 The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.1.0/),
 and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 
+## [1.1.0] - 2026-04-19
+
+superx can now run **10 agents in parallel** instead of 3 — background agents bypass Claude Code's per-turn limit, so a 10-task wave all runs simultaneously.
+
+superx can now **route tasks to the right model automatically** — lint goes to Haiku (cheap + fast), docs go to Sonnet, and all code goes to Opus at high effort. If a task fails on a cheaper model, superx can now **auto-escalate** to the next tier (Haiku → Sonnet → Opus) instead of just failing.
+
+superx can now **skip the LLM entirely** for deterministic operations — format, lint-fix, sort imports, rename files. These run as direct bash commands. Zero tokens spent.
+
+superx can now **detect stalled agents** and nudge them — if an agent goes silent for 60 seconds, it gets a continuation prompt. And agents can now **never claim they're done** until acceptance criteria actually pass ("close enough" is blocked).
+
+superx can now **verify claims against reality** — the verifier factchecks actual files on disk vs what the agent said it created. If a task claims "Created src/api.ts" but the file doesn't exist, it fails. Each task gets a **truth score (0.0-1.0)** and the phase fails if the average drops below 0.8.
+
+superx can now **resolve conflicts between parallel agents** — when 10 agents produce competing changes, the version that passes more acceptance criteria wins (Byzantine consensus).
+
+superx can now **switch governance modes** — Hierarchical (default, top-down control), Democratic (spawn competing proposals, pick the best), or Emergency (skip planning, incident-responder takes over, fix first).
+
+superx can now **learn from your project** — after complex tasks, it extracts reusable patterns to `.planning/skills/` (trigger + steps + why). On future tasks, it **searches past patterns first** and applies proven solutions. Patterns with < 50% success rate get archived automatically.
+
+superx can now **optimize its own cost** — after every 10 tasks, it analyzes which model tier succeeds for which task types and adjusts defaults. If Haiku always fails on your React components but works for your Python scripts, it learns that.
+
+superx can now **spawn tmux worker teams** — `superx --team 5 "task"` launches 5 real parallel Claude instances in tmux panes, bypassing all API concurrency limits.
+
+superx can now **detect magic keywords** in your prompts — "ultrawork" triggers maximum parallelism, "quick" skips planning, "secure" runs security-first, "incident" activates emergency mode, "plan" stops before execution, "ship" does end-to-end delivery.
+
+superx can now **show its status** in Claude Code's status bar — current phase, task progress, dispatch queue depth. All visible at a glance.
+
+superx can now **steal work between waves** — if an agent finishes early, it grabs dependency-free tasks from the next wave instead of sitting idle.
+
+superx can now **preview merges safely** — before committing parallel work, it runs `git merge-tree` to detect conflicts without mutating. No more blind merges.
+
+superx can now **show you exactly what changed** on `--update` — commit messages, file diffs, insertion/deletion counts. And on every launch, it **checks for updates** (once per hour) and tells you if you're behind.
+
+### New Agents
+- **security-auditor** (Opus/max) — OWASP Top 10, dependency audit, secrets scan, auth/authz review
+- **database-architect** (Opus/high) — schema design, migrations, query optimization, N+1 detection
+- **incident-responder** (Opus/max) — triage → diagnose → mitigate → fix → blameless postmortem
+
+### New CLI
+- `superx --team N "task"` — tmux parallel workers
+- `superx --uninstall` — with sad goodbye animation
+- `superx --auto` — safer alternative to skip-permissions
+
+### New Files
+- `bin/lib/dispatch.sh` — file-based task queue (JSONL + directory locks, survives crashes)
+- `hooks/statusline.sh` — HUD for Claude Code status bar
+- `agents/security-auditor.md`, `agents/database-architect.md`, `agents/incident-responder.md`
+
+### Companion Plugins
+- **caveman** at ultra mode (~75% token savings)
+- **claude-mem** for persistent cross-session memory
+- **superpowers** for brainstorming + debugging
+
+### Inspired By
+Cherry-picked 24 features from:
+- [ruflo](https://github.com/ruvnet/ruflo) — model routing, work-stealing, SONA learning, Tier 0 routing, Byzantine consensus
+- [oh-my-claudecode](https://github.com/Yeachan-Heo/oh-my-claudecode) — idle nudging, sentinel gate, continuation enforcement, file-based dispatch, tmux teams, skill extraction, magic keywords, HUD statusline
+- [wshobson/agents](https://github.com/wshobson/agents) — security-auditor, database-architect, incident-responder
+
+---
+
 ## [1.0.0] - 2026-04-10
 
 First marketplace-ready release. Pixel dashboard is feature-complete and the orchestration loop has been simplified to a clean single-phase state machine.

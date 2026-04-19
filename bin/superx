@@ -182,7 +182,7 @@ print_banner() {
   type_text "S U P E R X" 0.05
   printf " "
   type_text "█▓▒░" 0.04
-  printf "${R}  ${D}v1.0.1${R}\n"
+  printf "${R}  ${D}v1.1.0${R}\n"
   sleep 0.1
   printf "  ${V}╭─────────────────────────────────────╮${R}\n"; sleep 0.05
   printf "  ${V}│${R}  ${C}▸${R} autonomous orchestration          ${V}│${R}\n"; sleep 0.05
