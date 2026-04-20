@@ -215,74 +215,108 @@ fi
 # --update: pull latest via git
 if [[ "${1:-}" == "--update" ]]; then
   apply_superx_theme 2>/dev/null || true
-  printf "\n  \033[38;2;224;86;160m\033[1m░▒▓█ UPDATING █▓▒░\033[0m\n\n"
+
+  # Animated update banner
+  local P='\033[38;2;224;86;160m' C='\033[38;2;0;212;255m'
+  local V='\033[38;2;155;89;182m' G='\033[38;2;78;204;163m'
+  local D='\033[38;2;100;100;120m' W='\033[38;2;255;200;80m'
+  local B='\033[1m' R='\033[0m'
+
+  printf "\n"
+  printf "  ${P}${B}"
+  type_text "░▒▓█" 0.03
+  printf " "
+  type_text "U P D A T I N G" 0.04
+  printf " "
+  type_text "█▓▒░" 0.03
+  printf "${R}\n"
+  printf "  ${V}━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━${R}\n\n"
 
   if [ -d "$PLUGIN_DIR/.git" ]; then
     local_hash=$(git -C "$PLUGIN_DIR" rev-parse HEAD 2>/dev/null)
+    local_short="${local_hash:0:7}"
 
-    # Fetch with force-update to ensure origin/main is ALWAYS refreshed.
-    # Some git configs or proxies cache refs — --force overwrites local tracking.
-    printf "  Fetching...                      \n"
-    git -C "$PLUGIN_DIR" fetch origin main --force 2>/dev/null
+    # Animated fetch
+    printf "  ${D}[1/2]${R} ${B}Sync${R}\n"
+    git -C "$PLUGIN_DIR" fetch origin main --force 2>/dev/null &
+    spin $! "Fetching from origin..."
     git -C "$PLUGIN_DIR" fetch origin --force 2>/dev/null
-    printf "\033[1A  ✔ Fetched                         \n"
 
-    # Compare HEAD vs origin/main
+    # Compare
     remote_hash=$(git -C "$PLUGIN_DIR" rev-parse origin/main 2>/dev/null)
-    if [ "$local_hash" = "$remote_hash" ]; then
-      printf "  ✔ Up to date                     \n"
-    else
-      # Always reset to origin/main (safe — this is a tool install, not user code)
-      printf "  Updating...                      \n"
-      git -C "$PLUGIN_DIR" reset --hard origin/main >/dev/null 2>&1
-      printf "\033[1A  ✔ Updated                         \n"
-    fi
+    remote_short="${remote_hash:0:7}"
 
-    new_hash=$(git -C "$PLUGIN_DIR" rev-parse HEAD 2>/dev/null)
+    if [ "$local_hash" != "$remote_hash" ]; then
+      # Update available — apply it
+      printf "\n  ${D}[2/2]${R} ${B}Apply${R}\n"
+      git -C "$PLUGIN_DIR" reset --hard origin/main >/dev/null 2>&1 &
+      spin $! "Applying ${local_short} → ${remote_short}..."
 
-    if [ "$local_hash" != "$new_hash" ]; then
-      # Save update marker so "already up to date" can show last update
       echo "$local_hash" > "$PLUGIN_DIR/.last-update-from"
-
+      new_hash=$(git -C "$PLUGIN_DIR" rev-parse HEAD 2>/dev/null)
       changed=$(git -C "$PLUGIN_DIR" diff --name-only "$local_hash".."$new_hash" 2>/dev/null | wc -l | tr -d ' ')
-      printf "\n  \033[38;2;78;204;163m✔ Updated %s files\033[0m\n\n" "$changed"
 
-      printf "  \033[38;2;155;89;182mWhat's new:\033[0m\n"
-      git -C "$PLUGIN_DIR" log --oneline "$local_hash".."$new_hash" 2>/dev/null | while IFS= read -r line; do
+      printf "\n  ${V}━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━${R}\n"
+      printf "  ${G}${B}✔ Updated — %s files changed${R}\n" "$changed"
+      printf "  ${V}━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━${R}\n\n"
+
+      # Show what's new with staggered animation
+      printf "  ${P}${B}What's new:${R}\n\n"
+      git -C "$PLUGIN_DIR" log --oneline "$local_hash".."$new_hash" 2>/dev/null | head -12 | while IFS= read -r line; do
         msg="${line#* }"
-        printf "  \033[38;2;0;212;255m▸\033[0m %s\n" "$msg"
+        # Color-code by type
+        case "$msg" in
+          feat:*|feat\(*) printf "  ${G}▸ NEW${R}  %s\n" "${msg#feat: }" ;;
+          fix:*|fix\(*)   printf "  ${C}▸ FIX${R}  %s\n" "${msg#fix: }" ;;
+          docs:*)          printf "  ${D}▸ DOC${R}  %s\n" "${msg#docs: }" ;;
+          release:*)       printf "  ${W}▸ REL${R}  %s\n" "${msg#release: }" ;;
+          *)               printf "  ${V}▸${R}      %s\n" "$msg" ;;
+        esac
+        sleep 0.04
       done
+
       printf "\n"
       git -C "$PLUGIN_DIR" diff --stat "$local_hash".."$new_hash" 2>/dev/null | tail -1 | while IFS= read -r line; do
-        printf "  \033[38;2;100;100;120m%s\033[0m\n" "$line"
+        printf "  ${D}%s${R}\n" "$line"
       done
       printf "\n"
-    else
-      printf "\n  \033[38;2;100;100;120m✔ Already up to date\033[0m\n"
 
-      # If no marker exists, create one pointing 10 commits back
+    else
+      # Already up to date
+      printf "\n  ${V}━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━${R}\n"
+      printf "  ${G}✔ Already on latest${R}  ${D}(%s)${R}\n" "$local_short"
+      printf "  ${V}━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━${R}\n"
+
+      # Self-create marker if missing
       if [ ! -f "$PLUGIN_DIR/.last-update-from" ]; then
         mk=$(git -C "$PLUGIN_DIR" log --oneline -10 2>/dev/null | tail -1 | cut -d' ' -f1)
         [ -n "$mk" ] && echo "$mk" > "$PLUGIN_DIR/.last-update-from"
       fi
 
-      # Show what was in the last update
+      # Show installed features
       if [ -f "$PLUGIN_DIR/.last-update-from" ]; then
         last_from=$(cat "$PLUGIN_DIR/.last-update-from")
         count=$(git -C "$PLUGIN_DIR" log --oneline "$last_from"..HEAD 2>/dev/null | wc -l | tr -d ' ')
         if [ "${count:-0}" -gt 0 ]; then
-          printf "\n  \033[38;2;155;89;182mLatest features (%s changes):\033[0m\n" "$count"
-          git -C "$PLUGIN_DIR" log --oneline "$last_from"..HEAD 2>/dev/null | head -10 | while IFS= read -r line; do
+          printf "\n  ${P}${B}Installed features (%s):${R}\n\n" "$count"
+          git -C "$PLUGIN_DIR" log --oneline "$last_from"..HEAD 2>/dev/null | head -12 | while IFS= read -r line; do
             msg="${line#* }"
-            printf "  \033[38;2;100;100;120m▸\033[0m %s\n" "$msg"
+            case "$msg" in
+              feat:*|feat\(*) printf "  ${G}▸ NEW${R}  %s\n" "${msg#feat: }" ;;
+              fix:*|fix\(*)   printf "  ${C}▸ FIX${R}  %s\n" "${msg#fix: }" ;;
+              docs:*)          printf "  ${D}▸ DOC${R}  %s\n" "${msg#docs: }" ;;
+              release:*)       printf "  ${W}▸ REL${R}  %s\n" "${msg#release: }" ;;
+              *)               printf "  ${V}▸${R}      %s\n" "$msg" ;;
+            esac
+            sleep 0.03
           done
         fi
       fi
       printf "\n"
     fi
   else
-    printf "  No git repo found. Reinstalling...\n"
-    curl -fsSL https://raw.githubusercontent.com/randomittin/superx/main/install.sh | bash
+    printf "  ${W}No git repo found. Reinstalling...${R}\n"
+    exec bash -c 'cd "$HOME" && curl -fsSL https://raw.githubusercontent.com/randomittin/superx/main/install.sh | bash'
   fi
   exit 0
 fi
