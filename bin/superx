@@ -259,14 +259,24 @@ if [[ "${1:-}" == "--update" ]]; then
       printf "\n"
     else
       printf "\n  \033[38;2;100;100;120m✔ Already up to date\033[0m\n"
-      # Show what was in the last update (if marker exists)
+
+      # If no marker exists, create one pointing 10 commits back
+      if [ ! -f "$PLUGIN_DIR/.last-update-from" ]; then
+        mk=$(git -C "$PLUGIN_DIR" log --oneline -10 2>/dev/null | tail -1 | cut -d' ' -f1)
+        [ -n "$mk" ] && echo "$mk" > "$PLUGIN_DIR/.last-update-from"
+      fi
+
+      # Show what was in the last update
       if [ -f "$PLUGIN_DIR/.last-update-from" ]; then
         last_from=$(cat "$PLUGIN_DIR/.last-update-from")
-        printf "\n  \033[38;2;155;89;182mLast update included:\033[0m\n"
-        git -C "$PLUGIN_DIR" log --oneline "$last_from"..HEAD 2>/dev/null | head -10 | while IFS= read -r line; do
-          msg="${line#* }"
-          printf "  \033[38;2;100;100;120m▸\033[0m %s\n" "$msg"
-        done
+        count=$(git -C "$PLUGIN_DIR" log --oneline "$last_from"..HEAD 2>/dev/null | wc -l | tr -d ' ')
+        if [ "${count:-0}" -gt 0 ]; then
+          printf "\n  \033[38;2;155;89;182mLatest features (%s changes):\033[0m\n" "$count"
+          git -C "$PLUGIN_DIR" log --oneline "$last_from"..HEAD 2>/dev/null | head -10 | while IFS= read -r line; do
+            msg="${line#* }"
+            printf "  \033[38;2;100;100;120m▸\033[0m %s\n" "$msg"
+          done
+        fi
       fi
       printf "\n"
     fi
