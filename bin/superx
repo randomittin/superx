@@ -448,10 +448,22 @@ load_checkpoint_context() {
   CHECKPOINT_CONTEXT=""
   local cp="$WORK_DIR/.planning/CHECKPOINT.md"
   local state="$WORK_DIR/.planning/STATE.md"
+  local settings="$WORK_DIR/.planning/settings.json"
 
-  if [ -f "$cp" ]; then
-    # Read the checkpoint handoff note (max 100 lines to stay under token budget)
+  # Load project settings (commands, parallelism, model routing, preferences)
+  if [ -f "$settings" ]; then
     CHECKPOINT_CONTEXT="
+--- PROJECT SETTINGS (from .planning/settings.json) ---
+$(cat "$settings")
+--- END SETTINGS ---
+Use these settings: test/lint/build commands, parallelism config, model overrides, directories to avoid. Do NOT rediscover — they are already known.
+"
+    printf "  \033[38;2;78;204;163m▸ Project settings loaded\033[0m\n"
+  fi
+
+  # Load checkpoint handoff note
+  if [ -f "$cp" ]; then
+    CHECKPOINT_CONTEXT="${CHECKPOINT_CONTEXT}
 --- LAST CHECKPOINT (from previous session) ---
 $(head -100 "$cp")
 --- END CHECKPOINT ---
@@ -459,10 +471,9 @@ Read .planning/CHECKPOINT.md for full context. Resume from where it says.
 "
     printf "  \033[38;2;0;212;255m▸ Checkpoint loaded\033[0m — resuming from last session\n"
   elif [ -f "$state" ]; then
-    # No checkpoint file but STATE.md exists — inject phase info
     local phase=$(grep -m1 "^current_phase:" "$state" 2>/dev/null | sed 's/current_phase: *//')
     if [ -n "$phase" ] && [ "$phase" != "0" ]; then
-      CHECKPOINT_CONTEXT="
+      CHECKPOINT_CONTEXT="${CHECKPOINT_CONTEXT}
 --- PRIOR STATE ---
 Phase: $phase. Read .planning/STATE.md for decisions, blockers, progress.
 --- END STATE ---
