@@ -220,20 +220,21 @@ if [[ "${1:-}" == "--update" ]]; then
   if [ -d "$PLUGIN_DIR/.git" ]; then
     local_hash=$(git -C "$PLUGIN_DIR" rev-parse HEAD 2>/dev/null)
 
-    # Fetch
+    # Fetch ALL refs (not just one branch — ensures origin/main is updated)
     printf "  ⠋ Fetching...                    \n"
-    git -C "$PLUGIN_DIR" fetch origin main 2>/dev/null
+    git -C "$PLUGIN_DIR" fetch origin 2>/dev/null
     printf "\033[1A  ✔ Fetched                         \n"
 
-    # Pull (or reset if diverged)
-    printf "  ⠋ Pulling...                     \n"
-    pull_output=$(git -C "$PLUGIN_DIR" pull --ff-only origin main 2>&1)
-    pull_rc=$?
-    if [ $pull_rc -ne 0 ]; then
-      printf "\033[1A  ⚠ Diverged — resetting to origin  \n"
-      git -C "$PLUGIN_DIR" reset --hard origin/main >/dev/null 2>&1
+    # Check if behind before pulling
+    remote_hash=$(git -C "$PLUGIN_DIR" rev-parse origin/main 2>/dev/null)
+    if [ "$local_hash" = "$remote_hash" ]; then
+      # Already at latest — skip pull entirely
+      printf "  ✔ Up to date                     \n"
     else
-      printf "\033[1A  ✔ Pulled                          \n"
+      # Pull or force-reset
+      printf "  ⠋ Updating...                    \n"
+      git -C "$PLUGIN_DIR" reset --hard origin/main >/dev/null 2>&1
+      printf "\033[1A  ✔ Updated                         \n"
     fi
 
     new_hash=$(git -C "$PLUGIN_DIR" rev-parse HEAD 2>/dev/null)
@@ -508,8 +509,8 @@ check_for_update() {
     local age=$(( $(date +%s) - $(stat -f %m "$last_check" 2>/dev/null || stat -c %Y "$last_check" 2>/dev/null || echo 0) ))
     [ "$age" -lt 3600 ] && return 0
   fi
-  # Fast fetch in background, check result
-  git -C "$PLUGIN_DIR" fetch origin main --quiet 2>/dev/null || return 0
+  # Fast fetch (all refs so origin/main is updated)
+  git -C "$PLUGIN_DIR" fetch origin --quiet 2>/dev/null || return 0
   touch "$last_check"
   local local_hash=$(git -C "$PLUGIN_DIR" rev-parse HEAD 2>/dev/null)
   local remote_hash=$(git -C "$PLUGIN_DIR" rev-parse origin/main 2>/dev/null)
