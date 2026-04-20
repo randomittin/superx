@@ -395,6 +395,7 @@ if [[ "${1:-}" == "--help" || "${1:-}" == "-h" ]]; then
   echo "  superx --resume         Resume last session (conversation + .planning state)"
   echo "  superx --dashboard      Start the pixel dashboard (http://localhost:8080)"
   echo "  superx --auto           Use auto-mode (safer alternative to skip-permissions)"
+  echo "  superx --skip-checkpoint Start fresh, ignore last checkpoint/settings"
   echo "  superx --update         Pull latest superx from GitHub"
   echo "  superx --setup          Re-run first-time plugin setup"
   echo "  superx --team N \"task\"  Spawn N parallel Claude workers in tmux"
@@ -415,8 +416,13 @@ fi
 
 # --auto: use auto-mode instead of dangerously-skip-permissions (safer)
 PERMISSION_FLAG="--dangerously-skip-permissions"
+SKIP_CHECKPOINT=false
 if [[ "${1:-}" == "--auto" ]]; then
   PERMISSION_FLAG="--permission-mode auto"
+  shift
+fi
+if [[ "${1:-}" == "--skip-checkpoint" || "${1:-}" == "--fresh" ]]; then
+  SKIP_CHECKPOINT=true
   shift
 fi
 
@@ -446,6 +452,10 @@ check_for_update() {
 
 load_checkpoint_context() {
   CHECKPOINT_CONTEXT=""
+  if [ "$SKIP_CHECKPOINT" = true ]; then
+    printf "  \033[38;2;255;200;80m▸ Checkpoint skipped\033[0m (--skip-checkpoint)\n"
+    return 0
+  fi
   local cp="$WORK_DIR/.planning/CHECKPOINT.md"
   local state="$WORK_DIR/.planning/STATE.md"
   local settings="$WORK_DIR/.planning/settings.json"
