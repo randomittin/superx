@@ -523,16 +523,8 @@ fi
 
 check_for_update() {
   [ -d "$PLUGIN_DIR/.git" ] || return 0
-  # Only check once per hour (cache in /tmp)
-  local cache="/tmp/superx-update-check-$$"
-  local last_check="/tmp/superx-last-update-check"
-  if [ -f "$last_check" ]; then
-    local age=$(( $(date +%s) - $(stat -f %m "$last_check" 2>/dev/null || stat -c %Y "$last_check" 2>/dev/null || echo 0) ))
-    [ "$age" -lt 3600 ] && return 0
-  fi
-  # Fast fetch (all refs so origin/main is updated)
-  git -C "$PLUGIN_DIR" fetch origin --quiet 2>/dev/null || return 0
-  touch "$last_check"
+  # Fetch every run (fast, non-blocking)
+  git -C "$PLUGIN_DIR" fetch origin --force --quiet 2>/dev/null || return 0
   local local_hash=$(git -C "$PLUGIN_DIR" rev-parse HEAD 2>/dev/null)
   local remote_hash=$(git -C "$PLUGIN_DIR" rev-parse origin/main 2>/dev/null)
   if [ "$local_hash" != "$remote_hash" ] && [ -n "$remote_hash" ]; then
