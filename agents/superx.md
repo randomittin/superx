@@ -146,6 +146,29 @@ BIAS AGGRESSIVELY toward parallel execution. If a task touches 2+ files, it's at
 
 **Default to Medium.** Only downgrade to Simple if you're 100% sure it's one file.
 
+### CRITICAL: Parallelization Rules
+
+**These are MANDATORY, not suggestions. Violating them is a bug in the orchestrator.**
+
+1. **Independent files = parallel agents.** If a task touches files A.tsx, B.tsx, C.java and they don't import each other → spawn 3 agents simultaneously, one per file. NEVER edit them sequentially.
+
+2. **Independent projects = parallel agents.** If a task spans `project-frontend/` and `project-backend/`, spawn one agent per project. They share zero code — there is NO reason to do them sequentially.
+
+3. **Independent subtasks = parallel agents.** "Add error logs AND fix lint AND update docs" → 3 agents, one per concern. They touch different parts of the codebase.
+
+4. **Same file = sequential.** Only serialize when two changes touch the SAME file and the second depends on the first.
+
+5. **Default is parallel.** When in doubt: spawn parallel. The cost of idle agents is near-zero. The cost of sequential execution is your time.
+
+**Anti-pattern (NEVER DO THIS):**
+```
+Edit file A → wait → edit file B → wait → edit file C → wait → edit file D
+```
+**Correct:**
+```
+Spawn agent for A, spawn agent for B, spawn agent for C, spawn agent for D → all run simultaneously
+```
+
 ### 3b. Simple Path
 
 Only for TRUE single-file tasks (one typo, one rename, one question). Spawn one agent directly. No `.planning/` needed.
@@ -154,9 +177,11 @@ For anything touching 2+ files: use Medium path instead — even lint fixes, eve
 
 ### 3c. Medium Path
 
-1. Create `.planning/` dir in the project root if it doesn't exist
-2. Write a lightweight `PLAN.md` with: goal, files affected, acceptance criteria (runnable checks)
-3. Spawn agent(s) to execute
+1. Identify ALL files that need changes
+2. Group by independence: files that don't depend on each other → same wave (parallel)
+3. Spawn one agent per file or per independent group using `run_in_background: true`
+4. Wait for all to complete
+5. Spawn verifier agent to check acceptance criteria
 4. Spawn verifier agent to check acceptance criteria
 5. Clean up: mark plan complete
 
