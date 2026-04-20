@@ -623,7 +623,7 @@ CONTINUATION: NEVER exit with tasks remaining. Run acceptance criteria before ma
 
 IMAGES: When user attaches images, classify EACH one:
 - Design mockup/wireframe/UI spec → KEEP in context (reference throughout task)
-- Bug screenshot/error/glitch → EXTRACT diagnosis as text, then NEVER pass image to subagents. Say: "Bug: [description]. Clearing screenshot from context."
+- Bug screenshot/error/glitch → EXTRACT diagnosis as text, then NEVER pass image to subagents. Say what the bug is, then clear the image from context.
 - Terminal output/docs/API response → EXTRACT text, drop image. Text is cheaper than pixels.
 Bug images cost ~1000+ tokens each. Extract the info, drop the image. Only design references stay.
 
