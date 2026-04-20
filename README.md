@@ -94,21 +94,41 @@ export PATH="$PATH:$HOME/.superx/bin"
 ## Usage
 
 ```bash
-superx "deploy to vercel"     # Run a task end-to-end
-superx                        # Interactive Claude session with superx powers
-superx --dashboard            # Start the pixel dashboard (http://localhost:8080)
-superx --update               # Pull latest version from GitHub
-superx --setup                # Re-run companion plugin setup
-superx --help                 # Show help
+superx "deploy to vercel"           # Run a task end-to-end
+superx                              # Interactive Claude session with superx powers
+superx --dashboard                  # Pixel dashboard (http://localhost:8080)
+superx --team 5 "build auth"        # 5 parallel Claude workers in tmux
+superx --resume                     # Resume last session with full context
+superx --auto "build X"             # Auto-mode (safer than skip-permissions)
+superx --skip-checkpoint "fresh"    # Start fresh, ignore last checkpoint
+```
+
+### Lifecycle commands
+
+```bash
+superx --update                     # Pull latest + show color-coded changelog
+superx --reinstall                  # Nuke and re-clone (fixes zombie states)
+superx --setup                      # Re-install companion plugins
+superx --uninstall                  # Remove superx (with sad goodbye animation)
+superx --help                       # Show all flags
+```
+
+### In-session commands
+
+```bash
+/superx:save                        # Save checkpoint for next session
+/superx:status                      # Show project state + quality gates
+/superx:level +                     # Cycle autonomy level (Guided → Checkpoint → Full Auto)
+/superx:maintain                    # Activate autonomous repo maintenance
 ```
 
 superx launches Claude Code with:
 - `--dangerously-skip-permissions` — full autonomy
-- `--plugin-dir <superx>` — all superx agents + skills loaded
-- `--agent superx` — CTO-level orchestrator as main agent
-- **caveman** — token compression (~65-75% savings)
+- `--plugin-dir <superx>` — 14 specialized agents loaded
+- `--agent superx` — CTO-level orchestrator
+- **caveman ultra** — ~75% token savings
 - **superpowers** — brainstorming, debugging, skill-creator
-- **claude-mem** — persistent memory across sessions
+- **claude-mem** — persistent cross-session memory
 
 ### Dashboard mode
 
