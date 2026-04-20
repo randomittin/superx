@@ -1,10 +1,10 @@
 # superx
 
-**One prompt → finished project.** Autonomous [Claude Code](https://code.claude.com) agent that plans, executes in parallel, verifies, and ships.
+**One prompt → finished project.** 14 specialized agents, 10-parallel execution, project-specific skill learning, mechanical checkpointing, ~75% token savings. Beats raw Claude Code usage.
 
 [![Claude Code](https://img.shields.io/badge/Claude%20Code-plugin-e056a0?style=flat-square)](https://code.claude.com)
 [![License: MIT](https://img.shields.io/badge/License-MIT-9b59b6?style=flat-square)](LICENSE)
-[![Version](https://img.shields.io/badge/version-1.0.0-00d4ff?style=flat-square)](CHANGELOG.md)
+[![Version](https://img.shields.io/badge/version-1.1.0-00d4ff?style=flat-square)](CHANGELOG.md)
 [![Install](https://img.shields.io/badge/install-curl-4ecca3?style=flat-square)](#quick-start)
 
 ```bash
@@ -14,9 +14,16 @@ curl -fsSL https://raw.githubusercontent.com/randomittin/superx/main/install.sh 
 <details>
 <summary><strong>What is superx?</strong></summary>
 
-superx is an autonomous superskill manager for [Claude Code](https://code.claude.com) by [Anthropic](https://www.anthropic.com). It assesses task complexity, creates structured plans with acceptance criteria, executes in parallel waves with fresh context per wave, verifies everything, and ships — with the judgment of a senior dev / CTO.
+superx makes Claude Code **dramatically more capable** than using it directly:
 
-A real-time **pixel-art dashboard** ships with the plugin so you can watch the work happen: a live isometric city map of your project, a war room of agents, streaming logs, and a timeline of every decision.
+- **14 specialized agents** (security auditor, database architect, incident responder, etc.) — each with the right model + effort level
+- **10-parallel execution** — independent files/projects run simultaneously, not sequentially
+- **Project-specific skill learning** — extracts patterns from your codebase into `.planning/skills/`, applies them on future tasks. Gets better with every run.
+- **Mechanical checkpointing** — `/superx:checkpoint` saves state + project settings. Next session resumes with full context injected into the prompt. Zero context loss between sessions.
+- **Wave-based planning with acceptance gates** — tasks grouped by dependency, verified before and after execution, truth-scored 0.0-1.0
+- **~75% token savings** via caveman ultra mode + model routing (Haiku for lint, Sonnet for docs, Opus for code)
+- **Pixel-art dashboard** — isometric city map, war room, streaming logs, session history
+- **Auto-escalation** — task fails on Haiku → retry on Sonnet → retry on Opus. Never waste expensive tokens, never ship bad code.
 
 **Keywords:** Claude Code plugin, Claude AI agent, Anthropic, autonomous coding agent, multi-agent orchestration, AI pair programmer, LLM agent framework, developer automation, CTO-level AI, parallel agent execution, pixel-art dashboard, wave-based execution, acceptance criteria gates, token compression, caveman mode, cross-session memory, autonomous repo maintenance.
 
