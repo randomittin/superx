@@ -39,19 +39,19 @@ type_text() {
 }
 
 step_ok() {
-  printf "  ${G}✔${R} %s\n" "$1"
+  echo -e "  ${G}✔${R} $1"
 }
 
 step_add() {
-  printf "  ${C}+${R} %s" "$1"
+  echo -ne "  ${C}+${R} $1"
 }
 
 step_done() {
-  printf "\r  ${G}✔${R} %s\n" "$1"
+  echo -e "\r  ${G}✔${R} $1"
 }
 
 step_fail() {
-  printf "  ${P}✘${R} %s\n" "$1"
+  echo -e "  ${P}✘${R} $1"
 }
 
 spin_cmd() {
@@ -128,6 +128,10 @@ else
   spin_cmd "Cloning superx" git clone "$REPO" "$INSTALL_DIR"
 fi
 chmod +x "$INSTALL_DIR/bin/"* 2>/dev/null || true
+# Create update marker so --update can show "last update included" on first run
+# Points to 10 commits back (or first commit) to give a meaningful changelog
+first_marker=$(git -C "$INSTALL_DIR" log --oneline -10 2>/dev/null | tail -1 | cut -d' ' -f1)
+[ -n "$first_marker" ] && echo "$first_marker" > "$INSTALL_DIR/.last-update-from"
 step_ok "superx at ${C}~/.superx${R}"
 
 # ── Step 4: PATH ──
