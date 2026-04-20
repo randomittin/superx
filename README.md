@@ -375,7 +375,7 @@ Continuous repo maintenance: triage → fix → test → review → batch releas
 
 | Problem | Fix |
 |---|---|
-| **`superx --update` says "Already up to date" but you're behind** | One-time fix: `cd ~/.superx && git fetch origin main && git reset --hard origin/main`. The old updater had a bug where `git pull` ran in background and its exit code was lost. After this manual reset, future updates work correctly. |
+| **`superx --update` says "Already up to date" but you're behind** | Run `superx --reinstall` — nukes `~/.superx` and re-clones fresh from GitHub. Your projects are not affected. |
 | "Set a project directory first" | Click `+ NEW` or GitHub icon, enter path |
 | Map shows old project | Click `+ NEW`, set the new path — map auto-refreshes |
 | Awaiting panel never appears | Claude's response must end with `?`. Check system preamble isn't overridden |
