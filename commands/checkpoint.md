@@ -55,15 +55,62 @@ Write a concise handoff note that another Claude session can read and immediatel
 - [Decision 1: chose X over Y because Z]
 - [File A imports from File B — don't break this]
 - [User wants: specific preference]
+
+## Project Settings
+- Parallelism: [max 10 / max 5 / sequential — what worked for this project]
+- Model routing: [any overrides from defaults, e.g. "sonnet works fine for React components here"]
+- Governance: [hierarchical / democratic / emergency last used]
+- Test command: [exact command, e.g. "npm test", "pytest tests/", "cargo test"]
+- Lint command: [exact command, e.g. "npx eslint src/", "ruff check ."]
+- Build command: [exact command, e.g. "npm run build", "cargo build"]
+- Deploy command: [if known]
+- Directories to avoid: [e.g. "vendor/, generated/, dist/"]
+- User preferences: [e.g. "prefers tabs over spaces", "wants detailed commit messages", "hates emojis in code"]
 ```
 
-### 4. Git checkpoint
+### 4. `.planning/settings.json` (project-specific superx config)
+Write or update project-specific execution settings:
+
+```json
+{
+  "parallelism": {
+    "max_agents": 10,
+    "min_agents_for_parallel": 2,
+    "notes": "React components safe to parallelize, DB migrations must be sequential"
+  },
+  "model_routing": {
+    "default_code": "opus",
+    "default_effort": "high",
+    "overrides": {
+      "*.test.ts": "sonnet",
+      "*.md": "sonnet",
+      "*.css": "haiku"
+    }
+  },
+  "commands": {
+    "test": "npm test",
+    "lint": "npx eslint src/ --fix",
+    "build": "npm run build",
+    "typecheck": "npx tsc --noEmit"
+  },
+  "governance": "hierarchical",
+  "avoid_dirs": ["node_modules", "dist", ".next", "vendor"],
+  "user_preferences": []
+}
+```
+
+This file is read mechanically on every `superx` launch (injected into preamble alongside CHECKPOINT.md). Claude doesn't need to "discover" test/lint/build commands — they're hardcoded from the first run.
+
+### 5. Git checkpoint
 ```bash
 git add -A && git commit -m "superx: checkpoint — [brief description]"
 ```
 
 ## Rules
 - ALWAYS write `.planning/CHECKPOINT.md` — this is the most important file
-- Keep the handoff note under 50 lines — terse, actionable
+- ALWAYS write `.planning/settings.json` — project settings must persist
+- Keep the handoff note under 60 lines — terse, actionable
 - Include commit hashes for everything completed
 - The "Resume Instructions" section should be specific enough that a fresh Claude session can start working immediately without asking questions
+- The "Project Settings" section captures how THIS project likes to be built — commands, parallelism, model preferences
+- Update `settings.json` whenever you discover a new command or preference (don't wait for checkpoint)
