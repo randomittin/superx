@@ -277,6 +277,8 @@ if [[ "${1:-}" == "--update" ]]; then
 fi
 
 # --reinstall: nuke and rebuild ~/.superx from scratch (fixes zombie states)
+# Uses the curl installer instead of doing it inline — avoids the
+# "script deletes itself mid-execution" problem.
 if [[ "${1:-}" == "--reinstall" || "${1:-}" == "--fix" ]]; then
   apply_superx_theme 2>/dev/null || true
   printf "\n  \033[38;2;224;86;160m\033[1m░▒▓█ REINSTALLING █▓▒░\033[0m\n\n"
@@ -288,37 +290,10 @@ if [[ "${1:-}" == "--reinstall" || "${1:-}" == "--fix" ]]; then
     exit 0
   fi
   printf "\n"
-  # Save PATH config before nuking
-  SHELL_RC=""
-  for rc in "$HOME/.zshrc" "$HOME/.bashrc" "$HOME/.bash_profile"; do
-    [ -f "$rc" ] && grep -q '\.superx/bin' "$rc" && SHELL_RC="$rc" && break
-  done
-  # Nuke and re-clone
-  printf "  ✔ Removing old installation\n"
+  # Remove old install and delegate to the curl installer (runs from /tmp,
+  # so it doesn't break when ~/.superx is deleted mid-execution)
   rm -rf "$HOME/.superx"
-  printf "  ⠋ Cloning fresh from GitHub...      \n"
-  git clone https://github.com/randomittin/superx.git "$HOME/.superx" >/dev/null 2>&1
-  printf "\033[1A  ✔ Cloned fresh                       \n"
-  chmod +x "$HOME/.superx/bin/"* 2>/dev/null || true
-  # Ensure PATH is still set
-  if [ -n "$SHELL_RC" ]; then
-    printf "  ✔ PATH already in %s\n" "$(basename "$SHELL_RC")"
-  else
-    for rc in "$HOME/.zshrc" "$HOME/.bashrc" "$HOME/.bash_profile"; do
-      if [ -f "$rc" ]; then
-        echo '' >> "$rc"
-        echo '# superx — autonomous superskill manager for Claude Code' >> "$rc"
-        echo 'export PATH="$PATH:$HOME/.superx/bin"' >> "$rc"
-        printf "  ✔ Added to PATH in %s\n" "$(basename "$rc")"
-        break
-      fi
-    done
-  fi
-  # Re-run companion plugin setup
-  rm -f "$HOME/.superx/.setup-done"
-  printf "  ✔ Reinstalled — run \033[38;2;0;212;255msuperx --setup\033[0m to reinstall companion plugins\n"
-  printf "\n  \033[38;2;78;204;163m✔ superx reinstalled fresh\033[0m\n\n"
-  exit 0
+  exec bash -c 'curl -fsSL https://raw.githubusercontent.com/randomittin/superx/main/install.sh | bash'
 fi
 
 # --uninstall: remove superx completely
