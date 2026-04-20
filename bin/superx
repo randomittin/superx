@@ -290,10 +290,11 @@ if [[ "${1:-}" == "--reinstall" || "${1:-}" == "--fix" ]]; then
     exit 0
   fi
   printf "\n"
-  # Remove old install and delegate to the curl installer (runs from /tmp,
-  # so it doesn't break when ~/.superx is deleted mid-execution)
+  # Remove old install and delegate to the curl installer.
+  # cd $HOME first — if user is inside ~/.superx, deleting it makes
+  # the cwd invalid and bash throws "getcwd: cannot access parent directories"
   rm -rf "$HOME/.superx"
-  exec bash -c 'curl -fsSL https://raw.githubusercontent.com/randomittin/superx/main/install.sh | bash'
+  exec bash -c 'cd "$HOME" && curl -fsSL https://raw.githubusercontent.com/randomittin/superx/main/install.sh | bash'
 fi
 
 # --uninstall: remove superx completely

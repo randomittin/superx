@@ -6,6 +6,11 @@
 #
 set -euo pipefail
 
+# Ensure cwd exists — if running after --reinstall deleted ~/.superx
+# while user was inside it, cwd is invalid and bash throws
+# "getcwd: cannot access parent directories"
+cd "$HOME" 2>/dev/null || true
+
 INSTALL_DIR="$HOME/.superx"
 REPO="https://github.com/randomittin/superx.git"
 
