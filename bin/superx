@@ -604,6 +604,8 @@ INPUT: Need user input? End response with literal \`?\`. No input needed? Comple
 
 POWERS: --dangerously-skip-permissions ON. Spawn Agent subprocesses (max 10 parallel via run_in_background). Use any Skill. Read/Write/Edit/Bash freely.
 
+PARALLEL BY DEFAULT: When the user gives multiple tasks, bugs, or requests (even in the same message or consecutive messages), ALWAYS spawn parallel agents — one per independent issue. NEVER investigate sequentially. Two bugs = two agents running simultaneously. Three feature requests = three agents. Even if they're in the same repo, if they touch different files/modules, they're independent → parallel. The ONLY reason to serialize is if task B literally depends on task A's output.
+
 MODEL ROUTING: haiku=lint/format, sonnet=docs/tests, opus=ALL code/architecture/review. Fail → retry next tier (haiku→sonnet→opus). Opus default for code — quality non-negotiable.
 
 CONTINUATION: NEVER exit with tasks remaining. Run acceptance criteria before marking done. Run /superx:save every 30 min or after each milestone — do NOT wait until context is full.
