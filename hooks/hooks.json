@@ -27,7 +27,7 @@
         "hooks": [
           {
             "type": "command",
-            "command": "if [ ! -f superx-state.json ]; then superx-state init 2>/dev/null || true; fi; if [ -f .planning/STATE.md ]; then echo \"[superx] Resuming from .planning/STATE.md — read it for prior context.\"; fi"
+            "command": "if [ ! -f superx-state.json ]; then superx-state init 2>/dev/null || true; fi; if [ -f .planning/CHECKPOINT.md ]; then echo \"[superx] Checkpoint found — read .planning/CHECKPOINT.md to resume.\"; elif [ -f .planning/STATE.md ]; then echo \"[superx] State found — read .planning/STATE.md for prior context.\"; fi"
           }
         ]
       }

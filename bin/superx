@@ -442,6 +442,36 @@ check_for_update() {
   fi
 }
 
+# ── Load last checkpoint (mechanical — always injected) ──
+
+load_checkpoint_context() {
+  CHECKPOINT_CONTEXT=""
+  local cp="$WORK_DIR/.planning/CHECKPOINT.md"
+  local state="$WORK_DIR/.planning/STATE.md"
+
+  if [ -f "$cp" ]; then
+    # Read the checkpoint handoff note (max 100 lines to stay under token budget)
+    CHECKPOINT_CONTEXT="
+--- LAST CHECKPOINT (from previous session) ---
+$(head -100 "$cp")
+--- END CHECKPOINT ---
+Read .planning/CHECKPOINT.md for full context. Resume from where it says.
+"
+    printf "  \033[38;2;0;212;255m▸ Checkpoint loaded\033[0m — resuming from last session\n"
+  elif [ -f "$state" ]; then
+    # No checkpoint file but STATE.md exists — inject phase info
+    local phase=$(grep -m1 "^current_phase:" "$state" 2>/dev/null | sed 's/current_phase: *//')
+    if [ -n "$phase" ] && [ "$phase" != "0" ]; then
+      CHECKPOINT_CONTEXT="
+--- PRIOR STATE ---
+Phase: $phase. Read .planning/STATE.md for decisions, blockers, progress.
+--- END STATE ---
+"
+      printf "  \033[38;2;100;100;120m▸ State loaded\033[0m — phase: %s\n" "$phase"
+    fi
+  fi
+}
+
 # ── Main: ensure deps, then launch Claude ──
 
 ensure_claude
@@ -450,6 +480,7 @@ apply_superx_theme
 ensure_project_claude_md
 print_banner
 check_for_update
+load_checkpoint_context
 
 # Terse system preamble (caveman style to save tokens)
 PREAMBLE="PROJECT: $WORK_DIR
@@ -461,14 +492,14 @@ POWERS: --dangerously-skip-permissions ON. Spawn Agent subprocesses (max 10 para
 
 MODEL ROUTING: haiku=lint/format, sonnet=docs/tests, opus=ALL code/architecture/review. Fail → retry next tier (haiku→sonnet→opus). Opus default for code — quality non-negotiable.
 
-CONTINUATION: NEVER exit with tasks remaining. Run acceptance criteria before marking done.
+CONTINUATION: NEVER exit with tasks remaining. Run acceptance criteria before marking done. Before ending session, run /superx:checkpoint to save state.
 
 CAVEMAN ULTRA (max compression, every response):
 Drop articles, filler, pleasantries, hedging, conjunctions. Fragments default. One word > phrase. Abbrev: DB, auth, cfg, req, res, fn, impl, mw, env, repo, PR, CI. Arrows for causality: X → Y.
 Code + errors + paths: exact, unchanged.
 Drop caveman for: security warnings, irreversible ops.
 ---
-
+${CHECKPOINT_CONTEXT}
 "
 
 if [ $# -gt 0 ]; then
