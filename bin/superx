@@ -561,7 +561,7 @@ POWERS: --dangerously-skip-permissions ON. Spawn Agent subprocesses (max 10 para
 
 MODEL ROUTING: haiku=lint/format, sonnet=docs/tests, opus=ALL code/architecture/review. Fail → retry next tier (haiku→sonnet→opus). Opus default for code — quality non-negotiable.
 
-CONTINUATION: NEVER exit with tasks remaining. Run acceptance criteria before marking done. Before ending session, run /superx:checkpoint to save state.
+CONTINUATION: NEVER exit with tasks remaining. Run acceptance criteria before marking done. Before ending session, run /superx:save to save state.
 
 CAVEMAN ULTRA (max compression, every response):
 Drop articles, filler, pleasantries, hedging, conjunctions. Fragments default. One word > phrase. Abbrev: DB, auth, cfg, req, res, fn, impl, mw, env, repo, PR, CI. Arrows for causality: X → Y.

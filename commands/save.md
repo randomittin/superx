@@ -1,9 +1,9 @@
 ---
-name: checkpoint
-description: Save a checkpoint of current work state. Creates/updates .planning/ files so the next superx session resumes with full context. Run this before closing a session or at any milestone.
+name: save
+description: Save current work state for next session. Creates/updates .planning/ files (CHECKPOINT.md, STATE.md, settings.json) so superx resumes with full context. NOT a rewind — saves forward progress. Run before closing a session or at any milestone.
 ---
 
-# Checkpoint — Save Current State
+# Save — Checkpoint Current State
 
 Create or update ALL `.planning/` state files so the next `superx` run resumes exactly where you left off.
 
