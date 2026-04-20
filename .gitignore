@@ -32,6 +32,7 @@ docs/superpowers/plans/
 # superx runtime artifacts
 .setup-done
 .last-update-from
+.superx-no-autocommit
 .planning/dispatch/
 .planning/metrics.jsonl
 .planning/routing-overrides.json
