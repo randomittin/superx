@@ -62,16 +62,16 @@ spin_cmd() {
   local pid=$!
   local i=0
   while kill -0 "$pid" 2>/dev/null; do
-    printf "\r  ${V}${frames[$((i % 10))]}${R} %s" "$label"
+    echo -ne "\r  ${V}${frames[$((i % 10))]}${R} $label"
     sleep 0.08
     i=$((i + 1))
   done
   wait "$pid" 2>/dev/null
   local rc=$?
   if [ $rc -eq 0 ]; then
-    printf "\r  ${G}✔${R} %s\n" "$label"
+    echo -e "\r  ${G}✔${R} $label"
   else
-    printf "\r  ${W}⚠${R} %s ${D}(non-zero exit)${R}\n" "$label"
+    echo -e "\r  ${W}⚠${R} $label ${D}(non-zero exit)${R}"
   fi
   return $rc
 }
