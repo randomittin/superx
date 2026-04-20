@@ -212,36 +212,51 @@ if [[ "${1:-}" == "--dashboard" ]]; then
   exec python3 "$PLUGIN_DIR/ui/server.py"
 fi
 
-# --update: pull latest via git (works for both curl and manual installs)
+# --update: pull latest via git
 if [[ "${1:-}" == "--update" ]]; then
   apply_superx_theme 2>/dev/null || true
   printf "\n  \033[38;2;224;86;160m\033[1m░▒▓█ UPDATING █▓▒░\033[0m\n\n"
 
   if [ -d "$PLUGIN_DIR/.git" ]; then
     local_hash=$(git -C "$PLUGIN_DIR" rev-parse HEAD 2>/dev/null)
-    git -C "$PLUGIN_DIR" fetch origin main >/dev/null 2>&1 &
-    spin $! "Fetching latest..."
-    git -C "$PLUGIN_DIR" pull --ff-only origin main >/dev/null 2>&1 &
-    spin $! "Applying updates..."
+
+    # Fetch + pull foreground (no background — ensures exit code is captured)
+    printf "  ⠋ Fetching...\r"
+    git -C "$PLUGIN_DIR" fetch origin main 2>/dev/null
+    printf "  ✔ Fetched\n"
+
+    printf "  ⠋ Pulling...\r"
+    pull_output=$(git -C "$PLUGIN_DIR" pull --ff-only origin main 2>&1)
+    pull_rc=$?
+    if [ $pull_rc -ne 0 ]; then
+      printf "  ⚠ Pull failed (maybe local changes?). Resetting...\r"
+      git -C "$PLUGIN_DIR" reset --hard origin/main 2>/dev/null
+      printf "  ✔ Reset to origin/main\n"
+    else
+      printf "  ✔ Pulled\n"
+    fi
+
     new_hash=$(git -C "$PLUGIN_DIR" rev-parse HEAD 2>/dev/null)
 
     if [ "$local_hash" != "$new_hash" ]; then
       changed=$(git -C "$PLUGIN_DIR" diff --name-only "$local_hash".."$new_hash" 2>/dev/null | wc -l | tr -d ' ')
-      printf "  \033[38;2;78;204;163m✔ Updated %s files\033[0m\n\n" "$changed"
+      printf "\n  \033[38;2;78;204;163m✔ Updated %s files\033[0m\n\n" "$changed"
 
-      # Show what changed
-      printf "  \033[38;2;155;89;182mChanges:\033[0m\n"
+      # Show what changed — feature-style ("superx can now...")
+      printf "  \033[38;2;155;89;182mWhat's new:\033[0m\n"
       git -C "$PLUGIN_DIR" log --oneline "$local_hash".."$new_hash" 2>/dev/null | while read -r line; do
-        printf "  \033[38;2;0;212;255m▸\033[0m %s\n" "$line"
+        # Extract just the commit message (skip hash)
+        msg=$(echo "$line" | sed 's/^[a-f0-9]* //')
+        printf "  \033[38;2;0;212;255m▸\033[0m %s\n" "$msg"
       done
       printf "\n"
-      printf "  \033[38;2;100;100;120mFiles:\033[0m\n"
-      git -C "$PLUGIN_DIR" diff --stat "$local_hash".."$new_hash" 2>/dev/null | head -15 | while read -r line; do
+      printf "  \033[38;2;100;100;120mFiles changed:\033[0m\n"
+      git -C "$PLUGIN_DIR" diff --stat "$local_hash".."$new_hash" 2>/dev/null | tail -1 | while read -r line; do
         printf "    %s\n" "$line"
       done
       printf "\n"
     else
-      printf "  \033[38;2;100;100;120m✔ Already up to date\033[0m\n\n"
+      printf "\n  \033[38;2;100;100;120m✔ Already up to date\033[0m\n\n"
     fi
   else
     printf "  No git repo found. Reinstalling...\n"
