@@ -191,7 +191,11 @@ print_banner() {
   printf "  ${V}│${R}  ${C}▸${R} claude-mem     ${G}persistent memory${R}  ${V}│${R}\n"; sleep 0.05
   printf "  ${V}╰─────────────────────────────────────╯${R}\n"
   local short_cwd; short_cwd=$(echo "$WORK_DIR" | sed "s|$HOME|~|")
-  printf "  ${D}cwd:${R} ${C}%s${R}\n\n" "$short_cwd"
+  printf "  ${D}cwd:${R} ${C}%s${R}" "$short_cwd"
+  if [ -f "$WORK_DIR/.superx-no-autocommit" ]; then
+    printf "  ${D}[auto-commit: off]${R}"
+  fi
+  printf "\n\n"
 }
 
 # ── Command handlers ──
@@ -488,6 +492,8 @@ if [[ "${1:-}" == "--help" || "${1:-}" == "-h" ]]; then
   echo "  superx --dashboard      Start the pixel dashboard (http://localhost:8080)"
   echo "  superx --auto           Use auto-mode (safer alternative to skip-permissions)"
   echo "  superx --skip-checkpoint Start fresh, ignore last checkpoint/settings"
+  echo "  superx --no-autocommit  Disable auto git commits for this project"
+  echo "  superx --autocommit     Re-enable auto git commits"
   echo "  superx --update         Pull latest superx from GitHub"
   echo "  superx --setup          Re-run first-time plugin setup"
   echo "  superx --team N \"task\"  Spawn N parallel Claude workers in tmux"
@@ -517,6 +523,19 @@ fi
 if [[ "${1:-}" == "--skip-checkpoint" || "${1:-}" == "--fresh" ]]; then
   SKIP_CHECKPOINT=true
   shift
+fi
+
+# --no-autocommit / --autocommit: toggle auto-commit for this project
+if [[ "${1:-}" == "--no-autocommit" ]]; then
+  touch "$WORK_DIR/.superx-no-autocommit"
+  printf "  \033[38;2;255;200;80m▸ Auto-commit OFF\033[0m for %s\n" "$WORK_DIR"
+  printf "  Re-enable: superx --autocommit\n\n"
+  exit 0
+fi
+if [[ "${1:-}" == "--autocommit" ]]; then
+  rm -f "$WORK_DIR/.superx-no-autocommit"
+  printf "  \033[38;2;78;204;163m▸ Auto-commit ON\033[0m for %s\n" "$WORK_DIR"
+  exit 0
 fi
 
 # ── Check for updates (non-blocking, fast) ──
