@@ -55,7 +55,15 @@ For each open issue (oldest first):
    git checkout main
    ```
 
-8. Move to next issue.
+8. **Check merged PRs** — close issues for already-merged fixes:
+   ```
+   gh pr list --state merged --search "closes" --json number,title,mergedAt
+   ```
+   For each merged PR that references an issue:
+   - Verify the issue is still open
+   - Close it: `gh issue close <number> --comment "✅ Fix merged in PR #<pr> — deployed."`
+
+9. Move to next issue.
 
 ## Rules
 - One branch per issue, one PR per fix
@@ -64,3 +72,4 @@ For each open issue (oldest first):
 - If fix is unclear or risky, add a comment on the issue instead of a bad fix
 - Never force-push or modify main directly
 - Commit message must include "closes #N" for auto-close
+- On every run, check for merged PRs and close their linked issues

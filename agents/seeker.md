@@ -58,10 +58,23 @@ Pull logs from pods, analyze, raise issues on GitHub.
    <initial diagnosis + suggested approach>
    ```
 
-5. **Report** summary: N logs scanned, M unique errors found, K issues created.
+5. **Verify old fixes** — check if previously raised issues are now fixed in production:
+   ```
+   gh issue list --label seeker --state open
+   ```
+   For each open issue:
+   - Search current logs for the same error signature
+   - If error NO LONGER appears in logs → the fix was deployed and worked:
+     ```
+     gh issue close <number> --comment "✅ Verified fixed in production — error no longer appears in pod logs (checked $(date -u +%Y-%m-%dT%H:%M:%SZ))"
+     ```
+   - If error STILL appears → leave open, add comment with latest occurrence
+
+6. **Report** summary: N logs scanned, M unique errors found, K issues created, J issues auto-closed (verified fixed).
 
 ## Rules
 - Only create issues for REAL bugs — not info/debug noise
 - Check existing open issues before creating duplicates: `gh issue list --label seeker`
 - Include enough context to reproduce (pod, timestamp, full trace)
 - Tag severity: critical (service down), high (errors spiking), medium (intermittent), low (warning)
+- Auto-close issues whose errors no longer appear in production logs
