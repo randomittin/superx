@@ -439,7 +439,8 @@ if [[ "${1:-}" == "--resume" || "${1:-}" == "-r" ]]; then
     --agent superx \
     $PERMISSION_FLAG \
     --model claude-opus-4-6 \
-    --plugin-dir "$PLUGIN_DIR"
+    --plugin-dir "$PLUGIN_DIR" \
+    --append-system-prompt "${PREAMBLE:-superx resumed}"
 fi
 
 # --team N: spawn N parallel claude workers in tmux panes
@@ -756,11 +757,12 @@ if [ $# -gt 0 ]; then
     --plugin-dir "$PLUGIN_DIR" \
     -p "${PREAMBLE}${*}"
 else
-  # Interactive mode
+  # Interactive mode: use --append-system-prompt to inject preamble
+  # WITHOUT triggering print mode (-p exits after one response).
   exec claude \
     --agent superx \
     $PERMISSION_FLAG \
     $MODEL_FLAG \
     --plugin-dir "$PLUGIN_DIR" \
-    -p "${PREAMBLE}Superx ready. Waiting for task."
+    --append-system-prompt "${PREAMBLE}"
 fi
