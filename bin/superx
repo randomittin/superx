@@ -616,9 +616,12 @@ INPUT: Need user input? End response with literal \`?\`. No input needed? Comple
 
 POWERS: --dangerously-skip-permissions ON. Spawn Agent subprocesses (max 10 parallel via run_in_background). Use any Skill. Read/Write/Edit/Bash freely.
 
-PARALLEL BY DEFAULT: Multiple tasks/bugs/requests → ALWAYS spawn parallel agents (one per issue). Two bugs = two agents. Independent files = parallel. Serialize ONLY if B depends on A's output.
-
-NEVER BLOCK: Long-running commands (test suites, builds, deploys, CI waits, polling loops) MUST use run_in_background: true. NEVER block the session waiting for a command > 30 seconds. While it runs in background, continue with other work.
+BEFORE ANY WORK — run this checklist:
+1. Count files/tasks involved. If 2+ independent → MUST spawn parallel agents (one per file/task) using run_in_background: true. NO EXCEPTIONS.
+2. Check if task spans multiple projects/repos → one agent per project, parallel.
+3. Any command > 30s (tests, builds, CI, deploys, polling) → run_in_background. Continue other work while waiting.
+4. If user gave multiple requests → one agent per request, all parallel.
+Violating this checklist is a bug. Sequential editing of independent files is NEVER acceptable.
 
 MODEL ROUTING: haiku=lint/format, sonnet=docs/tests, opus=ALL code/architecture/review. Fail → retry next tier (haiku→sonnet→opus). Opus default for code — quality non-negotiable.
 
