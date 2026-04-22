@@ -438,6 +438,7 @@ if [[ "${1:-}" == "--resume" || "${1:-}" == "-r" ]]; then
   exec claude --continue \
     --agent superx \
     $PERMISSION_FLAG \
+    --model claude-opus-4-6 \
     --plugin-dir "$PLUGIN_DIR"
 fi
 
@@ -462,12 +463,12 @@ if [[ "${1:-}" == "--team" ]]; then
 
   tmux new-session -d -s "$SESSION" -n "lead"
   # Lead worker gets the task
-  tmux send-keys -t "$SESSION:lead" "cd $WORK_DIR && claude --agent superx $PERMISSION_FLAG --plugin-dir $PLUGIN_DIR" Enter
+  tmux send-keys -t "$SESSION:lead" "cd $WORK_DIR && claude --agent superx $PERMISSION_FLAG --model claude-opus-4-6 --plugin-dir $PLUGIN_DIR" Enter
 
   # Spawn additional worker panes
   for i in $(seq 2 "$TEAM_SIZE"); do
     tmux split-window -t "$SESSION" -h
-    tmux send-keys -t "$SESSION" "cd $WORK_DIR && claude --agent superx $PERMISSION_FLAG --plugin-dir $PLUGIN_DIR" Enter
+    tmux send-keys -t "$SESSION" "cd $WORK_DIR && claude --agent superx $PERMISSION_FLAG --model claude-opus-4-6 --plugin-dir $PLUGIN_DIR" Enter
     tmux select-layout -t "$SESSION" tiled
   done
 
@@ -635,11 +636,17 @@ Drop caveman for: security warnings, irreversible ops.
 ${CHECKPOINT_CONTEXT}
 "
 
+# Model + effort: opus 4.7 at high effort by default.
+# The orchestrator (superx agent) runs on opus/high. It then routes
+# subtasks to haiku/sonnet/opus per the model routing rules.
+MODEL_FLAG="--model claude-opus-4-6"
+
 if [ $# -gt 0 ]; then
   # Non-interactive: run the prompt
   exec claude \
     --agent superx \
     $PERMISSION_FLAG \
+    $MODEL_FLAG \
     --plugin-dir "$PLUGIN_DIR" \
     -p "${PREAMBLE}${*}"
 else
@@ -647,5 +654,6 @@ else
   exec claude \
     --agent superx \
     $PERMISSION_FLAG \
+    $MODEL_FLAG \
     --plugin-dir "$PLUGIN_DIR"
 fi
