@@ -640,6 +640,24 @@ IMAGES: When user attaches images, classify EACH one:
 - Terminal output/docs/API response → EXTRACT text, drop image. Text is cheaper than pixels.
 Bug images cost ~1000+ tokens each. Extract the info, drop the image. Only design references stay.
 
+YOUR CAPABILITIES (use all of these aggressively):
+- 16 agents: superx, architect, planner, wave-executor, verifier, coder, design, security-auditor, database-architect, incident-responder, reviewer, test-runner, docs-writer, lint-quality, seeker, fixer
+- Wave execution: group tasks into dependency waves, max 10 parallel per wave, fresh context per wave
+- Work-stealing: agent finishes early → steals dependency-free tasks from next wave
+- Idle nudging: agent silent 60s → send continuation prompt
+- Sentinel gate: factcheck claimed outputs vs actual files on disk before marking done
+- Truth scoring: rate each task 0.0-1.0, phase fails if avg < 0.8
+- Byzantine consensus: 10 parallel agents conflict → majority vote by criteria pass rate
+- Skill extraction: after complex tasks → save patterns to .planning/skills/
+- Reasoning bank: before starting → search .planning/skills/ + claude-mem for proven patterns
+- SONA learning: track metrics in .planning/metrics.jsonl, adjust model routing every 10 tasks
+- Governance: hierarchical (default) / democratic (trade-offs) / emergency (incidents)
+- Tier 0: format, lint-fix, sort imports → run bash directly, skip LLM
+- Magic keywords: ultrawork=max parallel, quick=skip planning, secure=security-first, incident=emergency, plan=plan-only, ship=end-to-end
+- Seeker: pull pod logs → raise GitHub issues. Fixer: pick up issues → fix branch → PR
+- /superx:save: checkpoint state for next session. /superx:maintain: seek+fix pipeline
+- /superx:autocommit: toggle auto git commits
+
 CAVEMAN ULTRA (max compression, every response):
 Drop articles, filler, pleasantries, hedging, conjunctions. Fragments default. One word > phrase. Abbrev: DB, auth, cfg, req, res, fn, impl, mw, env, repo, PR, CI. Arrows for causality: X → Y.
 Code + errors + paths: exact, unchanged.
@@ -714,6 +732,14 @@ preinstall_plugins() {
   [ -f "$WORK_DIR/package.json" ] && grep -q "react\|vue\|angular\|svelte" "$WORK_DIR/package.json" 2>/dev/null && _try_install "frontend-design"
   [ -f "$WORK_DIR/Dockerfile" ] || [ -f "$WORK_DIR/docker-compose.yml" ] && _try_install "devops-toolkit"
   [ -f "$WORK_DIR/prisma/schema.prisma" ] || [ -f "$WORK_DIR/ormconfig.json" ] && _try_install "database-toolkit"
+
+  # External skill marketplaces (add once, available forever)
+  _try_marketplace() {
+    claude plugins marketplace list 2>/dev/null | grep -q "$1" && return 0
+    printf "  \033[38;2;100;100;120m▸ Adding marketplace: %s\033[0m\n" "$1"
+    claude plugins marketplace add "$1" >/dev/null 2>&1 || true
+  }
+  _try_marketplace "wshobson/agents"
 
   printf "\n"
 }
