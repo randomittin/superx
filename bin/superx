@@ -435,12 +435,17 @@ if [[ "${1:-}" == "--resume" || "${1:-}" == "-r" ]]; then
     echo "  ▸ superx state loaded"
   fi
 
+  # Write preamble for resume
+  RESUME_PREAMBLE_FILE=$(mktemp /tmp/superx-resume-XXXXXX)
+  echo "${PREAMBLE:-superx resumed}" > "$RESUME_PREAMBLE_FILE"
+  trap "rm -f '$RESUME_PREAMBLE_FILE'" EXIT
+
   exec claude --continue \
     --agent superx \
     $PERMISSION_FLAG \
     --model claude-opus-4-6 \
     --plugin-dir "$PLUGIN_DIR" \
-    --append-system-prompt "${PREAMBLE:-superx resumed}"
+    --append-system-prompt-file "$RESUME_PREAMBLE_FILE"
 fi
 
 # --team N: spawn N parallel claude workers in tmux panes
@@ -748,21 +753,27 @@ preinstall_plugins() {
 select_model "$@"
 preinstall_plugins "$@"
 
+# Write preamble to temp file for --append-system-prompt-file
+# (more reliable than inline for large preambles with special chars)
+PREAMBLE_FILE=$(mktemp /tmp/superx-preamble-XXXXXX)
+echo "$PREAMBLE" > "$PREAMBLE_FILE"
+trap "rm -f '$PREAMBLE_FILE'" EXIT
+
 if [ $# -gt 0 ]; then
-  # Non-interactive: run the prompt (preamble + user's task)
+  # Non-interactive: run the prompt (preamble as system prompt + user's task via -p)
   exec claude \
     --agent superx \
     $PERMISSION_FLAG \
     $MODEL_FLAG \
     --plugin-dir "$PLUGIN_DIR" \
-    -p "${PREAMBLE}${*}"
+    --append-system-prompt-file "$PREAMBLE_FILE" \
+    -p "${*}"
 else
-  # Interactive mode: use --append-system-prompt to inject preamble
-  # WITHOUT triggering print mode (-p exits after one response).
+  # Interactive mode: preamble injected via system prompt file, Claude stays interactive
   exec claude \
     --agent superx \
     $PERMISSION_FLAG \
     $MODEL_FLAG \
     --plugin-dir "$PLUGIN_DIR" \
-    --append-system-prompt "${PREAMBLE}"
+    --append-system-prompt-file "$PREAMBLE_FILE"
 fi
