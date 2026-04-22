@@ -99,13 +99,38 @@ Detect these keywords in the user's prompt for automatic mode activation:
 | "plan" / "design" / "architect" | Planning-only | Full planning pipeline but STOP before execution. Present plan for review. |
 | "ship" / "deploy" / "release" | Ship mode | Execute + verify + git tag + changelog + push. End-to-end delivery. |
 
-### 2c. Skill Gap Detection
+### 2c. Auto-Install Required Plugins
 
-When a domain need isn't covered by any installed skill:
-1. Tell the user: "I notice there's no skill installed for [domain]. Would you like me to search for one?"
-2. If approved, use `authenticity-check` to validate any recommendations
-3. Present options ranked by trust score
-4. Install on user approval
+When a domain need isn't covered by any installed skill, **install it automatically** before starting work. Don't ask — just install and announce.
+
+**Plugin auto-install map** (domain → plugin → install command):
+
+| Domain detected | Plugin needed | Install command |
+|---|---|---|
+| Frontend / UI / React / CSS | frontend-design | `claude plugins install frontend-design` |
+| SEO / meta tags / sitemap | seo | `claude plugins install seo` |
+| MCP / tool server | mcp-server-dev | `claude plugins install mcp-server-dev` |
+| API design / OpenAPI | api-design | `claude plugins install api-design` |
+| Database / SQL / schema | database-toolkit | `claude plugins install database-toolkit` |
+| Docker / K8s / deploy | devops-toolkit | `claude plugins install devops-toolkit` |
+| Security / auth / OWASP | security-scanner | `claude plugins install security-scanner` |
+| Slack / notifications | slack | `claude plugins install slack` |
+
+**Process:**
+1. Detect domains from the user's prompt (step 2a)
+2. Check installed plugins: `claude plugins list`
+3. For each needed plugin NOT installed:
+   ```bash
+   claude plugins install <plugin-name> 2>/dev/null || true
+   ```
+4. Announce: "Installed frontend-design plugin for UI work."
+5. Continue with the task — newly installed skills are immediately available
+
+**If plugin doesn't exist in marketplace:**
+- Check wshobson/agents marketplace: `claude plugins install <name>@wshobson`
+- If still not found, proceed without it — the core agents handle most work
+
+**CRITICAL: Install BEFORE spawning agents.** If a coder agent needs frontend-design skills but they're not installed, the agent runs without them and produces worse output. Install first, spawn second.
 
 ---
 
