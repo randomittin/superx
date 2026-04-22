@@ -622,6 +622,8 @@ MODEL ROUTING: haiku=lint/format, sonnet=docs/tests, opus=ALL code/architecture/
 
 CONTINUATION: NEVER exit with tasks remaining. Run acceptance criteria before marking done. Run /superx:save every 30 min or after each milestone — do NOT wait until context is full.
 
+PLUGINS: Before AND during work, auto-install needed plugins. Read React/Vue/CSS → \`claude plugins install frontend-design\`. Read Dockerfile/k8s → \`claude plugins install devops-toolkit\`. Read SQL/ORM → \`claude plugins install database-toolkit\`. Read OpenAPI → \`claude plugins install api-design\`. Read auth/JWT → \`claude plugins install security-scanner\`. Always install BEFORE spawning agents. Mid-task: if reading a file reveals a new domain, pause → install → /reload-plugins → resume.
+
 IMAGES: When user attaches images, classify EACH one:
 - Design mockup/wireframe/UI spec → KEEP in context (reference throughout task)
 - Bug screenshot/error/glitch → EXTRACT diagnosis as text, then NEVER pass image to subagents. Say what the bug is, then clear the image from context.
