@@ -644,7 +644,7 @@ ${CHECKPOINT_CONTEXT}
 MODEL_FLAG="--model claude-opus-4-6"
 
 if [ $# -gt 0 ]; then
-  # Non-interactive: run the prompt
+  # Non-interactive: run the prompt (preamble + user's task)
   exec claude \
     --agent superx \
     $PERMISSION_FLAG \
@@ -652,10 +652,14 @@ if [ $# -gt 0 ]; then
     --plugin-dir "$PLUGIN_DIR" \
     -p "${PREAMBLE}${*}"
 else
-  # Interactive mode
+  # Interactive mode: inject preamble as system context via -p,
+  # then claude continues interactively after processing it.
+  # Without this, checkpoint, model routing, caveman, plugin rules
+  # are all missing in interactive mode.
   exec claude \
     --agent superx \
     $PERMISSION_FLAG \
     $MODEL_FLAG \
-    --plugin-dir "$PLUGIN_DIR"
+    --plugin-dir "$PLUGIN_DIR" \
+    -p "${PREAMBLE}Superx ready. Waiting for task."
 fi
