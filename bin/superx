@@ -623,7 +623,12 @@ BEFORE ANY WORK — run this checklist:
 4. If user gave multiple requests → one agent per request, all parallel.
 Violating this checklist is a bug. Sequential editing of independent files is NEVER acceptable.
 
-MODEL ROUTING: haiku=lint/format, sonnet=docs/tests, opus=ALL code/architecture/review. Fail → retry next tier (haiku→sonnet→opus). Opus default for code — quality non-negotiable.
+MODEL ROUTING — when spawning subagents, select model per task:
+- haiku: lint, format, rename, config, simple lookups (fast + cheap)
+- sonnet: docs, tests, research, analysis, simple fixes (good enough)
+- opus: ALL code writing, architecture, design, review, security, DB (quality non-negotiable)
+On failure → escalate: haiku→sonnet→opus. Never retry same tier.
+Check .planning/settings.json for project-specific overrides before spawning.
 
 CONTINUATION: NEVER exit with tasks remaining. Run acceptance criteria before marking done. Run /superx:save every 30 min or after each milestone — do NOT wait until context is full.
 
@@ -643,10 +648,49 @@ Drop caveman for: security warnings, irreversible ops.
 ${CHECKPOINT_CONTEXT}
 "
 
-# Model + effort: opus 4.7 at high effort by default.
-# The orchestrator (superx agent) runs on opus/high. It then routes
-# subtasks to haiku/sonnet/opus per the model routing rules.
-MODEL_FLAG="--model claude-opus-4-6"
+# ── Smart model selection ──
+# Read project settings for model override, then detect task complexity.
+# Orchestrator defaults to opus, but simple tasks can start on sonnet.
+
+select_model() {
+  MODEL_FLAG="--model claude-opus-4-6"
+
+  # 1. Check project settings for override
+  local settings="$WORK_DIR/.planning/settings.json"
+  if [ -f "$settings" ] && command -v python3 &>/dev/null; then
+    local override
+    override=$(python3 -c "
+import json
+try:
+    s = json.load(open('$settings'))
+    m = s.get('model_routing', {}).get('default_code', '')
+    if m: print(m)
+except: pass
+" 2>/dev/null)
+    case "$override" in
+      haiku)  MODEL_FLAG="--model claude-haiku-4-5" ;;
+      sonnet) MODEL_FLAG="--model claude-sonnet-4-6" ;;
+      opus)   MODEL_FLAG="--model claude-opus-4-6" ;;
+    esac
+  fi
+
+  # 2. If user prompt given, detect if it's a simple task → sonnet is enough
+  if [ $# -gt 0 ]; then
+    local prompt_lower
+    prompt_lower=$(echo "$*" | tr '[:upper:]' '[:lower:]')
+    # Simple tasks: lint, format, typo, rename, version bump → sonnet
+    if echo "$prompt_lower" | grep -qE '^(lint|format|fix typo|rename|bump version|update readme|fix import)'; then
+      MODEL_FLAG="--model claude-sonnet-4-6"
+      printf "  ${D:-}▸ Simple task detected → using sonnet (cost-efficient)${R:-}\n"
+    # Complex tasks: architect, design, security, incident → opus always
+    elif echo "$prompt_lower" | grep -qE '(architect|design system|security audit|incident|migrate|refactor entire)'; then
+      MODEL_FLAG="--model claude-opus-4-6"
+    fi
+    # Everything else: use the default (opus or project override)
+  fi
+}
+
+select_model "$@"
 
 if [ $# -gt 0 ]; then
   # Non-interactive: run the prompt (preamble + user's task)
@@ -657,10 +701,7 @@ if [ $# -gt 0 ]; then
     --plugin-dir "$PLUGIN_DIR" \
     -p "${PREAMBLE}${*}"
 else
-  # Interactive mode: inject preamble as system context via -p,
-  # then claude continues interactively after processing it.
-  # Without this, checkpoint, model routing, caveman, plugin rules
-  # are all missing in interactive mode.
+  # Interactive mode
   exec claude \
     --agent superx \
     $PERMISSION_FLAG \
