@@ -286,9 +286,9 @@ if [[ "${1:-}" == "--update" ]]; then
       printf "\n"
 
     else
-      # Already up to date
+      # No changes available
       printf "\n  ${V}━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━${R}\n"
-      printf "  ${G}✔ Already on latest${R}  ${D}(%s)${R}\n" "$local_short"
+      printf "  ${G}✔ No new updates available${R}  ${D}(%s)${R}\n" "$local_short"
       printf "  ${V}━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━${R}\n"
 
       # Self-create marker if missing
@@ -297,12 +297,12 @@ if [[ "${1:-}" == "--update" ]]; then
         [ -n "$mk" ] && echo "$mk" > "$PLUGIN_DIR/.last-update-from"
       fi
 
-      # Show installed features
+      # Show what's in the current version
       if [ -f "$PLUGIN_DIR/.last-update-from" ]; then
         last_from=$(cat "$PLUGIN_DIR/.last-update-from")
         count=$(git -C "$PLUGIN_DIR" log --oneline "$last_from"..HEAD 2>/dev/null | wc -l | tr -d ' ')
         if [ "${count:-0}" -gt 0 ]; then
-          printf "\n  ${P}${B}Installed features (%s):${R}\n\n" "$count"
+          printf "\n  ${D}Current version includes (%s changes since install):${R}\n\n" "$count"
           git -C "$PLUGIN_DIR" log --oneline "$last_from"..HEAD 2>/dev/null | head -12 | while IFS= read -r line; do
             msg="${line#* }"
             case "$msg" in
