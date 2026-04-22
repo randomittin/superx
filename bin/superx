@@ -648,17 +648,15 @@ Drop caveman for: security warnings, irreversible ops.
 ${CHECKPOINT_CONTEXT}
 "
 
-# ── Smart model selection ──
-# Read project settings for model override, then detect task complexity.
-# Orchestrator defaults to opus, but simple tasks can start on sonnet.
+# ── Smart model selection (runs AFTER checkpoint load) ──
 
 select_model() {
   MODEL_FLAG="--model claude-opus-4-6"
+  MODEL_NAME="opus"
 
-  # 1. Check project settings for override
-  local settings="$WORK_DIR/.planning/settings.json"
+  # 1. Check project settings (loaded from checkpoint)
+  settings="$WORK_DIR/.planning/settings.json"
   if [ -f "$settings" ] && command -v python3 &>/dev/null; then
-    local override
     override=$(python3 -c "
 import json
 try:
@@ -668,29 +666,60 @@ try:
 except: pass
 " 2>/dev/null)
     case "$override" in
-      haiku)  MODEL_FLAG="--model claude-haiku-4-5" ;;
-      sonnet) MODEL_FLAG="--model claude-sonnet-4-6" ;;
-      opus)   MODEL_FLAG="--model claude-opus-4-6" ;;
+      haiku)  MODEL_FLAG="--model claude-haiku-4-5"; MODEL_NAME="haiku (project override)" ;;
+      sonnet) MODEL_FLAG="--model claude-sonnet-4-6"; MODEL_NAME="sonnet (project override)" ;;
+      opus)   MODEL_FLAG="--model claude-opus-4-6"; MODEL_NAME="opus (project override)" ;;
     esac
   fi
 
-  # 2. If user prompt given, detect if it's a simple task → sonnet is enough
+  # 2. Detect task complexity from prompt (overrides project default)
   if [ $# -gt 0 ]; then
-    local prompt_lower
     prompt_lower=$(echo "$*" | tr '[:upper:]' '[:lower:]')
-    # Simple tasks: lint, format, typo, rename, version bump → sonnet
     if echo "$prompt_lower" | grep -qE '^(lint|format|fix typo|rename|bump version|update readme|fix import)'; then
       MODEL_FLAG="--model claude-sonnet-4-6"
-      printf "  ${D:-}▸ Simple task detected → using sonnet (cost-efficient)${R:-}\n"
-    # Complex tasks: architect, design, security, incident → opus always
+      MODEL_NAME="sonnet (simple task)"
     elif echo "$prompt_lower" | grep -qE '(architect|design system|security audit|incident|migrate|refactor entire)'; then
       MODEL_FLAG="--model claude-opus-4-6"
+      MODEL_NAME="opus (complex task)"
     fi
-    # Everything else: use the default (opus or project override)
   fi
+
+  printf "  \033[38;2;155;89;182m▸ Model:\033[0m %s\n" "$MODEL_NAME"
+}
+
+# ── Pre-install plugins based on prompt + project files ──
+
+preinstall_plugins() {
+  [ $# -eq 0 ] && return 0
+  prompt_lower=$(echo "$*" | tr '[:upper:]' '[:lower:]')
+  installed=$(claude plugins list 2>/dev/null || echo "")
+
+  _try_install() {
+    echo "$installed" | grep -q "$1" && return 0
+    printf "  \033[38;2;0;212;255m▸ Installing %s\033[0m\n" "$1"
+    claude plugins install "$1" >/dev/null 2>&1 || true
+  }
+
+  # From prompt keywords
+  echo "$prompt_lower" | grep -qE 'react|vue|angular|css|responsive|ui|frontend|component' && _try_install "frontend-design"
+  echo "$prompt_lower" | grep -qE 'docker|k8s|kubernetes|deploy|ci.?cd|pipeline' && _try_install "devops-toolkit"
+  echo "$prompt_lower" | grep -qE 'sql|database|schema|migration|prisma|typeorm' && _try_install "database-toolkit"
+  echo "$prompt_lower" | grep -qE 'seo|meta.?tag|sitemap|robots.?txt' && _try_install "seo"
+  echo "$prompt_lower" | grep -qE 'auth|jwt|oauth|security|owasp|vulnerability' && _try_install "security-scanner"
+  echo "$prompt_lower" | grep -qE 'api|openapi|swagger|rest|graphql' && _try_install "api-design"
+  echo "$prompt_lower" | grep -qE 'slack|notification|webhook' && _try_install "slack"
+  echo "$prompt_lower" | grep -qE 'mcp|tool.?server|model.?context' && _try_install "mcp-server-dev"
+
+  # From project files (if they exist)
+  [ -f "$WORK_DIR/package.json" ] && grep -q "react\|vue\|angular\|svelte" "$WORK_DIR/package.json" 2>/dev/null && _try_install "frontend-design"
+  [ -f "$WORK_DIR/Dockerfile" ] || [ -f "$WORK_DIR/docker-compose.yml" ] && _try_install "devops-toolkit"
+  [ -f "$WORK_DIR/prisma/schema.prisma" ] || [ -f "$WORK_DIR/ormconfig.json" ] && _try_install "database-toolkit"
+
+  printf "\n"
 }
 
 select_model "$@"
+preinstall_plugins "$@"
 
 if [ $# -gt 0 ]; then
   # Non-interactive: run the prompt (preamble + user's task)
