@@ -28,24 +28,44 @@ SETUP_MARKER="$PLUGIN_DIR/.setup-done"
 # ── Ensure Claude Code is installed ──
 
 ensure_claude() {
-  if command -v claude &>/dev/null; then
-    return 0
-  fi
-  echo "Claude Code not found. Installing..."
-  if command -v npm &>/dev/null; then
-    npm install -g @anthropic-ai/claude-code
-  elif command -v brew &>/dev/null; then
-    brew install node
-    npm install -g @anthropic-ai/claude-code
-  else
-    echo "Error: npm not found. Install Node.js 18+ first: https://nodejs.org"
-    exit 1
-  fi
+  # 1. Install if missing
   if ! command -v claude &>/dev/null; then
-    echo "Error: Claude Code install failed. Run: npm install -g @anthropic-ai/claude-code"
+    echo "  Claude Code not found. Installing..."
+    if command -v npm &>/dev/null; then
+      npm install -g @anthropic-ai/claude-code
+    elif command -v brew &>/dev/null; then
+      brew install node
+      npm install -g @anthropic-ai/claude-code
+    else
+      echo "  Error: npm not found. Install Node.js 18+ first: https://nodejs.org"
+      exit 1
+    fi
+    if ! command -v claude &>/dev/null; then
+      echo "  Error: Claude Code install failed. Run: npm install -g @anthropic-ai/claude-code"
+      exit 1
+    fi
+    echo "  Claude Code installed."
+  fi
+
+  # 2. Check for updates (silent, fast)
+  if command -v npm &>/dev/null; then
+    latest=$(npm view @anthropic-ai/claude-code version 2>/dev/null || echo "")
+    current=$(claude --version 2>/dev/null | head -1 | grep -oE '[0-9]+\.[0-9]+\.[0-9]+' || echo "")
+    if [ -n "$latest" ] && [ -n "$current" ] && [ "$latest" != "$current" ]; then
+      printf "  \033[38;2;255;200;80m▸ Claude Code update available: %s → %s\033[0m\n" "$current" "$latest"
+      printf "  \033[38;2;100;100;120m  Run: npm install -g @anthropic-ai/claude-code\033[0m\n"
+    fi
+  fi
+
+  # 3. Check if logged in (auth valid)
+  auth_check=$(claude --print --prompt "ping" 2>&1 | head -5)
+  if echo "$auth_check" | grep -qiE "not authenticated|login|sign in|unauthorized|auth"; then
+    printf "\n  \033[38;2;224;86;160m⚠ Claude Code is not logged in.\033[0m\n"
+    printf "  Run this to authenticate:\n\n"
+    printf "    \033[38;2;0;212;255mclaude login\033[0m\n\n"
+    printf "  Then run superx again.\n"
     exit 1
   fi
-  echo "Claude Code installed."
 }
 
 # ── First-run setup: install companion plugins ──

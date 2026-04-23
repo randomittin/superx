@@ -119,6 +119,26 @@ if ! command -v claude &>/dev/null; then
 fi
 step_ok "Claude Code $(claude --version 2>/dev/null | head -1 || echo 'installed')"
 
+# Check for Claude Code updates
+if command -v npm &>/dev/null; then
+  latest=$(npm view @anthropic-ai/claude-code version 2>/dev/null || echo "")
+  current=$(claude --version 2>/dev/null | head -1 | grep -oE '[0-9]+\.[0-9]+\.[0-9]+' || echo "")
+  if [ -n "$latest" ] && [ -n "$current" ] && [ "$latest" != "$current" ]; then
+    echo -e "  ${W}▸ Update available: ${current} → ${latest}${R}"
+    spin_cmd "Updating Claude Code" npm install -g @anthropic-ai/claude-code
+    step_ok "Claude Code $(claude --version 2>/dev/null | head -1)"
+  fi
+fi
+
+# Check auth
+auth_test=$(claude -p "ping" 2>&1 | head -5)
+if echo "$auth_test" | grep -qiE "not authenticated|login|sign in|unauthorized|auth"; then
+  echo -e "\n  ${P}⚠ Claude Code is not logged in.${R}"
+  echo -e "  Run: ${C}claude login${R}"
+  echo -e "  Then re-run this installer.\n"
+  exit 1
+fi
+
 # ── Step 3: superx ──
 
 printf "\n  ${D}[3/5]${R} ${B}superx${R}\n"
