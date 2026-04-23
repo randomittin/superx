@@ -119,24 +119,20 @@ if ! command -v claude &>/dev/null; then
 fi
 step_ok "Claude Code $(claude --version 2>/dev/null | head -1 || echo 'installed')"
 
-# Check for Claude Code updates
+# Check for Claude Code updates (notify only — don't auto-update, can break on some systems)
 if command -v npm &>/dev/null; then
   latest=$(npm view @anthropic-ai/claude-code version 2>/dev/null || echo "")
   current=$(claude --version 2>/dev/null | head -1 | grep -oE '[0-9]+\.[0-9]+\.[0-9]+' || echo "")
   if [ -n "$latest" ] && [ -n "$current" ] && [ "$latest" != "$current" ]; then
-    echo -e "  ${W}▸ Update available: ${current} → ${latest}${R}"
-    spin_cmd "Updating Claude Code" npm install -g @anthropic-ai/claude-code
-    step_ok "Claude Code $(claude --version 2>/dev/null | head -1)"
+    echo -e "  ${W}▸ Claude Code update available: ${current} → ${latest}${R}"
+    echo -e "  ${D}  Run: npm install -g @anthropic-ai/claude-code${R}"
   fi
 fi
 
-# Check auth
-auth_test=$(claude -p "ping" 2>&1 | head -5)
-if echo "$auth_test" | grep -qiE "not authenticated|login|sign in|unauthorized|auth"; then
-  echo -e "\n  ${P}⚠ Claude Code is not logged in.${R}"
-  echo -e "  Run: ${C}claude login${R}"
-  echo -e "  Then re-run this installer.\n"
-  exit 1
+# Check auth (fast — just check if config exists, don't spawn Claude)
+if [ ! -f "$HOME/.claude.json" ] && [ ! -f "$HOME/.claude/credentials.json" ] && [ -z "${ANTHROPIC_API_KEY:-}" ]; then
+  echo -e "\n  ${W}▸ Claude Code may not be logged in.${R}"
+  echo -e "  ${D}  Run: claude login (if you haven't already)${R}"
 fi
 
 # ── Step 3: superx ──
