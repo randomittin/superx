@@ -111,25 +111,39 @@ step_ok "Node.js $(node --version)"
 
 printf "\n  ${D}[2/5]${R} ${B}Claude Code${R}\n"
 if ! command -v claude &>/dev/null; then
-  spin_cmd "Installing Claude Code" npm install -g @anthropic-ai/claude-code
+  # Try without sudo (nvm/fnm), then with sudo (system npm)
+  if npm install -g @anthropic-ai/claude-code >/dev/null 2>&1; then
+    step_ok "Claude Code installed"
+  elif command -v sudo &>/dev/null; then
+    echo -e "  ${D}  Needs sudo for global install...${R}"
+    sudo npm install -g @anthropic-ai/claude-code >/dev/null 2>&1
+  fi
   if ! command -v claude &>/dev/null; then
-    step_fail "Install failed. Run: npm install -g @anthropic-ai/claude-code"
+    step_fail "Install failed. Run: sudo npm install -g @anthropic-ai/claude-code"
     exit 1
   fi
 fi
 step_ok "Claude Code $(claude --version 2>/dev/null | head -1 || echo 'installed')"
 
-# Check for Claude Code updates (notify only — don't auto-update, can break on some systems)
+# Check for Claude Code updates — auto-update with sudo fallback
 if command -v npm &>/dev/null; then
   latest=$(npm view @anthropic-ai/claude-code version 2>/dev/null || echo "")
   current=$(claude --version 2>/dev/null | head -1 | grep -oE '[0-9]+\.[0-9]+\.[0-9]+' || echo "")
   if [ -n "$latest" ] && [ -n "$current" ] && [ "$latest" != "$current" ]; then
-    echo -e "  ${W}▸ Claude Code update available: ${current} → ${latest}${R}"
-    echo -e "  ${D}  Run: npm install -g @anthropic-ai/claude-code${R}"
+    echo -e "  ${W}▸ Updating Claude Code: ${current} → ${latest}${R}"
+    # Try without sudo first (works with nvm/fnm), fall back to sudo
+    if npm install -g @anthropic-ai/claude-code >/dev/null 2>&1; then
+      step_ok "Claude Code updated to $latest"
+    elif command -v sudo &>/dev/null && sudo -n true 2>/dev/null; then
+      # sudo available without password prompt
+      sudo npm install -g @anthropic-ai/claude-code >/dev/null 2>&1 && step_ok "Claude Code updated to $latest" || echo -e "  ${D}  Update failed — run manually: npm install -g @anthropic-ai/claude-code${R}"
+    else
+      echo -e "  ${D}  Needs permissions. Run: sudo npm install -g @anthropic-ai/claude-code${R}"
+    fi
   fi
 fi
 
-# Check auth (fast — just check if config exists, don't spawn Claude)
+# Check auth (fast — check config files, don't spawn Claude)
 if [ ! -f "$HOME/.claude.json" ] && [ ! -f "$HOME/.claude/credentials.json" ] && [ -z "${ANTHROPIC_API_KEY:-}" ]; then
   echo -e "\n  ${W}▸ Claude Code may not be logged in.${R}"
   echo -e "  ${D}  Run: claude login (if you haven't already)${R}"
