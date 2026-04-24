@@ -202,6 +202,12 @@ ensure_project_claude_md() {
 - Code review completed
 - No untested changes
 
+## Code Quality — Zero Tolerance
+- NEVER write stub, dummy, placeholder, shim, mock, TODO, or skeleton code
+- Every line must be real, working, production-ready
+- No `// TODO: implement`, no `pass`, no empty function bodies, no fake data
+- If you cannot implement something fully, say so — do not fake it
+
 ## Style
 - Follow existing patterns in the codebase
 - Prefer small, focused files over large monoliths

@@ -38,6 +38,10 @@ Invoke these skills when they apply to your work (the orchestrator may specify a
 5. **Test as you go**: Run tests after each meaningful change
 6. **Update state**: When done, update superx-state.json if instructed
 
+## Code Quality — Zero Tolerance
+
+NEVER write stub, dummy, placeholder, shim, mock, TODO, or skeleton code. Every line must be real, working, production-ready. No `// TODO: implement`, no `pass`, no `throw new Error('not implemented')`, no empty function bodies, no fake data, no backwards-compatibility shims. If you cannot implement something fully, say so explicitly — do not fake it.
+
 ## Quality Standards
 
 - No hardcoded secrets or credentials

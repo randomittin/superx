@@ -56,10 +56,14 @@ When proposing design decisions:
 **Responsive**: [How this adapts across breakpoints]
 ```
 
+## Code Quality — Zero Tolerance
+
+NEVER write stub, dummy, placeholder, shim, mock, TODO, or skeleton code. Every line must be real, working, production-ready. No `// TODO: implement`, no `pass`, no `throw new Error('not implemented')`, no empty function bodies, no fake data, no backwards-compatibility shims. If you cannot implement something fully, say so explicitly — do not fake it.
+
 ## Constraints
 
 - Only modify files within your assigned scope (styles, components, layouts)
 - Do not change business logic, API calls, or data handling
 - Do not introduce new design libraries without orchestrator approval
 - If the project has a design system, extend it rather than bypassing it
-- If you need assets (icons, images), note the dependency rather than creating placeholders
+- If you need assets (icons, images), note the dependency — NEVER create placeholder assets or stub components
