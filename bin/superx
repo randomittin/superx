@@ -56,27 +56,24 @@ ensure_auth() {
     return 0
   fi
 
-  # Check Claude Code's stored OAuth credentials
+  # Check Claude Code's stored OAuth account (tokens live in system keychain,
+  # but accountUuid in .claude.json confirms a successful login)
   local claude_cfg="$HOME/.claude.json"
-  local has_oauth=false
   if [ -f "$claude_cfg" ] && command -v python3 &>/dev/null; then
-    has_oauth=$(python3 -c "
+    local has_account
+    has_account=$(python3 -c "
 import json
 try:
     with open('$claude_cfg') as f:
         cfg = json.load(f)
     acct = cfg.get('oauthAccount', {})
-    if acct.get('accessToken') or acct.get('refreshToken'):
-        print('true')
-    else:
-        print('false')
+    print('true' if acct.get('accountUuid') else 'false')
 except Exception:
     print('false')
 " 2>/dev/null)
-  fi
-
-  if [ "$has_oauth" = "true" ]; then
-    return 0
+    if [ "$has_account" = "true" ]; then
+      return 0
+    fi
   fi
 
   # Not authenticated — prompt login
@@ -86,26 +83,24 @@ except Exception:
 
   # Verify login succeeded
   if [ -f "$claude_cfg" ] && command -v python3 &>/dev/null; then
-    has_oauth=$(python3 -c "
+    local has_account
+    has_account=$(python3 -c "
 import json
 try:
     with open('$claude_cfg') as f:
         cfg = json.load(f)
     acct = cfg.get('oauthAccount', {})
-    if acct.get('accessToken') or acct.get('refreshToken'):
-        print('true')
-    else:
-        print('false')
+    print('true' if acct.get('accountUuid') else 'false')
 except Exception:
     print('false')
 " 2>/dev/null)
+    if [ "$has_account" = "true" ]; then
+      return 0
+    fi
   fi
 
-  if [ "$has_oauth" != "true" ] && [ -z "${ANTHROPIC_API_KEY:-}" ]; then
-    echo "  Error: Authentication failed. Run 'claude login' manually."
-    exit 1
-  fi
-  printf "  \033[38;2;78;204;163m✔ Authenticated.\033[0m\n"
+  echo "  Error: Authentication failed. Run 'claude login' manually."
+  exit 1
 }
 
 # ── Ensure node is in PATH (nvm lazy-loads, hooks don't inherit it) ──
