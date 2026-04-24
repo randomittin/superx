@@ -861,6 +861,7 @@ DURING work: when you encounter ANY of these signals, STOP and check for missing
 HOW TO CHECK: Run \`ls ~/.claude/skills/\` to see installed skills. Run \`$PLUGIN_DIR/bin/discover-skills search \"<domain>\"\` to find new ones. Run \`$PLUGIN_DIR/bin/discover-skills install <name-or-repo>\` to install.
 ALSO install plugins: Read React/Vue/CSS → \`claude plugins install frontend-design\`. Read Dockerfile/k8s → \`claude plugins install devops-toolkit\`. Read SQL/ORM → \`claude plugins install database-toolkit\`.
 NEVER proceed with suboptimal output when a skill exists that could improve quality. Finding and installing the right skill mid-session is ALWAYS worth the 10-second cost.
+INVOKING SKILLS: Git-installed skills (in ~/.claude/skills/) appear in the Skill tool list by their name (NOT namespaced). Use \`Skill(ui-ux-pro-max)\` not \`Skill(superpowers:ui-ux-pro-max)\`. If a skill isn't in the list, check if it has SKILL.md — if not, read its CLAUDE.md directly via Read tool.
 
 IMAGES: When user attaches images, classify EACH one:
 - Design mockup/wireframe/UI spec → KEEP in context (reference throughout task)
