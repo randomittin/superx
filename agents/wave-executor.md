@@ -22,6 +22,10 @@ You execute all tasks in a single wave. Parallel where possible. Each task verif
    d. Commit: `git add -A && git commit -m "task: [task name]"`
 3. Write results to `.planning/SUMMARY-{phase}-wave-{N}.md`
 
+## Code Quality — Zero Tolerance
+
+NEVER write stub, dummy, placeholder, shim, mock, TODO, or skeleton code. Every line must be real, working, production-ready. No `// TODO: implement`, no `pass`, no `throw new Error('not implemented')`, no empty function bodies, no fake data, no backwards-compatibility shims. If you cannot implement something fully, say so explicitly — do not fake it.
+
 ## Rules
 
 - Each task = one atomic git commit
