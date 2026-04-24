@@ -1,0 +1,68 @@
+{
+  "version": "1.0.0",
+  "skills": [
+    {
+      "name": "ui-ux-pro-max",
+      "repo": "nextlevelbuilder/ui-ux-pro-max-skill",
+      "description": "Professional UI/UX design skill for React, Tailwind, and responsive frontends",
+      "keywords": ["ui", "ux", "design", "frontend", "react", "tailwind", "landing page", "mobile ui", "responsive", "component", "css", "html", "dashboard"],
+      "category": "design"
+    },
+    {
+      "name": "oh-my-mermaid",
+      "repo": "oh-my-mermaid/oh-my-mermaid",
+      "description": "Generate Mermaid diagrams for architecture, flowcharts, and codebase maps",
+      "keywords": ["diagram", "mermaid", "architecture", "flowchart", "sequence diagram", "visualization", "codebase map"],
+      "category": "documentation"
+    },
+    {
+      "name": "token-optimizer",
+      "repo": "alexgreensh/token-optimizer",
+      "description": "Optimize token usage and context window compaction",
+      "keywords": ["token", "optimize", "context", "compaction", "context window"],
+      "category": "optimization"
+    },
+    {
+      "name": "context-mode",
+      "repo": "mksglu/context-mode",
+      "description": "Sandbox tool output and optimize context window usage",
+      "keywords": ["context", "sandbox", "tool output", "context window", "optimization"],
+      "category": "optimization"
+    },
+    {
+      "name": "godogen",
+      "repo": "htdt/godogen",
+      "description": "Godot game development skill for 2D and 3D projects",
+      "keywords": ["godot", "game", "gamedev", "2d", "3d", "game design", "unity"],
+      "category": "gamedev"
+    },
+    {
+      "name": "claude-obsidian",
+      "repo": "AgriciDaniel/claude-obsidian",
+      "description": "Obsidian wiki and knowledge management integration",
+      "keywords": ["obsidian", "wiki", "knowledge", "notes", "documentation", "research"],
+      "category": "knowledge"
+    },
+    {
+      "name": "claude-ads",
+      "repo": "AgriciDaniel/claude-ads",
+      "description": "Google Ads and Meta Ads campaign management skill",
+      "keywords": ["ads", "advertising", "google ads", "meta ads", "facebook ads", "marketing", "ppc", "campaign"],
+      "category": "marketing"
+    },
+    {
+      "name": "claude-seo",
+      "repo": "AgriciDaniel/claude-seo",
+      "description": "SEO optimization for meta tags, sitemaps, and search ranking",
+      "keywords": ["seo", "search engine", "meta tags", "sitemap", "robots", "ranking", "serp"],
+      "category": "marketing"
+    },
+    {
+      "name": "get-shit-done",
+      "repo": "gsd-build/get-shit-done",
+      "description": "Spec-driven planning, architecture, and meta-prompting for productivity",
+      "keywords": ["spec", "planning", "architecture", "spec-driven", "meta-prompting"],
+      "category": "productivity"
+    }
+  ]
+}
