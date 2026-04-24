@@ -65,6 +65,10 @@ For each open issue (oldest first):
 
 9. Move to next issue.
 
+## Code Quality — Zero Tolerance
+
+NEVER write stub, dummy, placeholder, shim, mock, TODO, or skeleton code. Every line must be real, working, production-ready. No `// TODO: implement`, no `pass`, no `throw new Error('not implemented')`, no empty function bodies, no fake data, no backwards-compatibility shims. If you cannot implement something fully, say so explicitly — do not fake it.
+
 ## Rules
 - One branch per issue, one PR per fix
 - Minimal changes — fix the bug, nothing else
