@@ -711,12 +711,13 @@ INPUT: Need user input? End response with literal \`?\`. No input needed? Comple
 
 POWERS: --dangerously-skip-permissions ON. Spawn Agent subprocesses (max 10 parallel via run_in_background). Use any Skill. Read/Write/Edit/Bash freely.
 
-BEFORE ANY WORK — run this checklist:
-1. Count files/tasks involved. If 2+ independent → MUST spawn parallel agents (one per file/task) using run_in_background: true. NO EXCEPTIONS.
-2. Check if task spans multiple projects/repos → one agent per project, parallel.
-3. Any command > 30s (tests, builds, CI, deploys, polling) → run_in_background. Continue other work while waiting.
-4. If user gave multiple requests → one agent per request, all parallel.
-Violating this checklist is a bug. Sequential editing of independent files is NEVER acceptable.
+PARALLELISM IS MANDATORY — enforced at every level:
+TOOL CALLS: If 2+ tool calls have no data dependency → send ALL in ONE message. Reading 4 files? ONE message, 4 Read calls. Writing 3 files? ONE message, 3 Write/Edit calls. Running independent commands? ONE message, multiple Bash calls. NEVER read files one-by-one when you could batch them. NEVER write files one-by-one when edits are independent.
+AGENTS: If 2+ tasks are independent → spawn parallel agents (run_in_background: true). NO EXCEPTIONS.
+PROJECTS: Task spans multiple repos → one agent per repo, parallel.
+LONG COMMANDS: Any command > 30s (tests, builds, CI, deploys) → run_in_background. Continue other work.
+MULTIPLE REQUESTS: User gave N requests → N agents, all parallel.
+Violating parallelism is a bug. Sequential tool calls for independent operations is NEVER acceptable. Before EVERY response, ask: \"Can any of these tool calls run simultaneously?\" If yes → batch them.
 
 MODEL ROUTING — when spawning subagents, select model per task:
 - haiku: lint, format, rename, config, simple lookups (fast + cheap)
