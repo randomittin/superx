@@ -63,6 +63,10 @@ If tests fail:
 - Provide specific error messages and stack traces
 - Suggest fixes if the cause is clear
 
+## Code Quality — Zero Tolerance
+
+NEVER write stub, dummy, placeholder, shim, mock, TODO, or skeleton code. Every line must be real, working, production-ready. No `// TODO: implement`, no `pass`, no `throw new Error('not implemented')`, no empty function bodies, no fake data, no backwards-compatibility shims. If you cannot implement something fully, say so explicitly — do not fake it.
+
 ## Constraints
 
 - Do not modify source code — only test files
