@@ -1,0 +1,234 @@
+#!/usr/bin/env bash
+# discover-skills — mid-session skill gap detection and installation
+# Called by Claude during a session when it encounters a new domain.
+set -eo pipefail
+
+SELF="$0"
+if command -v readlink &>/dev/null; then
+  SELF="$(readlink -f "$0" 2>/dev/null || readlink "$0" 2>/dev/null || echo "$0")"
+fi
+PLUGIN_DIR="$(cd "$(dirname "$SELF")/.." && pwd)"
+SKILLS_DIR="$HOME/.claude/skills"
+REGISTRY="$PLUGIN_DIR/skills-registry.json"
+
+# File extension → skill domain mapping (bash 3.2 compatible)
+ext_to_domain() {
+  case "$1" in
+    tsx|jsx|vue|svelte|css|scss|less) echo "design" ;;
+    gd|tscn|tres)                     echo "gamedev" ;;
+    mmd|mermaid)                      echo "documentation" ;;
+    *)                                echo "" ;;
+  esac
+}
+
+# Content pattern → skill domain mapping
+detect_domain_from_content() {
+  local file="$1"
+  [ -f "$file" ] || return 0
+  local head
+  head=$(head -50 "$file" 2>/dev/null || true)
+
+  # Check content patterns
+  if echo "$head" | grep -qiE 'tailwind|className.*flex|styled-component|@apply|css-in-js'; then
+    echo "design"
+  elif echo "$head" | grep -qiE 'extends Node|@onready|func _ready|GDScript'; then
+    echo "gamedev"
+  elif echo "$head" | grep -qiE 'mermaid|flowchart|sequenceDiagram|classDiagram|graph TD|graph LR'; then
+    echo "documentation"
+  elif echo "$head" | grep -qiE 'meta.*description|sitemap|robots|canonical|og:title|schema.org'; then
+    echo "marketing"
+  elif echo "$head" | grep -qiE 'obsidian|vault|wiki|knowledge.base'; then
+    echo "knowledge"
+  fi
+}
+
+# Find skills from registry matching a domain/category
+find_skills_for_domain() {
+  local domain="$1"
+  [ -f "$REGISTRY" ] || return 0
+  command -v python3 &>/dev/null || return 0
+  python3 -c "
+import json, os
+with open('$REGISTRY') as f:
+    reg = json.load(f)
+skills_dir = os.path.expanduser('~/.claude/skills')
+for s in reg.get('skills', []):
+    if s.get('category') == '$domain':
+        installed = os.path.isdir(os.path.join(skills_dir, s['name']))
+        status = 'installed' if installed else 'NOT INSTALLED'
+        print(f\"{s['name']}|{s['repo']}|{status}|{s['description']}\")
+" 2>/dev/null
+}
+
+install_skill() {
+  local name="$1" repo="${2:-}"
+
+  # If name contains /, treat as repo
+  if [[ "$name" == */* ]]; then
+    repo="$name"
+    name=$(basename "$repo" | sed 's/\.git$//')
+  fi
+
+  # Look up in registry if no repo given
+  if [ -z "$repo" ] && [ -f "$REGISTRY" ]; then
+    repo=$(python3 -c "
+import json
+with open('$REGISTRY') as f:
+    reg = json.load(f)
+for s in reg.get('skills', []):
+    if s['name'] == '$name':
+        print(s['repo']); break
+" 2>/dev/null)
+  fi
+
+  if [ -z "$repo" ]; then
+    echo "ERROR: Skill '$name' not in registry. Use: discover-skills install owner/repo"
+    return 1
+  fi
+
+  local skill_path="$SKILLS_DIR/$name"
+  if [ -d "$skill_path" ]; then
+    echo "ALREADY INSTALLED: $name at $skill_path"
+    return 0
+  fi
+
+  mkdir -p "$SKILLS_DIR"
+  echo "INSTALLING: $name from $repo..."
+  if git clone --depth 1 "https://github.com/${repo}.git" "$skill_path" 2>/dev/null; then
+    echo "OK: Installed $name to $skill_path"
+  else
+    echo "ERROR: Failed to clone $repo"
+    return 1
+  fi
+}
+
+cmd_detect() {
+  # Detect skill gaps from prompt keywords
+  local prompt="$*"
+  [ -z "$prompt" ] && { echo "Usage: discover-skills detect <prompt or description>"; return 1; }
+
+  local prompt_lower
+  prompt_lower=$(echo "$prompt" | tr '[:upper:]' '[:lower:]')
+
+  [ -f "$REGISTRY" ] || { echo "No registry found"; return 0; }
+  command -v python3 &>/dev/null || { echo "python3 required"; return 0; }
+
+  local gaps
+  gaps=$(python3 -c "
+import json, re, os
+prompt = '''${prompt_lower}'''
+with open('$REGISTRY') as f:
+    reg = json.load(f)
+skills_dir = os.path.expanduser('~/.claude/skills')
+found = []
+for skill in reg.get('skills', []):
+    if os.path.isdir(os.path.join(skills_dir, skill['name'])):
+        continue
+    for kw in skill.get('keywords', []):
+        if re.search(r'\b' + re.escape(kw) + r'\b', prompt):
+            found.append(skill)
+            break
+for s in found:
+    print(f\"MISSING: {s['name']} ({s['repo']}) — {s['description']}\")
+    print(f\"  Install: discover-skills install {s['name']}\")
+if not found:
+    print('No skill gaps detected.')
+" 2>/dev/null)
+
+  echo "$gaps"
+}
+
+cmd_detect_file() {
+  local file="$1"
+  [ -f "$file" ] || { echo "File not found: $file"; return 1; }
+
+  # Detect domain from extension
+  local ext="${file##*.}"
+  local domain
+  domain=$(ext_to_domain "$ext")
+
+  # Fall back to content detection
+  if [ -z "$domain" ]; then
+    domain=$(detect_domain_from_content "$file")
+  fi
+
+  if [ -z "$domain" ]; then
+    echo "No skill domain detected for $file"
+    return 0
+  fi
+
+  echo "Domain detected: $domain (from $file)"
+  local skills
+  skills=$(find_skills_for_domain "$domain")
+  if [ -n "$skills" ]; then
+    echo ""
+    echo "Relevant skills:"
+    while IFS='|' read -r name repo status desc; do
+      if [ "$status" = "NOT INSTALLED" ]; then
+        echo "  ⚠ $name — $desc"
+        echo "    Install: discover-skills install $name"
+      else
+        echo "  ✔ $name — $desc"
+      fi
+    done <<< "$skills"
+  fi
+}
+
+cmd_search() {
+  local query="$1"
+  [ -z "$query" ] && { echo "Usage: discover-skills search <query>"; return 1; }
+
+  if command -v gh &>/dev/null; then
+    gh api search/repositories --method GET \
+      -f q="topic:claude-code ${query} sort:stars" \
+      -f per_page=8 \
+      --jq '.items[] | "★\(.stargazers_count)  \(.full_name)\n  \(.description // "no description")\n  Install: discover-skills install \(.full_name)\n"' 2>/dev/null
+  else
+    echo "gh CLI required for search. Install: brew install gh"
+    return 1
+  fi
+}
+
+cmd_gaps() {
+  # Show all uninstalled skills from registry
+  [ -f "$REGISTRY" ] || { echo "No registry found"; return 0; }
+  command -v python3 &>/dev/null || return 0
+
+  echo "Skill gaps (not installed):"
+  echo ""
+  python3 -c "
+import json, os
+with open('$REGISTRY') as f:
+    reg = json.load(f)
+skills_dir = os.path.expanduser('~/.claude/skills')
+missing = 0
+for s in reg.get('skills', []):
+    if not os.path.isdir(os.path.join(skills_dir, s['name'])):
+        missing += 1
+        print(f\"  ⚠ {s['name']:<25} {s['description']}\")
+        print(f\"    Install: discover-skills install {s['name']}\")
+if missing == 0:
+    print('  All registry skills installed!')
+else:
+    print(f'\n  {missing} skill(s) not installed.')
+" 2>/dev/null
+}
+
+# Dispatch
+case "${1:-}" in
+  detect)       shift; cmd_detect "$@" ;;
+  detect-file)  cmd_detect_file "${2:-}" ;;
+  search)       cmd_search "${2:-}" ;;
+  install)      install_skill "${2:-}" "${3:-}" ;;
+  gaps)         cmd_gaps ;;
+  *)
+    echo "discover-skills — mid-session skill gap detection"
+    echo ""
+    echo "Commands:"
+    echo "  detect <prompt>        Check if prompt needs skills not installed"
+    echo "  detect-file <path>     Detect skill domain from file content"
+    echo "  search <query>         Search GitHub for skills"
+    echo "  install <name|repo>    Install a skill from registry or GitHub"
+    echo "  gaps                   Show all uninstalled registry skills"
+    ;;
+esac
