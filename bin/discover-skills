@@ -96,6 +96,25 @@ for s in reg.get('skills', []):
   echo "INSTALLING: $name from $repo..."
   if git clone --depth 1 "https://github.com/${repo}.git" "$skill_path" 2>/dev/null; then
     echo "OK: Installed $name to $skill_path"
+
+    # Auto-create SKILL.md if missing (needed for Claude Code skill discovery)
+    if [ ! -f "$skill_path/SKILL.md" ] && [ -f "$skill_path/CLAUDE.md" ]; then
+      local desc=""
+      if [ -f "$skill_path/skill.json" ] && command -v python3 &>/dev/null; then
+        desc=$(python3 -c "import json; print(json.load(open('$skill_path/skill.json')).get('description',''))" 2>/dev/null || true)
+      fi
+      [ -z "$desc" ] && desc="Skill installed from $repo"
+      {
+        echo "---"
+        echo "name: $name"
+        echo "description: $desc"
+        echo "---"
+        echo ""
+        # Include CLAUDE.md content (skip the "# CLAUDE.md" header line if present)
+        sed '1{/^# CLAUDE\.md$/d}' "$skill_path/CLAUDE.md"
+      } > "$skill_path/SKILL.md"
+      echo "OK: Generated SKILL.md for Claude Code discovery"
+    fi
   else
     echo "ERROR: Failed to clone $repo"
     return 1
