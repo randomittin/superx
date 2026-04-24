@@ -48,6 +48,84 @@ ensure_claude() {
   echo "  Claude Code installed."
 }
 
+# ── Ensure Claude Code is authenticated ──
+
+ensure_auth() {
+  # Skip if API key is set via environment
+  if [ -n "${ANTHROPIC_API_KEY:-}" ]; then
+    return 0
+  fi
+
+  # Check Claude Code's stored OAuth credentials
+  local claude_cfg="$HOME/.claude.json"
+  local has_oauth=false
+  if [ -f "$claude_cfg" ] && command -v python3 &>/dev/null; then
+    has_oauth=$(python3 -c "
+import json
+try:
+    with open('$claude_cfg') as f:
+        cfg = json.load(f)
+    acct = cfg.get('oauthAccount', {})
+    if acct.get('accessToken') or acct.get('refreshToken'):
+        print('true')
+    else:
+        print('false')
+except Exception:
+    print('false')
+" 2>/dev/null)
+  fi
+
+  if [ "$has_oauth" = "true" ]; then
+    return 0
+  fi
+
+  # Not authenticated — prompt login
+  printf "\n  \033[38;2;255;200;80m⚠ Not authenticated with Claude Code.\033[0m\n"
+  printf "  Running claude login...\n\n"
+  claude login
+
+  # Verify login succeeded
+  if [ -f "$claude_cfg" ] && command -v python3 &>/dev/null; then
+    has_oauth=$(python3 -c "
+import json
+try:
+    with open('$claude_cfg') as f:
+        cfg = json.load(f)
+    acct = cfg.get('oauthAccount', {})
+    if acct.get('accessToken') or acct.get('refreshToken'):
+        print('true')
+    else:
+        print('false')
+except Exception:
+    print('false')
+" 2>/dev/null)
+  fi
+
+  if [ "$has_oauth" != "true" ] && [ -z "${ANTHROPIC_API_KEY:-}" ]; then
+    echo "  Error: Authentication failed. Run 'claude login' manually."
+    exit 1
+  fi
+  printf "  \033[38;2;78;204;163m✔ Authenticated.\033[0m\n"
+}
+
+# ── Ensure node is in PATH (nvm lazy-loads, hooks don't inherit it) ──
+
+ensure_node_path() {
+  if command -v node &>/dev/null; then
+    return 0
+  fi
+  # nvm sets up a shell function, not a PATH entry — hooks can't see it.
+  # Find the latest nvm-managed node and export its bin dir.
+  local nvm_dir="${NVM_DIR:-$HOME/.nvm}"
+  if [ -d "$nvm_dir/versions/node" ]; then
+    local latest
+    latest=$(ls "$nvm_dir/versions/node" 2>/dev/null | sed 's/^v//' | sort -t. -k1,1n -k2,2n -k3,3n | tail -1)
+    if [ -n "$latest" ] && [ -x "$nvm_dir/versions/node/v${latest}/bin/node" ]; then
+      export PATH="$nvm_dir/versions/node/v${latest}/bin:$PATH"
+    fi
+  fi
+}
+
 # ── First-run setup: install companion plugins ──
 
 first_run_setup() {
@@ -202,7 +280,9 @@ print_banner() {
 
 # --dashboard: start the web UI server
 if [[ "${1:-}" == "--dashboard" ]]; then
+  ensure_node_path
   ensure_claude
+  ensure_auth
   first_run_setup
   apply_superx_theme 2>/dev/null || true
   print_banner 2>/dev/null || true
@@ -415,14 +495,18 @@ fi
 # --setup: re-run plugin installation
 if [[ "${1:-}" == "--setup" ]]; then
   rm -f "$SETUP_MARKER"
+  ensure_node_path
   ensure_claude
+  ensure_auth
   first_run_setup
   exit 0
 fi
 
 # --resume: continue the last Claude session AND load .planning/ state
 if [[ "${1:-}" == "--resume" || "${1:-}" == "-r" ]]; then
+  ensure_node_path
   ensure_claude
+  ensure_auth
   first_run_setup
   apply_superx_theme 2>/dev/null || true
   print_banner 2>/dev/null || true
@@ -450,7 +534,9 @@ fi
 
 # --team N: spawn N parallel claude workers in tmux panes
 if [[ "${1:-}" == "--team" ]]; then
+  ensure_node_path
   ensure_claude
+  ensure_auth
   first_run_setup
   apply_superx_theme 2>/dev/null || true
   print_banner 2>/dev/null || true
@@ -606,7 +692,9 @@ Phase: $phase. Read .planning/STATE.md for decisions, blockers, progress.
 
 # ── Main: ensure deps, then launch Claude ──
 
+ensure_node_path
 ensure_claude
+ensure_auth
 first_run_setup
 apply_superx_theme
 ensure_project_claude_md
