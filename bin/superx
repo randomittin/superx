@@ -846,7 +846,21 @@ Check .planning/settings.json for project-specific overrides before spawning.
 
 CONTINUATION: NEVER exit with tasks remaining. Run acceptance criteria before marking done. Run /superx:save every 30 min or after each milestone — do NOT wait until context is full.
 
-PLUGINS: Before AND during work, auto-install needed plugins. Read React/Vue/CSS → \`claude plugins install frontend-design\`. Read Dockerfile/k8s → \`claude plugins install devops-toolkit\`. Read SQL/ORM → \`claude plugins install database-toolkit\`. Read OpenAPI → \`claude plugins install api-design\`. Read auth/JWT → \`claude plugins install security-scanner\`. Always install BEFORE spawning agents. Mid-task: if reading a file reveals a new domain, pause → install → /reload-plugins → resume.
+SKILLS & PLUGINS — mid-session gap detection:
+BEFORE starting work: run \`$PLUGIN_DIR/bin/discover-skills detect\` to check if task needs skills not yet installed.
+DURING work: when you encounter ANY of these signals, STOP and check for missing skills:
+- Reading React/Vue/Angular/CSS/Tailwind files → need ui-ux skill? Run: \`$PLUGIN_DIR/bin/discover-skills detect-file \"\$filepath\"\`
+- Reading Godot/Unity/game files → need gamedev skill?
+- Reading SEO/meta tags/sitemap → need SEO skill?
+- Reading Dockerfile/k8s/CI → need devops skill?
+- Reading SQL/ORM/migrations → need database skill?
+- Reading OpenAPI/Swagger → need API design skill?
+- Reading auth/JWT/OAuth → need security skill?
+- Building diagrams/architecture docs → need mermaid skill?
+- Task quality would benefit from a specialized skill you don't have → search for it
+HOW TO CHECK: Run \`ls ~/.claude/skills/\` to see installed skills. Run \`$PLUGIN_DIR/bin/discover-skills search \"<domain>\"\` to find new ones. Run \`$PLUGIN_DIR/bin/discover-skills install <name-or-repo>\` to install.
+ALSO install plugins: Read React/Vue/CSS → \`claude plugins install frontend-design\`. Read Dockerfile/k8s → \`claude plugins install devops-toolkit\`. Read SQL/ORM → \`claude plugins install database-toolkit\`.
+NEVER proceed with suboptimal output when a skill exists that could improve quality. Finding and installing the right skill mid-session is ALWAYS worth the 10-second cost.
 
 IMAGES: When user attaches images, classify EACH one:
 - Design mockup/wireframe/UI spec → KEEP in context (reference throughout task)
