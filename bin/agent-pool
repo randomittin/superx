@@ -1,0 +1,250 @@
+#!/usr/bin/env python3
+"""agent-pool — Auto-scaling agent pool manager for superx.
+
+Tracks active agents, enforces concurrency limits, provides scaling
+decisions based on utilization.
+
+Usage:
+  agent-pool init [--max <n>] [--min <n>]    Initialize pool (default max=10, min=1)
+  agent-pool acquire <agent-id> <type>        Register an agent, exit 2 if at capacity
+  agent-pool release <agent-id>               Mark agent as done
+  agent-pool status                           Show pool state as JSON
+  agent-pool should-scale                     Exit 0 if should scale up, 1 if not
+  agent-pool active                           List active agents
+  agent-pool wait                             Block until a slot is available
+  agent-pool resize <max>                     Change max pool size
+  agent-pool health-check                     Remove dead agents (by PID check)
+"""
+import sys, os, json, time, fcntl, argparse
+from pathlib import Path
+from datetime import datetime, timezone
+
+POOL_FILE = Path.home() / ".superx" / "agent-pool.json"
+DEFAULTS = {
+    "max_agents": 10, "min_agents": 1,
+    "scale_up_threshold": 0.8, "scale_down_threshold": 0.2,
+    "cooldown_seconds": 30, "agents": {},
+    "last_scale_event": None, "created_at": None,
+}
+
+def now_iso():
+    return datetime.now(timezone.utc).isoformat()
+
+def load_pool():
+    if not POOL_FILE.exists():
+        return None
+    with open(POOL_FILE) as f:
+        return json.load(f)
+
+def save_pool(data):
+    POOL_FILE.parent.mkdir(parents=True, exist_ok=True)
+    tmp = POOL_FILE.with_suffix(".tmp")
+    with open(tmp, "w") as f:
+        json.dump(data, f, indent=2)
+    tmp.rename(POOL_FILE)
+
+def locked(fn):
+    """Decorator: hold flock on pool file for duration of fn."""
+    def wrapper(*a, **kw):
+        POOL_FILE.parent.mkdir(parents=True, exist_ok=True)
+        lock = POOL_FILE.with_suffix(".lock")
+        with open(lock, "w") as lf:
+            fcntl.flock(lf, fcntl.LOCK_EX)
+            try:
+                return fn(*a, **kw)
+            finally:
+                fcntl.flock(lf, fcntl.LOCK_UN)
+    return wrapper
+
+def active_agents(pool):
+    return {k: v for k, v in pool["agents"].items() if v["status"] == "active"}
+
+def utilization(pool):
+    n = len(active_agents(pool))
+    return n / pool["max_agents"] if pool["max_agents"] > 0 else 1.0
+
+@locked
+def cmd_init(args):
+    pool = load_pool()
+    if pool is None:
+        pool = dict(DEFAULTS)
+        pool["created_at"] = now_iso()
+    pool["max_agents"] = args.max if args.max else pool.get("max_agents", DEFAULTS["max_agents"])
+    pool["min_agents"] = args.min if args.min else pool.get("min_agents", DEFAULTS["min_agents"])
+    save_pool(pool)
+    print(f"Pool initialized: max={pool['max_agents']} min={pool['min_agents']}")
+
+@locked
+def cmd_acquire(args):
+    pool = load_pool()
+    if not pool:
+        print("Pool not initialized. Run: agent-pool init", file=sys.stderr)
+        sys.exit(1)
+    act = active_agents(pool)
+    if len(act) >= pool["max_agents"]:
+        print(f"At capacity ({pool['max_agents']}). Cannot acquire.", file=sys.stderr)
+        sys.exit(2)
+    entry = {
+        "type": args.type, "status": "active",
+        "started_at": now_iso(), "pid": args.pid,
+    }
+    pool["agents"][args.agent_id] = entry
+    save_pool(pool)
+    print(f"Acquired: {args.agent_id} ({args.type}) [{len(act)+1}/{pool['max_agents']}]")
+
+@locked
+def cmd_release(args):
+    pool = load_pool()
+    if not pool:
+        print("Pool not initialized.", file=sys.stderr); sys.exit(1)
+    agent = pool["agents"].get(args.agent_id)
+    if not agent:
+        print(f"Agent {args.agent_id} not found.", file=sys.stderr); sys.exit(1)
+    agent["status"] = "done"
+    agent["finished_at"] = now_iso()
+    if agent.get("started_at"):
+        start = datetime.fromisoformat(agent["started_at"])
+        end = datetime.fromisoformat(agent["finished_at"])
+        agent["duration_s"] = round((end - start).total_seconds(), 1)
+    save_pool(pool)
+    print(f"Released: {args.agent_id} (duration: {agent.get('duration_s', '?')}s)")
+
+@locked
+def cmd_status(_args):
+    pool = load_pool()
+    if not pool:
+        print("{}"); return
+    act = active_agents(pool)
+    out = {
+        "active_count": len(act), "max_agents": pool["max_agents"],
+        "min_agents": pool["min_agents"], "utilization": round(utilization(pool), 2),
+        "last_scale_event": pool.get("last_scale_event"),
+        "agents": pool["agents"],
+    }
+    print(json.dumps(out, indent=2))
+
+@locked
+def cmd_should_scale(_args):
+    pool = load_pool()
+    if not pool:
+        print("Pool not initialized.", file=sys.stderr); sys.exit(1)
+    util = utilization(pool)
+    cooldown = pool.get("cooldown_seconds", 30)
+    last = pool.get("last_scale_event")
+    cooled = True
+    if last:
+        elapsed = (datetime.now(timezone.utc) - datetime.fromisoformat(last)).total_seconds()
+        cooled = elapsed >= cooldown
+    if util >= pool["scale_up_threshold"] and cooled:
+        pool["last_scale_event"] = now_iso()
+        save_pool(pool)
+        act = len(active_agents(pool))
+        print(f"SCALE UP: utilization={util:.0%} ({act}/{pool['max_agents']})")
+        sys.exit(0)
+    elif util <= pool["scale_down_threshold"] and cooled:
+        act = len(active_agents(pool))
+        print(f"SCALE DOWN possible: utilization={util:.0%} ({act}/{pool['max_agents']})")
+        sys.exit(1)
+    else:
+        reason = "cooldown" if not cooled else f"utilization={util:.0%}"
+        print(f"No scaling: {reason}")
+        sys.exit(1)
+
+@locked
+def cmd_active(_args):
+    pool = load_pool()
+    if not pool:
+        return
+    for aid, info in active_agents(pool).items():
+        print(aid)
+
+def cmd_wait(_args):
+    timeout = 300
+    start = time.time()
+    while time.time() - start < timeout:
+        pool = load_pool()
+        if not pool:
+            print("Pool not initialized.", file=sys.stderr); sys.exit(1)
+        if len(active_agents(pool)) < pool["max_agents"]:
+            print("Slot available.")
+            return
+        time.sleep(2)
+    print("Timeout waiting for slot.", file=sys.stderr)
+    sys.exit(1)
+
+@locked
+def cmd_resize(args):
+    pool = load_pool()
+    if not pool:
+        print("Pool not initialized.", file=sys.stderr); sys.exit(1)
+    old = pool["max_agents"]
+    pool["max_agents"] = args.max
+    save_pool(pool)
+    print(f"Resized: {old} -> {args.max}")
+
+@locked
+def cmd_health_check(_args):
+    pool = load_pool()
+    if not pool:
+        print("Pool not initialized.", file=sys.stderr); sys.exit(1)
+    reaped = []
+    for aid, info in list(pool["agents"].items()):
+        if info["status"] != "active" or not info.get("pid"):
+            continue
+        try:
+            os.kill(info["pid"], 0)
+        except (ProcessLookupError, PermissionError):
+            info["status"] = "failed"
+            info["finished_at"] = now_iso()
+            reaped.append(aid)
+    save_pool(pool)
+    if reaped:
+        print(f"Reaped {len(reaped)} dead agent(s): {', '.join(reaped)}")
+    else:
+        print("All agents healthy.")
+
+def main():
+    p = argparse.ArgumentParser(prog="agent-pool", description="Auto-scaling agent pool manager")
+    sub = p.add_subparsers(dest="cmd")
+
+    sp = sub.add_parser("init")
+    sp.add_argument("--max", type=int, default=None)
+    sp.add_argument("--min", type=int, default=None)
+    sp.set_defaults(func=cmd_init)
+
+    sp = sub.add_parser("acquire")
+    sp.add_argument("agent_id")
+    sp.add_argument("type")
+    sp.add_argument("--pid", type=int, default=None)
+    sp.set_defaults(func=cmd_acquire)
+
+    sp = sub.add_parser("release")
+    sp.add_argument("agent_id")
+    sp.set_defaults(func=cmd_release)
+
+    sp = sub.add_parser("status")
+    sp.set_defaults(func=cmd_status)
+
+    sp = sub.add_parser("should-scale")
+    sp.set_defaults(func=cmd_should_scale)
+
+    sp = sub.add_parser("active")
+    sp.set_defaults(func=cmd_active)
+
+    sp = sub.add_parser("wait")
+    sp.set_defaults(func=cmd_wait)
+
+    sp = sub.add_parser("resize")
+    sp.add_argument("max", type=int)
+    sp.set_defaults(func=cmd_resize)
+
+    sp = sub.add_parser("health-check")
+    sp.set_defaults(func=cmd_health_check)
+
+    args = p.parse_args()
+    if not args.cmd:
+        p.print_help(); sys.exit(1)
+    args.func(args)
+
+if __name__ == "__main__":
+    main()

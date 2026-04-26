@@ -1,0 +1,257 @@
+#!/usr/bin/env bash
+# session-fork — Spawn parallel Claude sessions for independent sub-tasks
+# Each fork runs `claude -p` in a separate process with its own context.
+# Orchestrates dependency-ordered waves of parallel work.
+set -eo pipefail
+
+SELF="$0"
+if command -v readlink &>/dev/null; then
+  SELF="$(readlink -f "$0" 2>/dev/null || readlink "$0" 2>/dev/null || echo "$0")"
+fi
+PLUGIN_DIR="$(cd "$(dirname "$SELF")/.." && pwd)"
+WORK_DIR="${SUPERX_WORK_DIR:-$(pwd)}"
+MODEL="${SUPERX_MODEL:-claude-sonnet-4-6}"
+RESULTS_DIR="${SUPERX_FORK_DIR:-/tmp/superx-forks-$$}"
+MAX_PARALLEL="${SUPERX_MAX_PARALLEL:-10}"
+SM="$PLUGIN_DIR/bin/shared-memory"
+AP="$PLUGIN_DIR/bin/agent-pool"
+
+usage() {
+  cat <<'EOF'
+session-fork — Spawn parallel Claude sessions for independent sub-tasks
+
+Usage:
+  session-fork run <task-json>        Run tasks from JSON (stdin or file)
+  session-fork wave <wave-json>       Run a single wave of tasks
+  session-fork single <prompt>        Run a single forked session
+  session-fork status                 Show status of running forks
+  session-fork wait                   Wait for all forks to complete
+  session-fork results                Show results of completed forks
+
+Task JSON format (array of waves, each wave is array of tasks):
+  [
+    [{"id": "t1", "prompt": "..."}, {"id": "t2", "prompt": "..."}],
+    [{"id": "t3", "prompt": "...", "depends": ["t1"]}]
+  ]
+EOF
+}
+
+ensure_dirs() {
+  mkdir -p "$RESULTS_DIR/pids" "$RESULTS_DIR/outputs" "$RESULTS_DIR/status"
+}
+
+fork_one() {
+  local task_id="$1" prompt="$2" context="${3:-}"
+  ensure_dirs
+
+  local full_prompt="$prompt"
+  if [ -n "$context" ]; then
+    full_prompt="Context from prior tasks:
+$context
+
+Task: $prompt"
+  fi
+
+  if [ -x "$AP" ]; then
+    "$AP" acquire "$task_id" "fork" --pid $$ 2>/dev/null || true
+  fi
+
+  if [ -x "$SM" ]; then
+    "$SM" set "task_${task_id}_status" "running" --ns forks --agent "$task_id" 2>/dev/null || true
+  fi
+
+  (
+    cd "$WORK_DIR"
+    local output
+    output=$(claude -p "$full_prompt" --model "$MODEL" --output-format text 2>&1) || true
+    echo "$output" > "$RESULTS_DIR/outputs/${task_id}.txt"
+    echo "done" > "$RESULTS_DIR/status/${task_id}"
+
+    if [ -x "$SM" ]; then
+      "$SM" set "task_${task_id}_status" "done" --ns forks --agent "$task_id" 2>/dev/null || true
+      local summary
+      summary=$(echo "$output" | tail -5 | head -3)
+      "$SM" publish "fork_results" "${task_id}: ${summary}" 2>/dev/null || true
+    fi
+
+    if [ -x "$AP" ]; then
+      "$AP" release "$task_id" 2>/dev/null || true
+    fi
+  ) &
+
+  local pid=$!
+  echo "$pid" > "$RESULTS_DIR/pids/${task_id}"
+  echo "forked: $task_id (pid=$pid, model=$MODEL)"
+}
+
+cmd_single() {
+  local prompt="$*"
+  [ -z "$prompt" ] && { echo "Usage: session-fork single <prompt>"; return 1; }
+  local task_id="single-$$-$(date +%s)"
+  fork_one "$task_id" "$prompt"
+  wait
+  if [ -f "$RESULTS_DIR/outputs/${task_id}.txt" ]; then
+    cat "$RESULTS_DIR/outputs/${task_id}.txt"
+  fi
+}
+
+cmd_wave() {
+  local wave_json="$1"
+  [ -z "$wave_json" ] && { echo "Usage: session-fork wave <json-file-or-stdin>"; return 1; }
+
+  local tasks
+  if [ -f "$wave_json" ]; then
+    tasks=$(cat "$wave_json")
+  else
+    tasks="$wave_json"
+  fi
+
+  ensure_dirs
+  local count active=0
+  count=$(echo "$tasks" | python3 -c "import json,sys; print(len(json.load(sys.stdin)))" 2>/dev/null)
+  echo "wave: $count tasks, max_parallel=$MAX_PARALLEL"
+
+  echo "$tasks" | python3 -c "
+import json, sys
+tasks = json.load(sys.stdin)
+for t in tasks:
+    print(t['id'] + '|' + t['prompt'])
+" 2>/dev/null | while IFS='|' read -r tid tprompt; do
+    while [ "$active" -ge "$MAX_PARALLEL" ]; do
+      sleep 1
+      active=0
+      for pidfile in "$RESULTS_DIR/pids/"*; do
+        [ -f "$pidfile" ] || continue
+        local p
+        p=$(cat "$pidfile")
+        kill -0 "$p" 2>/dev/null && active=$((active + 1))
+      done
+    done
+    fork_one "$tid" "$tprompt"
+    active=$((active + 1))
+  done
+
+  echo "wave: waiting for all tasks..."
+  wait
+  echo "wave: complete"
+}
+
+cmd_run() {
+  local input="$1"
+  local waves
+  if [ -f "$input" ]; then
+    waves=$(cat "$input")
+  elif [ -n "$input" ]; then
+    waves="$input"
+  else
+    waves=$(cat)
+  fi
+
+  ensure_dirs
+  local wave_count
+  wave_count=$(echo "$waves" | python3 -c "import json,sys; print(len(json.load(sys.stdin)))" 2>/dev/null)
+  echo "run: $wave_count wave(s)"
+
+  echo "$waves" | python3 -c "
+import json, sys
+waves = json.load(sys.stdin)
+for i, wave in enumerate(waves):
+    for task in wave:
+        dep_results = ''
+        for dep in task.get('depends', []):
+            dep_results += f'dep:{dep}|'
+        print(f'{i}|{task[\"id\"]}|{task[\"prompt\"]}|{dep_results}')
+" 2>/dev/null | {
+    current_wave=-1
+    while IFS='|' read -r widx tid tprompt tdeps; do
+      if [ "$widx" -ne "$current_wave" ]; then
+        if [ "$current_wave" -ge 0 ]; then
+          echo "run: waiting for wave $current_wave..."
+          wait
+          echo "run: wave $current_wave complete"
+        fi
+        current_wave=$widx
+        echo "run: starting wave $widx"
+      fi
+
+      local context=""
+      if [ -n "$tdeps" ]; then
+        for dep in $(echo "$tdeps" | tr '|' '\n' | grep "^dep:" | sed 's/^dep://'); do
+          if [ -f "$RESULTS_DIR/outputs/${dep}.txt" ]; then
+            context="${context}
+--- Result from $dep ---
+$(tail -20 "$RESULTS_DIR/outputs/${dep}.txt")
+---
+"
+          fi
+        done
+      fi
+
+      fork_one "$tid" "$tprompt" "$context"
+    done
+
+    if [ "$current_wave" -ge 0 ]; then
+      echo "run: waiting for wave $current_wave..."
+      wait
+      echo "run: wave $current_wave complete"
+    fi
+  }
+
+  echo "run: all waves complete"
+}
+
+cmd_status() {
+  ensure_dirs
+  local running=0 done_count=0 failed=0
+  for pidfile in "$RESULTS_DIR/pids/"*; do
+    [ -f "$pidfile" ] || continue
+    local tid
+    tid=$(basename "$pidfile")
+    local p
+    p=$(cat "$pidfile")
+    if [ -f "$RESULTS_DIR/status/$tid" ]; then
+      done_count=$((done_count + 1))
+      echo "  done: $tid"
+    elif kill -0 "$p" 2>/dev/null; then
+      running=$((running + 1))
+      echo "  running: $tid (pid=$p)"
+    else
+      failed=$((failed + 1))
+      echo "  failed: $tid (pid=$p exited)"
+    fi
+  done
+  echo "total: ${running} running, ${done_count} done, ${failed} failed"
+}
+
+cmd_wait() {
+  ensure_dirs
+  for pidfile in "$RESULTS_DIR/pids/"*; do
+    [ -f "$pidfile" ] || continue
+    local p
+    p=$(cat "$pidfile")
+    wait "$p" 2>/dev/null || true
+  done
+  echo "all forks complete"
+}
+
+cmd_results() {
+  ensure_dirs
+  for output in "$RESULTS_DIR/outputs/"*.txt; do
+    [ -f "$output" ] || continue
+    local tid
+    tid=$(basename "$output" .txt)
+    echo "=== $tid ==="
+    cat "$output"
+    echo ""
+  done
+}
+
+case "${1:-}" in
+  run)      shift; cmd_run "${1:-}" ;;
+  wave)     shift; cmd_wave "${1:-}" ;;
+  single)   shift; cmd_single "$@" ;;
+  status)   cmd_status ;;
+  wait)     cmd_wait ;;
+  results)  cmd_results ;;
+  *)        usage ;;
+esac

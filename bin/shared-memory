@@ -1,0 +1,308 @@
+#!/usr/bin/env python3
+"""shared-memory — SQLite-based shared memory for superx parallel agents.
+
+Replaces file-based state sharing. Concurrent-safe via SQLite WAL mode.
+Agents call this CLI to read/write shared state during parallel execution.
+
+Usage:
+  shared-memory init                          Create/reset the database
+  shared-memory set <key> <value> [--ns <namespace>] [--ttl <seconds>]
+  shared-memory get <key> [--ns <namespace>]
+  shared-memory get-all [--ns <namespace>]
+  shared-memory delete <key> [--ns <namespace>]
+  shared-memory lock <key> [--timeout <seconds>]
+  shared-memory unlock <key>
+  shared-memory publish <channel> <message>   Publish to a channel
+  shared-memory subscribe <channel>           Read latest from channel
+  shared-memory stats                         Show memory stats
+  shared-memory cleanup                       Remove expired entries
+"""
+
+import json
+import os
+import sqlite3
+import sys
+import time
+from pathlib import Path
+
+DB_PATH = os.environ.get("SUPERX_MEMORY_DB", str(Path.home() / ".superx" / "shared-memory.db"))
+
+
+def get_db():
+    Path(DB_PATH).parent.mkdir(parents=True, exist_ok=True)
+    conn = sqlite3.connect(DB_PATH, timeout=10)
+    conn.execute("PRAGMA journal_mode=WAL")
+    conn.execute("PRAGMA busy_timeout=5000")
+    return conn
+
+
+def cmd_init():
+    conn = get_db()
+    conn.executescript("""
+        CREATE TABLE IF NOT EXISTS memory (
+            key TEXT NOT NULL,
+            value TEXT,
+            namespace TEXT NOT NULL DEFAULT 'global',
+            created_at REAL NOT NULL,
+            updated_at REAL NOT NULL,
+            expires_at REAL,
+            agent_id TEXT,
+            PRIMARY KEY (key, namespace)
+        );
+        CREATE INDEX IF NOT EXISTS idx_memory_ns ON memory(namespace);
+        CREATE INDEX IF NOT EXISTS idx_memory_expires ON memory(expires_at);
+
+        CREATE TABLE IF NOT EXISTS locks (
+            key TEXT PRIMARY KEY,
+            owner TEXT NOT NULL,
+            acquired_at REAL NOT NULL,
+            expires_at REAL NOT NULL
+        );
+        CREATE INDEX IF NOT EXISTS idx_locks_expires ON locks(expires_at);
+
+        CREATE TABLE IF NOT EXISTS messages (
+            id INTEGER PRIMARY KEY AUTOINCREMENT,
+            channel TEXT NOT NULL,
+            message TEXT NOT NULL,
+            sender TEXT,
+            created_at REAL NOT NULL
+        );
+        CREATE INDEX IF NOT EXISTS idx_messages_channel ON messages(channel, created_at);
+    """)
+    conn.close()
+    print("ok: database initialized")
+
+
+def cmd_set(args):
+    key = args[0]
+    value = args[1]
+    ns = get_flag(args, "--ns", "global")
+    ttl = get_flag(args, "--ttl")
+    agent = get_flag(args, "--agent")
+    now = time.time()
+    expires = now + float(ttl) if ttl else None
+
+    conn = get_db()
+    conn.execute("BEGIN IMMEDIATE")
+    conn.execute(
+        """INSERT INTO memory (key, value, namespace, created_at, updated_at, expires_at, agent_id)
+           VALUES (?, ?, ?, ?, ?, ?, ?)
+           ON CONFLICT(key, namespace) DO UPDATE SET
+             value=excluded.value, updated_at=excluded.updated_at,
+             expires_at=excluded.expires_at, agent_id=excluded.agent_id""",
+        (key, value, ns, now, now, expires, agent),
+    )
+    conn.commit()
+    conn.close()
+    print(f"ok: {ns}/{key}")
+
+
+def cmd_get(args):
+    key = args[0]
+    ns = get_flag(args, "--ns", "global")
+    now = time.time()
+
+    conn = get_db()
+    row = conn.execute(
+        "SELECT value FROM memory WHERE key=? AND namespace=? AND (expires_at IS NULL OR expires_at>?)",
+        (key, ns, now),
+    ).fetchone()
+    conn.close()
+
+    if row is None:
+        print(f"not found: {ns}/{key}", file=sys.stderr)
+        sys.exit(1)
+    print(row[0])
+
+
+def cmd_get_all(args):
+    ns = get_flag(args, "--ns", "global")
+    now = time.time()
+
+    conn = get_db()
+    rows = conn.execute(
+        "SELECT key, value FROM memory WHERE namespace=? AND (expires_at IS NULL OR expires_at>?)",
+        (ns, now),
+    ).fetchall()
+    conn.close()
+
+    print(json.dumps({k: v for k, v in rows}))
+
+
+def cmd_delete(args):
+    key = args[0]
+    ns = get_flag(args, "--ns", "global")
+
+    conn = get_db()
+    conn.execute("BEGIN IMMEDIATE")
+    cur = conn.execute("DELETE FROM memory WHERE key=? AND namespace=?", (key, ns))
+    conn.commit()
+    conn.close()
+
+    if cur.rowcount == 0:
+        print(f"not found: {ns}/{key}", file=sys.stderr)
+        sys.exit(1)
+    print(f"ok: deleted {ns}/{key}")
+
+
+def cmd_lock(args):
+    key = args[0]
+    timeout = float(get_flag(args, "--timeout", "30"))
+    owner = os.environ.get("SUPERX_AGENT_ID", f"pid-{os.getpid()}")
+    now = time.time()
+    stale = now - 60  # auto-expire locks older than 60s
+
+    conn = get_db()
+    conn.execute("BEGIN IMMEDIATE")
+    # purge stale locks
+    conn.execute("DELETE FROM locks WHERE expires_at < ?", (now,))
+    conn.execute("DELETE FROM locks WHERE acquired_at < ?", (stale,))
+
+    existing = conn.execute("SELECT owner FROM locks WHERE key=?", (key,)).fetchone()
+    if existing:
+        conn.rollback()
+        conn.close()
+        print(f"lock conflict: {key} held by {existing[0]}", file=sys.stderr)
+        sys.exit(2)
+
+    conn.execute(
+        "INSERT INTO locks (key, owner, acquired_at, expires_at) VALUES (?, ?, ?, ?)",
+        (key, owner, now, now + timeout),
+    )
+    conn.commit()
+    conn.close()
+    print(f"ok: locked {key} by {owner}")
+
+
+def cmd_unlock(args):
+    key = args[0]
+
+    conn = get_db()
+    conn.execute("BEGIN IMMEDIATE")
+    cur = conn.execute("DELETE FROM locks WHERE key=?", (key,))
+    conn.commit()
+    conn.close()
+
+    if cur.rowcount == 0:
+        print(f"not found: lock {key}", file=sys.stderr)
+        sys.exit(1)
+    print(f"ok: unlocked {key}")
+
+
+def cmd_publish(args):
+    channel = args[0]
+    message = args[1]
+    sender = os.environ.get("SUPERX_AGENT_ID")
+    now = time.time()
+
+    conn = get_db()
+    conn.execute("BEGIN IMMEDIATE")
+    conn.execute(
+        "INSERT INTO messages (channel, message, sender, created_at) VALUES (?, ?, ?, ?)",
+        (channel, message, sender, now),
+    )
+    conn.commit()
+    conn.close()
+    print(f"ok: published to {channel}")
+
+
+def cmd_subscribe(args):
+    channel = args[0]
+    limit = int(get_flag(args, "--limit", "10"))
+
+    conn = get_db()
+    rows = conn.execute(
+        "SELECT id, message, sender, created_at FROM messages WHERE channel=? ORDER BY created_at DESC LIMIT ?",
+        (channel, limit),
+    ).fetchall()
+    conn.close()
+
+    msgs = [
+        {"id": r[0], "message": r[1], "sender": r[2], "created_at": r[3]}
+        for r in reversed(rows)
+    ]
+    print(json.dumps(msgs))
+
+
+def cmd_stats():
+    conn = get_db()
+    now = time.time()
+    keys = conn.execute(
+        "SELECT COUNT(*) FROM memory WHERE expires_at IS NULL OR expires_at>?", (now,)
+    ).fetchone()[0]
+    expired = conn.execute(
+        "SELECT COUNT(*) FROM memory WHERE expires_at IS NOT NULL AND expires_at<=?", (now,)
+    ).fetchone()[0]
+    locks = conn.execute("SELECT COUNT(*) FROM locks").fetchone()[0]
+    msgs = conn.execute("SELECT COUNT(*) FROM messages").fetchone()[0]
+    conn.close()
+
+    db_size = os.path.getsize(DB_PATH) if os.path.exists(DB_PATH) else 0
+    print(json.dumps({
+        "keys": keys,
+        "expired_keys": expired,
+        "locks": locks,
+        "messages": msgs,
+        "db_size_bytes": db_size,
+        "db_path": DB_PATH,
+    }))
+
+
+def cmd_cleanup():
+    now = time.time()
+    stale = now - 60
+
+    conn = get_db()
+    conn.execute("BEGIN IMMEDIATE")
+    r1 = conn.execute(
+        "DELETE FROM memory WHERE expires_at IS NOT NULL AND expires_at<=?", (now,)
+    )
+    r2 = conn.execute("DELETE FROM locks WHERE expires_at < ?", (now,))
+    r3 = conn.execute("DELETE FROM locks WHERE acquired_at < ?", (stale,))
+    conn.commit()
+    conn.close()
+    print(f"ok: removed {r1.rowcount} expired keys, {r2.rowcount + r3.rowcount} stale locks")
+
+
+def get_flag(args, flag, default=None):
+    try:
+        idx = args.index(flag)
+        return args[idx + 1]
+    except (ValueError, IndexError):
+        return default
+
+
+def die(msg):
+    print(f"error: {msg}", file=sys.stderr)
+    sys.exit(3)
+
+
+COMMANDS = {
+    "init": (cmd_init, 0), "set": (cmd_set, 2), "get": (cmd_get, 1),
+    "get-all": (cmd_get_all, 0), "delete": (cmd_delete, 1),
+    "lock": (cmd_lock, 1), "unlock": (cmd_unlock, 1),
+    "publish": (cmd_publish, 2), "subscribe": (cmd_subscribe, 1),
+    "stats": (cmd_stats, 0), "cleanup": (cmd_cleanup, 0),
+}
+
+
+def main():
+    if len(sys.argv) < 2:
+        print(__doc__.strip())
+        sys.exit(3)
+    cmd, args = sys.argv[1], sys.argv[2:]
+    if cmd not in COMMANDS:
+        die(f"unknown command: {cmd}")
+    fn, min_args = COMMANDS[cmd]
+    if len(args) < min_args:
+        die(f"usage: shared-memory {cmd} requires {min_args} arg(s)")
+    try:
+        fn(args) if min_args > 0 else fn()
+    except sqlite3.Error as e:
+        die(f"sqlite: {e}")
+    except Exception as e:
+        die(str(e))
+
+
+if __name__ == "__main__":
+    main()

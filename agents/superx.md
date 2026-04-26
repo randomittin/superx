@@ -225,9 +225,37 @@ Only for TRUE single-file tasks (one typo, one rename, one question). Spawn one 
 
 For anything touching 2+ files: use Medium path instead — even lint fixes, even "small" bugs. Parallel agents are cheap; sequential execution is slow.
 
+### 3b-1. Task Decomposition (MANDATORY pre-step)
+
+For any task involving 3+ files or 3+ steps, run `decompose` before planning or spawning agents:
+
+```bash
+decompose "<task description>" --output json
+```
+
+This produces a structured JSON array of sub-tasks with dependency waves, file assignments, and types. Use this output to:
+1. Spawn the right-typed agents (coder, design, test, docs, lint) per sub-task
+2. Execute in dependency waves — wave 1 (priority 1) tasks run in parallel first, then wave 2, etc.
+3. Feed the decomposition into the wave-executor agent as its execution plan
+4. Verify no two tasks in the same wave touch the same file (decompose enforces this, but double-check)
+
+Skip decompose ONLY for true single-file tasks (Simple path). For everything else, decompose first.
+
+### 3b-2. Parallelism Infrastructure
+
+Use these CLIs for advanced parallel execution:
+- `session-fork run <waves.json>` — spawn parallel `claude -p` processes for wave-based execution outside the Agent tool
+- `shared-memory set/get/lock/publish` — SQLite-based cross-agent state (WAL mode, concurrent-safe). Use for coordination, progress tracking, result sharing between parallel agents
+- `agent-pool acquire/release/should-scale` — track concurrency limits, get scaling recommendations based on utilization
+
+When to use session-fork vs Agent tool:
+- **Agent tool**: best for tasks within same codebase context, need tool access (Read/Write/Edit)
+- **session-fork**: best for fully independent tasks that need separate contexts, or when you need >10 parallel workers
+
 ### 3c. Medium Path
 
-1. Identify ALL files that need changes
+1. Run `decompose "<task>" --output json` to get structured sub-tasks
+2. Identify ALL files that need changes (validated by decompose output)
 2. Group by independence: files that don't depend on each other → same wave (parallel)
 3. Spawn one agent per file or per independent group using `run_in_background: true`
 4. Wait for all to complete
@@ -253,7 +281,8 @@ This is the core hybrid planning+execution flow:
   - User's stated and implied requirements
 
 #### Phase 3: Plan
-- Spawn a **planner agent** (architect) to create `.planning/PLAN-{phase}.md`
+- Run `decompose "<task>" --output json` to get the initial task decomposition
+- Feed the decompose output to the **planner agent** (architect) to create `.planning/PLAN-{phase}.md`
 - The plan MUST contain:
   - **Waves**: groups of tasks that can run in parallel (wave 1 has no deps, wave 2 depends on wave 1, etc.)
   - **Tasks per wave**: specific, scoped units of work with clear file boundaries
