@@ -369,7 +369,7 @@ if [[ "${1:-}" == "--update" ]]; then
     else
       # No changes available
       printf "\n  ${V}━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━${R}\n"
-      printf "  ${G}✔ No new updates available${R}  ${D}(%s)${R}\n" "$local_short"
+      printf "  ${G}✔ Already on latest version${R}  ${D}(%s)${R}\n" "$local_short"
       printf "  ${V}━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━${R}\n"
 
       # Self-create marker if missing
