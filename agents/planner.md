@@ -11,12 +11,43 @@ color: blue
 
 You create verified execution plans with acceptance criteria that block progression.
 
+## Task Decomposition (MANDATORY for complex tasks)
+
+Before manually decomposing work or spawning agents for any task involving 3+ files or 3+ steps, **always run `decompose` first**:
+
+```bash
+# Text output for human review
+decompose "<task description>"
+
+# JSON output for agent consumption
+decompose --output json "<task description>"
+
+# With file context for better decomposition
+decompose --context src/schema.ts --context src/api.ts "<task description>"
+```
+
+**Decomposition rules:**
+1. Run `decompose` BEFORE writing any plan — it produces the wave structure
+2. Use the decompose output as the skeleton for your plan, then enrich with acceptance criteria
+3. Group tasks into dependency waves — wave 1 has no deps, wave 2 depends on wave 1, etc.
+4. **NEVER assign two agents to the same file** — this causes merge conflicts when agents run in parallel
+5. Verify wave dependencies before proceeding to the next wave — all tasks in wave N must complete before wave N+1 starts
+6. If decompose output has >10 tasks per wave, split into sub-waves (1a, 1b) executed sequentially
+
+**Decomposition-to-plan flow:**
+1. Run `decompose --output json "<task>"` to get structured sub-tasks
+2. Validate: no two tasks in the same wave touch the same file
+3. Enrich each task with acceptance criteria (grep-verifiable or command-runnable)
+4. Assign model tiers per the Model & Effort table below
+5. Write the final plan to `.planning/PLAN-{phase}.md`
+
 ## Planning Process
 
 1. Read `.planning/REQUIREMENTS.md` and `.planning/CONTEXT.md`
-2. Decompose into tasks with explicit dependencies
-3. Group into parallel waves (independent tasks = same wave)
-4. Every task MUST have acceptance criteria that are grep-verifiable or command-runnable
+2. Run `decompose` to get the initial task breakdown and wave structure
+3. Validate and enrich the decomposition with acceptance criteria
+4. Group into parallel waves (independent tasks = same wave)
+5. Every task MUST have acceptance criteria that are grep-verifiable or command-runnable
 
 ## Task Specification Format
 

@@ -1,0 +1,75 @@
+#!/usr/bin/env bash
+# decompose — Break tasks into dependency-ordered parallel sub-tasks
+# Uses Claude to analyze task and output a structured decomposition.
+set -eo pipefail
+
+SELF="$0"
+if command -v readlink &>/dev/null; then
+  SELF="$(readlink -f "$0" 2>/dev/null || readlink "$0" 2>/dev/null || echo "$0")"
+fi
+PLUGIN_DIR="$(cd "$(dirname "$SELF")/.." && pwd)"
+
+usage() {
+  cat <<'EOF'
+decompose — Break tasks into dependency-ordered parallel sub-tasks
+
+Usage:
+  decompose "<task description>"              Decompose into sub-tasks
+  decompose --context <file> "<task>"         Include file context
+  decompose --max-agents <n> "<task>"         Limit parallel agents (default: 10)
+  decompose --output json "<task>"            Output as JSON (default: text)
+EOF
+}
+
+# Parse args
+MAX_AGENTS=10
+CONTEXT_FILES=""
+OUTPUT_FORMAT="text"
+while [[ $# -gt 0 ]]; do
+  case "$1" in
+    --context) CONTEXT_FILES="$CONTEXT_FILES $2"; shift 2 ;;
+    --max-agents) MAX_AGENTS="$2"; shift 2 ;;
+    --output) OUTPUT_FORMAT="$2"; shift 2 ;;
+    --help|-h) usage; exit 0 ;;
+    *) TASK="$1"; shift ;;
+  esac
+done
+
+[ -z "${TASK:-}" ] && { usage; exit 1; }
+
+# Build context from files
+CONTEXT=""
+for f in $CONTEXT_FILES; do
+  [ -f "$f" ] && CONTEXT="$CONTEXT\n--- File: $f ---\n$(head -100 "$f")\n"
+done
+
+# Build decomposition prompt
+if [ "$OUTPUT_FORMAT" = "json" ]; then
+  FORMAT_INSTRUCTION='Output ONLY valid JSON array. Each element: {"id": "task-N", "name": "short name", "description": "what to do", "type": "coder|design|test|docs|lint", "dependencies": ["task-N"], "files": ["path/to/file"], "priority": 1-3, "estimated_complexity": "low|medium|high"}. Group independent tasks in same priority level for parallel execution.'
+else
+  FORMAT_INSTRUCTION='Output a structured plan with waves. Wave 1 = no dependencies (all parallel). Wave 2 = depends on wave 1. Etc. Format:
+## Wave 1 (parallel)
+- [task-1] (type: coder) description... | files: path/to/file
+- [task-2] (type: design) description... | files: path/to/file
+## Wave 2 (after wave 1)
+- [task-3] (type: test, depends: task-1) description...'
+fi
+
+PROMPT="You are a task decomposition engine for a parallel agent system.
+
+TASK: $TASK
+
+CONSTRAINTS:
+- Maximum $MAX_AGENTS parallel agents per wave
+- Each sub-task must be completable by a single agent
+- Minimize dependencies between tasks — maximize parallelism
+- Each task should specify: type (coder/design/test/docs/lint), files it touches, dependencies
+- NEVER create tasks that modify the same file — that causes merge conflicts
+- Group independent tasks into the same wave for parallel execution
+- Be specific about what each task does — no vague descriptions
+${CONTEXT:+\nCONTEXT:\n$CONTEXT}
+
+$FORMAT_INSTRUCTION"
+
+# Call Claude for decomposition
+claude -p "$PROMPT" --model claude-sonnet-4-6 2>/dev/null

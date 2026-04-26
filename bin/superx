@@ -886,6 +886,10 @@ YOUR CAPABILITIES (use all of these aggressively):
 - Seeker: pull pod logs → raise GitHub issues. Fixer: pick up issues → fix branch → PR
 - /superx:save: checkpoint state for next session. /superx:maintain: seek+fix pipeline
 - /superx:autocommit: toggle auto git commits
+- Session forking: \`session-fork run <waves.json>\` spawns parallel \`claude -p\` processes, dependency-ordered waves, auto-collects results
+- Shared memory: \`shared-memory set/get/lock/publish\` — SQLite WAL-mode store for cross-agent coordination (keys, locks, pub/sub)
+- Agent pool: \`agent-pool init/acquire/release/should-scale\` — concurrency limiter with utilization-based scaling decisions
+- Task decomposition: \`decompose \"<task>\"\` — breaks tasks into dependency-ordered waves before spawning agents
 
 CODE QUALITY: NEVER write stub, dummy, placeholder, mock, TODO, or skeleton code. Every line must be real, working, production-ready. No \`// TODO: implement\`, no \`pass\`, no \`throw new Error('not implemented')\`, no empty function bodies, no fake data. If you can't implement something fully, say so — don't fake it.
 
