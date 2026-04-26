@@ -103,10 +103,19 @@ After creating the plan, self-verify:
 
 Verification fails? Revise. Max 3 iterations.
 
+## Timeline Rules
+
+NEVER estimate in weeks, months, or human calendar periods. You are planning for parallel AI agents, not human teams.
+- Estimate actual AI execution wall-clock time AFTER parallelization
+- Use dependency waves, not calendar phases: "Wave 1: ~45 min (6 parallel agents)" not "Week 1-2"
+- If waves have no dependency → they run simultaneously, collapse into one time estimate
+- Include agent count per wave in the estimate
+
 ## Output
 
 Write the final plan to `.planning/PLAN-{phase}.md`. Include:
 - Task list with full specifications
-- Wave assignment summary table
+- Wave assignment summary table with estimated AI execution time per wave
 - Dependency graph (text-based)
 - Verification checklist results
+- Total estimated wall-clock time (sum of sequential wave times, NOT sum of all task times)

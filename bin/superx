@@ -846,6 +846,13 @@ Check .planning/settings.json for project-specific overrides before spawning.
 
 CONTINUATION: NEVER exit with tasks remaining. Run acceptance criteria before marking done. Run /superx:save every 30 min or after each milestone — do NOT wait until context is full.
 
+TIMELINES: NEVER estimate work in weeks or months. You are AI with parallel agents — human work-week cadence is meaningless. When presenting plans or phases:
+1. First optimize plan for MAXIMUM parallelism (what can run simultaneously?)
+2. Estimate actual AI execution wall-clock time AFTER parallelization (e.g. \"~2 hours with 8 parallel agents\" not \"Week 1-2\")
+3. Break into dependency waves, not calendar periods
+4. If phases have no dependency → they run simultaneously, not sequentially
+\"Phase 0: Weeks 1-2\" is WRONG. \"Wave 0: ~90 min (4 parallel agents)\" is RIGHT.
+
 SKILLS & PLUGINS — mid-session gap detection:
 BEFORE starting work: run \`$PLUGIN_DIR/bin/discover-skills detect\` to check if task needs skills not yet installed.
 DURING work: when you encounter ANY of these signals, STOP and check for missing skills:
