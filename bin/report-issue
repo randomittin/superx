@@ -1,0 +1,138 @@
+#!/usr/bin/env bash
+# report-issue — file a GitHub issue against the superx plugin repo.
+#
+# Usage:
+#   report-issue --title "..." --body-file <path> [--kind bug|feature|docs|question]
+#                                                 [--label <extra-label>]...
+#                                                 [--repo owner/name]
+#
+# The repo slug defaults to the `origin` remote of $CLAUDE_PLUGIN_ROOT (the
+# superx plugin checkout). Auto-prepends an "## Environment" section with
+# plugin SHA, OS, kernel, recent commits, and (if cwd is in a git repo)
+# the files modified in the current working directory.
+#
+# Requires `gh auth status` to succeed.
+
+set -euo pipefail
+
+PLUGIN_ROOT="${CLAUDE_PLUGIN_ROOT:-$(cd "$(dirname "$0")/.." && pwd)}"
+
+TITLE=""
+BODY_FILE=""
+KIND="bug"
+EXTRA_LABELS=()
+REPO_OVERRIDE=""
+
+while [ $# -gt 0 ]; do
+  case "$1" in
+    --title)      TITLE="$2"; shift 2 ;;
+    --body-file)  BODY_FILE="$2"; shift 2 ;;
+    --kind)       KIND="$2"; shift 2 ;;
+    --label)      EXTRA_LABELS+=("$2"); shift 2 ;;
+    --repo)       REPO_OVERRIDE="$2"; shift 2 ;;
+    -h|--help)
+      sed -n '2,15p' "$0"; exit 0 ;;
+    *)
+      echo "unknown arg: $1" >&2; exit 2 ;;
+  esac
+done
+
+if [ -z "$TITLE" ] || [ -z "$BODY_FILE" ]; then
+  echo "error: --title and --body-file are required" >&2
+  exit 2
+fi
+if [ ! -f "$BODY_FILE" ]; then
+  echo "error: body file not found: $BODY_FILE" >&2
+  exit 2
+fi
+
+# Validate kind
+case "$KIND" in
+  bug|feature|docs|question|enhancement) ;;
+  *) echo "error: --kind must be one of: bug feature docs question enhancement" >&2; exit 2 ;;
+esac
+
+# Resolve target repo slug
+if [ -n "$REPO_OVERRIDE" ]; then
+  REPO="$REPO_OVERRIDE"
+else
+  REMOTE_URL=$(git -C "$PLUGIN_ROOT" remote get-url origin 2>/dev/null || true)
+  if [ -z "$REMOTE_URL" ]; then
+    echo "error: could not resolve plugin origin remote (set --repo or CLAUDE_PLUGIN_ROOT)" >&2
+    exit 1
+  fi
+  REPO=$(echo "$REMOTE_URL" | sed -E 's|.*github\.com[:/]([^/]+/[^/.]+).*|\1|')
+  if [ -z "$REPO" ] || [ "$REPO" = "$REMOTE_URL" ]; then
+    echo "error: could not parse owner/name from remote: $REMOTE_URL" >&2
+    exit 1
+  fi
+fi
+
+# Build environment section
+PLUGIN_SHA=$(git -C "$PLUGIN_ROOT" rev-parse --short HEAD 2>/dev/null || echo unknown)
+PLUGIN_BRANCH=$(git -C "$PLUGIN_ROOT" symbolic-ref --short HEAD 2>/dev/null || echo detached)
+RECENT_COMMITS=$(git -C "$PLUGIN_ROOT" log --oneline -5 2>/dev/null || echo "(no log)")
+OS=$(uname -s)
+KERNEL=$(uname -r)
+ARCH=$(uname -m)
+SESSION_ID="${CLAUDE_SESSION_ID:-unknown}"
+CC_VERSION=$(claude --version 2>/dev/null | head -1 || echo "unknown")
+DATE=$(date -u +%Y-%m-%dT%H:%M:%SZ)
+
+# Files modified in the current working directory's git repo, if any
+CWD_DIRTY=""
+if git rev-parse --git-dir >/dev/null 2>&1; then
+  DIRTY_FILES=$(git status --porcelain 2>/dev/null | head -20)
+  if [ -n "$DIRTY_FILES" ]; then
+    CWD_DIRTY=$'\n## Files modified in cwd ('$(git rev-parse --show-toplevel)$')\n```\n'"$DIRTY_FILES"$'\n```\n'
+  fi
+fi
+
+# Compose final body: user body + environment block
+FINAL=$(mktemp)
+trap 'rm -f "$FINAL"' EXIT
+
+cat "$BODY_FILE" > "$FINAL"
+cat >> "$FINAL" <<EOF
+
+---
+
+## Environment
+- **Plugin**: \`$REPO\` @ \`$PLUGIN_SHA\` (branch \`$PLUGIN_BRANCH\`)
+- **OS**: $OS $KERNEL ($ARCH)
+- **Claude Code**: $CC_VERSION
+- **Session**: \`$SESSION_ID\`
+- **Reported**: $DATE
+
+## Recent plugin commits
+\`\`\`
+$RECENT_COMMITS
+\`\`\`
+$CWD_DIRTY
+EOF
+
+# Pick labels
+LABELS=("$KIND")
+if [ "$KIND" = "feature" ] || [ "$KIND" = "enhancement" ]; then
+  LABELS=("enhancement")
+fi
+for l in "${EXTRA_LABELS[@]:-}"; do
+  [ -n "$l" ] && LABELS+=("$l")
+done
+LABEL_CSV=$(IFS=,; echo "${LABELS[*]}")
+
+# Make sure each label exists, create missing ones quietly
+for l in "${LABELS[@]}"; do
+  gh label list --repo "$REPO" --limit 200 2>/dev/null | awk '{print $1}' | grep -qx "$l" || \
+    gh label create "$l" --repo "$REPO" --color "ededed" >/dev/null 2>&1 || true
+done
+
+# Verify auth
+if ! gh auth status >/dev/null 2>&1; then
+  echo "error: gh not authenticated. Run: gh auth login" >&2
+  exit 1
+fi
+
+# Create issue
+URL=$(gh issue create --repo "$REPO" --title "$TITLE" --body-file "$FINAL" --label "$LABEL_CSV")
+echo "$URL"
