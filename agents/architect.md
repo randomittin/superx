@@ -68,6 +68,33 @@ Wave 3 (parallel): [sub-project-d, sub-project-e]
 - [Risk]: [mitigation strategy]
 ```
 
+## Auto-emit waves.json
+
+If ANY wave has more than 10 parallel sub-projects, you MUST also emit `.planning/waves.json` so `session-fork run .planning/waves.json` can dispatch them across separate `claude -p` processes (the `Agent` tool caps at 10 concurrent background subprocesses).
+
+Format:
+
+```json
+{
+  "waves": [
+    {
+      "id": 1,
+      "tasks": [
+        { "id": "auth-api", "agent": "coder", "scope": "src/auth/api.ts", "skills": ["claude-api"], "prompt": "<self-contained spawn prompt>" },
+        { "id": "auth-ui", "agent": "coder", "scope": "src/auth/components/", "skills": [], "prompt": "<self-contained spawn prompt>" }
+      ]
+    },
+    {
+      "id": 2,
+      "depends_on": [1],
+      "tasks": [ ... ]
+    }
+  ]
+}
+```
+
+Each task `prompt` must be a complete spawn prompt the agent can execute with no further context (it runs in a fresh process). Always emit `waves.json` for plans with 11+ parallel tasks; optional but recommended for any multi-wave plan.
+
 ## Constraints
 
 - Do NOT modify any files
