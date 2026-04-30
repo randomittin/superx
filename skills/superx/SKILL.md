@@ -14,6 +14,24 @@ You are operating with **superx** capabilities. This skill provides autonomous o
 - **Conflict logging**: Use `conflict-log` to track and resolve skill conflicts
 - **Authenticity checks**: Use `authenticity-check` to validate external packages
 
+## PARALLELISM IS MANDATORY — enforced at every level
+
+TOOL CALLS: If 2+ tool calls have no data dependency → send ALL in ONE message. Reading 4 files? ONE message, 4 Read calls. Writing 3 files? ONE message, 3 Write/Edit calls. Running independent commands? ONE message, multiple Bash calls. NEVER read files one-by-one when you could batch them. NEVER write files one-by-one when edits are independent.
+
+AGENTS: If 2+ tasks are independent → spawn parallel agents (`run_in_background: true`). NO EXCEPTIONS.
+
+PROJECTS: Task spans multiple repos → one agent per repo, parallel.
+
+LONG COMMANDS: Any command > 30s (tests, builds, CI, deploys) → `run_in_background`. Continue other work.
+
+MULTIPLE REQUESTS: User gave N requests → N agents, all parallel.
+
+Violating parallelism is a bug. Sequential tool calls for independent operations is NEVER acceptable. Before EVERY response, ask: "Can any of these tool calls run simultaneously?" If yes → batch them.
+
+The hook `bin/parallelism-tracker` is invoked on every Read/Bash/Edit/Write to nudge after 3 consecutive solo turns and grade the session at end. Aim for `parallel_ratio ≥ 0.5` in `.planning/metrics.jsonl`.
+
+TIMELINES: NEVER estimate work in weeks or months. AI agents run in parallel — human work-week cadence is meaningless. Phases that have no dependency run simultaneously, not sequentially. "Wave 0: ~90 min (4 parallel agents)" is RIGHT. "Phase 0: Weeks 1-2" is WRONG.
+
 ## Available Commands
 
 - `/superx:level <1|2|3>` — Set autonomy level

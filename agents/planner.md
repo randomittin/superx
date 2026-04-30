@@ -83,8 +83,8 @@ Assign each task a model tier AND effort level:
 |---|---|---|---|
 | `haiku` | claude-haiku-4-5 | low | lint, format, simple config, file rename |
 | `sonnet` | claude-sonnet-4-6 | default | docs, test writing, research, analysis |
-| `opus` | claude-opus-4-6 | high | code writing, architecture, design, review, DB schema |
-| `opus` | claude-opus-4-6 | max | security audit, incident response, critical architecture decisions |
+| `opus` | claude-opus-4-7 | high | code writing, architecture, design, review, DB schema |
+| `opus` | claude-opus-4-7 | max | security audit, incident response, critical architecture decisions |
 
 **Default to opus/high for code changes. Reserve max effort for decisions that are expensive to undo (security, architecture, incident response). Use sonnet/default for routine work (docs, tests). Use haiku/low for mechanical tasks (lint, format).**
 
