@@ -6,7 +6,16 @@
         "hooks": [
           {
             "type": "command",
-            "command": "INPUT=$(cat); CMD=$(echo \"$INPUT\" | jq -r '.tool_input.command // empty'); if echo \"$CMD\" | grep -qE '^git\\s+push'; then superx-state check-quality-gates; fi"
+            "command": "INPUT=$(cat); CMD=$(echo \"$INPUT\" | jq -r '.tool_input.command // empty'); if echo \"$CMD\" | grep -qE '^git\\s+push'; then superx-state check-quality-gates; fi; \"${CLAUDE_PLUGIN_ROOT:-/Users/rj/Downloads/superx}/bin/parallelism-tracker\" check Bash >/dev/null 2>&1 || true"
+          }
+        ]
+      },
+      {
+        "matcher": "Read|Grep|Glob",
+        "hooks": [
+          {
+            "type": "command",
+            "command": "INPUT=$(cat); TOOL=$(echo \"$INPUT\" | jq -r '.tool_name // \"unknown\"'); \"${CLAUDE_PLUGIN_ROOT:-/Users/rj/Downloads/superx}/bin/parallelism-tracker\" check \"$TOOL\" 2>&1 || true"
           }
         ]
       },
@@ -15,7 +24,7 @@
         "hooks": [
           {
             "type": "command",
-            "command": "INPUT=$(cat); CONTENT=$(echo \"$INPUT\" | jq -r '.tool_input.content // .tool_input.new_string // empty'); if [ -z \"$CONTENT\" ]; then exit 0; fi; if echo \"$CONTENT\" | grep -qiE '(//\\s*TODO|#\\s*TODO|FIXME|XXX|NotImplementedError|unimplemented!\\(\\)|todo!\\(\\)|placeholder|\\bstub\\b|\\bshim\\b)'; then echo '{\"error\": \"BLOCKED: stub/placeholder code detected. Write real implementation or explain why you cannot.\"}'; exit 2; fi; if echo \"$CONTENT\" | grep -qE 'throw new Error\\([\"'\"'\"'\"]not implemented[\"'\"'\"'\"]\\)'; then echo '{\"error\": \"BLOCKED: stub/placeholder code detected. Write real implementation or explain why you cannot.\"}'; exit 2; fi; if echo \"$CONTENT\" | grep -qE '^\\s*pass\\s*$'; then echo '{\"error\": \"BLOCKED: stub/placeholder code detected. Write real implementation or explain why you cannot.\"}'; exit 2; fi; if echo \"$CONTENT\" | grep -qE '\\(\\)\\s*=>\\s*\\{\\s*\\}|function\\s*\\(\\)\\s*\\{\\s*\\}'; then echo '{\"error\": \"BLOCKED: stub/placeholder code detected. Write real implementation or explain why you cannot.\"}'; exit 2; fi"
+            "command": "INPUT=$(cat); CONTENT=$(echo \"$INPUT\" | jq -r '.tool_input.content // .tool_input.new_string // empty'); TOOL=$(echo \"$INPUT\" | jq -r '.tool_name // \"unknown\"'); \"${CLAUDE_PLUGIN_ROOT:-/Users/rj/Downloads/superx}/bin/parallelism-tracker\" check \"$TOOL\" 2>&1 || true; if [ -z \"$CONTENT\" ]; then exit 0; fi; if echo \"$CONTENT\" | grep -qiE '(//\\s*TODO|#\\s*TODO|FIXME|XXX|NotImplementedError|unimplemented!\\(\\)|todo!\\(\\)|placeholder|\\bstub\\b|\\bshim\\b)'; then echo '{\"error\": \"BLOCKED: stub/placeholder code detected. Write real implementation or explain why you cannot.\"}'; exit 2; fi; if echo \"$CONTENT\" | grep -qE 'throw new Error\\([\"'\"'\"'\"]not implemented[\"'\"'\"'\"]\\)'; then echo '{\"error\": \"BLOCKED: stub/placeholder code detected. Write real implementation or explain why you cannot.\"}'; exit 2; fi; if echo \"$CONTENT\" | grep -qE '^\\s*pass\\s*$'; then echo '{\"error\": \"BLOCKED: stub/placeholder code detected. Write real implementation or explain why you cannot.\"}'; exit 2; fi; if echo \"$CONTENT\" | grep -qE '\\(\\)\\s*=>\\s*\\{\\s*\\}|function\\s*\\(\\)\\s*\\{\\s*\\}'; then echo '{\"error\": \"BLOCKED: stub/placeholder code detected. Write real implementation or explain why you cannot.\"}'; exit 2; fi"
           }
         ]
       }
@@ -36,7 +45,7 @@
         "hooks": [
           {
             "type": "command",
-            "command": "if [ ! -f superx-state.json ]; then superx-state init 2>/dev/null || true; fi; if [ -f .planning/CHECKPOINT.md ]; then echo \"[superx] Checkpoint found — read .planning/CHECKPOINT.md to resume.\"; elif [ -f .planning/STATE.md ]; then echo \"[superx] State found — read .planning/STATE.md for prior context.\"; fi"
+            "command": "PLUGIN=\"${CLAUDE_PLUGIN_ROOT:-/Users/rj/Downloads/superx}\"; TRACKER=\"$PLUGIN/bin/parallelism-tracker\"; if [ -f \"$PLUGIN/bin/parallelism-tracker.c\" ] && { [ ! -x \"$TRACKER\" ] || ! \"$TRACKER\" check probe >/dev/null 2>&1; }; then \"$PLUGIN/bin/build-tracker.sh\" >/dev/null 2>&1 || true; fi; if [ ! -f superx-state.json ]; then superx-state init 2>/dev/null || true; fi; if [ -f .planning/CHECKPOINT.md ]; then echo \"[superx] Checkpoint found — read .planning/CHECKPOINT.md to resume.\"; elif [ -f .planning/STATE.md ]; then echo \"[superx] State found — read .planning/STATE.md for prior context.\"; fi"
           }
         ]
       }
@@ -46,7 +55,7 @@
         "hooks": [
           {
             "type": "command",
-            "command": "if [ -f .superx-no-autocommit ]; then exit 0; fi; if [ -d .git ] && [ -n \"$(git status --porcelain 2>/dev/null)\" ]; then git add -A && git commit -m \"superx: session-end checkpoint\" --no-verify 2>/dev/null || true; fi"
+            "command": "\"${CLAUDE_PLUGIN_ROOT:-/Users/rj/Downloads/superx}/bin/parallelism-tracker\" grade 2>&1 || true; if [ -f .superx-no-autocommit ]; then exit 0; fi; if [ -d .git ] && [ -n \"$(git status --porcelain 2>/dev/null)\" ]; then git add -A && git commit -m \"superx: session-end checkpoint\" --no-verify 2>/dev/null || true; fi"
           }
         ]
       }

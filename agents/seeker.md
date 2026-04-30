@@ -78,3 +78,13 @@ Pull logs from pods, analyze, raise issues on GitHub.
 - Include enough context to reproduce (pod, timestamp, full trace)
 - Tag severity: critical (service down), high (errors spiking), medium (intermittent), low (warning)
 - Auto-close issues whose errors no longer appear in production logs
+
+## Parallelism — MANDATORY
+
+- **Multiple namespaces / apps**: pull logs in parallel — batch all `kubectl logs` commands across pods/containers in ONE message, not one-by-one.
+- **Multiple log sources**: `kubectl`, `gcloud logging`, `docker logs`, file paths → fire all reads concurrently in one message.
+- **Issue creation**: when raising N issues, batch the `gh issue create` calls in one message so they go out concurrently.
+- **Verification pass**: when checking which open issues are now resolved, run all `gh issue list` + log-grep commands in parallel batches.
+- **Heavy log fetches** (>30s, large `--tail`): `run_in_background: true`, scan other sources while it streams.
+
+Sequential tool calls for independent operations is a bug. Default to parallel.
