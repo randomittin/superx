@@ -1,0 +1,122 @@
+#!/usr/bin/env bash
+# parallelism-tracker — measure and nudge parallel-vs-sequential tool usage
+#
+# Modes:
+#   check <tool_name>  — called from PreToolUse hook. Records timestamp.
+#                        Emits stderr nudge if 3+ solo turns in a row.
+#   grade              — called from Stop/SessionEnd hook. Tallies session,
+#                        appends a record to .planning/metrics.jsonl,
+#                        prints summary to stdout.
+#
+# Solo vs batch detection: tool calls within 500ms of the previous one are
+# treated as a parallel batch (same assistant turn). Calls separated by
+# >=500ms count as the start of a new turn.
+
+set -eo pipefail
+
+MODE="${1:-}"
+TOOL="${2:-unknown}"
+
+SESSION_ID="${CLAUDE_SESSION_ID:-${SESSION_ID:-default}}"
+STATE_DIR="${TMPDIR:-/tmp}/superx-parallel"
+mkdir -p "$STATE_DIR"
+STATE_FILE="$STATE_DIR/$SESSION_ID.state"
+LOG_FILE="$STATE_DIR/$SESSION_ID.log"
+
+now_ms() {
+  python3 -c 'import time; print(int(time.time()*1000))' 2>/dev/null || \
+    date +%s%3N 2>/dev/null || \
+    perl -MTime::HiRes=time -e 'printf("%d\n", time()*1000)'
+}
+
+case "$MODE" in
+  check)
+    NOW=$(now_ms)
+    if [ -f "$STATE_FILE" ]; then
+      # shellcheck disable=SC1090
+      . "$STATE_FILE"
+    else
+      LAST_TS=0
+      SOLO_COUNT=0
+      BATCH_COUNT=0
+      TURN_COUNT=0
+      LAST_TURN_SIZE=0
+    fi
+
+    DELTA=$(( NOW - LAST_TS ))
+
+    if [ "$DELTA" -lt 500 ] && [ "$LAST_TS" -ne 0 ]; then
+      LAST_TURN_SIZE=$(( LAST_TURN_SIZE + 1 ))
+      if [ "$LAST_TURN_SIZE" -eq 2 ]; then
+        BATCH_COUNT=$(( BATCH_COUNT + 1 ))
+        SOLO_COUNT=0
+      fi
+    else
+      if [ "$LAST_TURN_SIZE" -eq 1 ] || [ "$LAST_TURN_SIZE" -eq 0 ] && [ "$LAST_TS" -ne 0 ]; then
+        SOLO_COUNT=$(( SOLO_COUNT + 1 ))
+      fi
+      TURN_COUNT=$(( TURN_COUNT + 1 ))
+      LAST_TURN_SIZE=1
+    fi
+
+    {
+      echo "LAST_TS=$NOW"
+      echo "SOLO_COUNT=$SOLO_COUNT"
+      echo "BATCH_COUNT=$BATCH_COUNT"
+      echo "TURN_COUNT=$TURN_COUNT"
+      echo "LAST_TURN_SIZE=$LAST_TURN_SIZE"
+    } > "$STATE_FILE"
+
+    echo "$NOW $TOOL $LAST_TURN_SIZE" >> "$LOG_FILE"
+
+    if [ "$SOLO_COUNT" -ge 3 ]; then
+      echo "[superx parallelism] $SOLO_COUNT consecutive solo tool turns. If next calls are independent, batch them in one assistant message (multiple tool_use blocks)." >&2
+      SOLO_COUNT=0
+      sed -i.bak "s/^SOLO_COUNT=.*/SOLO_COUNT=0/" "$STATE_FILE" 2>/dev/null && rm -f "$STATE_FILE.bak"
+    fi
+    exit 0
+    ;;
+
+  grade)
+    if [ ! -f "$STATE_FILE" ]; then
+      exit 0
+    fi
+    # shellcheck disable=SC1090
+    . "$STATE_FILE"
+
+    TOTAL_CALLS=0
+    if [ -f "$LOG_FILE" ]; then
+      TOTAL_CALLS=$(wc -l < "$LOG_FILE" | tr -d ' ')
+    fi
+
+    SOLO_TURNS="${SOLO_COUNT:-0}"
+    BATCH_TURNS="${BATCH_COUNT:-0}"
+    TOTAL_TURNS="${TURN_COUNT:-0}"
+
+    # Compute parallel ratio = batch_turns / total_turns (avoid div-by-zero)
+    if [ "$TOTAL_TURNS" -gt 0 ]; then
+      RATIO=$(awk -v b="$BATCH_TURNS" -v t="$TOTAL_TURNS" 'BEGIN{ printf "%.2f", b/t }')
+    else
+      RATIO="0.00"
+    fi
+
+    TS=$(date -u +%Y-%m-%dT%H:%M:%SZ)
+    REC=$(printf '{"ts":"%s","session":"%s","metric":"parallelism","total_turns":%d,"batch_turns":%d,"solo_turns":%d,"total_calls":%d,"parallel_ratio":%s}' \
+      "$TS" "$SESSION_ID" "$TOTAL_TURNS" "$BATCH_TURNS" "$SOLO_TURNS" "$TOTAL_CALLS" "$RATIO")
+
+    if [ -d .planning ] || [ -d "$PWD/.planning" ]; then
+      mkdir -p .planning
+      echo "$REC" >> .planning/metrics.jsonl
+    fi
+
+    echo "[superx] parallelism: $BATCH_TURNS batched / $TOTAL_TURNS turns (ratio $RATIO, $TOTAL_CALLS calls)"
+
+    rm -f "$STATE_FILE" "$LOG_FILE"
+    exit 0
+    ;;
+
+  *)
+    echo "usage: parallelism-tracker check <tool>|grade" >&2
+    exit 1
+    ;;
+esac

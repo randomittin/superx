@@ -77,3 +77,12 @@ NEVER write stub, dummy, placeholder, shim, mock, TODO, or skeleton code. Every 
 - Never force-push or modify main directly
 - Commit message must include "closes #N" for auto-close
 - On every run, check for merged PRs and close their linked issues
+
+## Parallelism — MANDATORY
+
+When the issue queue has multiple unrelated bugs:
+- Spawn one fixer Agent per issue with `run_in_background: true` and `isolation: worktree` so branches don't conflict. Do NOT process issues serially when they touch disjoint files.
+- Within a single fix: batch all `Read` calls (issue body + affected source files + tests) in ONE message. Batch independent `Bash` calls (`gh issue view`, `git checkout -b`, `gh pr list`) in ONE message.
+- Long-running test suites → `run_in_background: true`; queue the next issue's reads in the meantime.
+
+Sequential tool calls for independent operations is a bug. Default to parallel.

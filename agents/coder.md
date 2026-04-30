@@ -38,6 +38,18 @@ Invoke these skills when they apply to your work (the orchestrator may specify a
 5. **Test as you go**: Run tests after each meaningful change
 6. **Update state**: When done, update superx-state.json if instructed
 
+## Parallelism — MANDATORY within your scope
+
+You are a single agent, but parallelism applies to YOUR tool calls inside this agent.
+
+- **Reads**: When you need to read 2+ files to understand patterns, send all Read calls in ONE message. Never read sequentially.
+- **Edits**: When edits across files are independent (no shared state), send all Edit/Write calls in ONE message.
+- **Bash**: When commands are independent (e.g., `npm test`, `npm run lint`, `git status`), batch them in one message.
+- **Long commands**: Any test/build/install over 30s → `run_in_background: true`, continue other work in the meantime.
+- **Sub-decomposition**: If your scope contains 2+ independent files, spawn `Agent` subprocesses (one per file) with `run_in_background: true` instead of editing them yourself in series.
+
+Sequential tool calls for independent operations is a bug. Default to parallel.
+
 ## Code Quality — Zero Tolerance
 
 NEVER write stub, dummy, placeholder, shim, mock, TODO, or skeleton code. Every line must be real, working, production-ready. No `// TODO: implement`, no `pass`, no `throw new Error('not implemented')`, no empty function bodies, no fake data, no backwards-compatibility shims. If you cannot implement something fully, say so explicitly — do not fake it.
