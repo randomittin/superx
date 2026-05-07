@@ -35,7 +35,7 @@
         "hooks": [
           {
             "type": "command",
-            "command": "if [ -f superx-state.json ]; then superx-state mark-dirty 2>/dev/null || true; fi; if [ -f .superx-no-autocommit ]; then exit 0; fi; count=$(git diff --name-only 2>/dev/null | wc -l); if [ \"$count\" -ge 5 ] && [ -d .git ]; then git add -A && git commit -m \"superx: auto-checkpoint ($count files)\" --no-verify 2>/dev/null || true; fi"
+            "command": "if [ -f superx-state.json ]; then superx-state mark-dirty 2>/dev/null || true; fi; if [ -f .superx-no-autocommit ]; then exit 0; fi; count=$(git diff --name-only 2>/dev/null | wc -l | tr -d ' '); if [ \"$count\" -ge 5 ] && [ -d .git ]; then git add -A && git commit -m \"superx: auto-checkpoint (${count} files)\" --no-verify 2>/dev/null || true; fi"
           }
         ]
       }
@@ -55,7 +55,7 @@
         "hooks": [
           {
             "type": "command",
-            "command": "\"${CLAUDE_PLUGIN_ROOT:-/Users/rj/Downloads/superx}/bin/parallelism-tracker\" grade 2>&1 || true; if [ -f .superx-no-autocommit ]; then exit 0; fi; if [ -d .git ] && [ -n \"$(git status --porcelain 2>/dev/null)\" ]; then git add -A && git commit -m \"superx: session-end checkpoint\" --no-verify 2>/dev/null || true; fi"
+            "command": "\"${CLAUDE_PLUGIN_ROOT:-/Users/rj/Downloads/superx}/bin/parallelism-tracker\" grade 2>&1 || true; if [ -f .superx-no-autocommit ]; then exit 0; fi; if [ -d .git ] && [ -n \"$(git status --porcelain 2>/dev/null)\" ]; then count=$(git diff --name-only 2>/dev/null | wc -l | tr -d ' '); git add -A && git commit -m \"superx: session-end checkpoint (${count} files)\" --no-verify 2>/dev/null || true; fi"
           }
         ]
       }

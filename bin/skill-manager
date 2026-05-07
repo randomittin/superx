@@ -1,0 +1,227 @@
+#!/usr/bin/env bash
+# skill-manager — project-aware plugin lifecycle for superx
+# Enables plugins needed for current project, disables the rest.
+# State stored in ~/.claude/settings.json under enabledPlugins.
+set -eo pipefail
+
+SELF="$0"
+if command -v readlink &>/dev/null; then
+  SELF="$(readlink -f "$0" 2>/dev/null || readlink "$0" 2>/dev/null || echo "$0")"
+fi
+PLUGIN_DIR="$(cd "$(dirname "$SELF")/.." && pwd)"
+CONFIG="$PLUGIN_DIR/superx-skills.json"
+SETTINGS="$HOME/.claude/settings.json"
+RESTORE_FILE="/tmp/superx-skill-restore-$$.json"
+
+G='\033[38;2;78;204;163m'
+D='\033[38;2;100;100;120m'
+C='\033[38;2;0;212;255m'
+P='\033[38;2;224;86;160m'
+R='\033[0m'
+
+cmd_activate() {
+  local project_dir="${1:-.}"
+
+  [ -f "$CONFIG" ] || return 0
+  [ -f "$SETTINGS" ] || return 0
+  command -v python3 &>/dev/null || return 0
+
+  python3 <<PYEOF
+import json, glob, os, sys, copy
+
+config_path = "$CONFIG"
+settings_path = "$SETTINGS"
+project_dir = "$project_dir"
+restore_path = "$RESTORE_FILE"
+
+with open(config_path) as f:
+    config = json.load(f)
+
+with open(settings_path) as f:
+    settings = json.load(f)
+
+enabled_plugins = settings.get("enabledPlugins", {})
+prev_state = copy.deepcopy(enabled_plugins)
+
+# Build set of needed plugins
+needed = set(config.get("permanent", []))
+
+for rule_name, rule in config.get("detection", {}).items():
+    patterns = rule.get("files", [])
+    matched = False
+    for pattern in patterns:
+        # Check top-level and one level deep (fast scan)
+        if glob.glob(os.path.join(project_dir, pattern)):
+            matched = True
+            break
+        if glob.glob(os.path.join(project_dir, "*", pattern)):
+            matched = True
+            break
+        # Check src/ specifically (common convention)
+        if glob.glob(os.path.join(project_dir, "src", "**", pattern), recursive=True):
+            matched = True
+            break
+    if matched:
+        for p in rule.get("plugins", []):
+            needed.add(p)
+
+# Apply: enable needed, disable rest
+changed_on = []
+changed_off = []
+
+for plugin_id, is_enabled in list(enabled_plugins.items()):
+    if plugin_id in needed:
+        if not is_enabled:
+            enabled_plugins[plugin_id] = True
+            changed_on.append(plugin_id)
+    else:
+        if is_enabled:
+            enabled_plugins[plugin_id] = False
+            changed_off.append(plugin_id)
+
+# Save previous state for restore
+with open(restore_path, "w") as f:
+    json.dump(prev_state, f)
+
+# Write settings
+settings["enabledPlugins"] = enabled_plugins
+with open(settings_path, "w") as f:
+    json.dump(settings, f, indent=2)
+    f.write("\n")
+
+# Report
+active = sum(1 for v in enabled_plugins.values() if v)
+paused = sum(1 for v in enabled_plugins.values() if not v)
+
+if changed_on or changed_off:
+    print(f"CHANGED|{active}|{paused}|{','.join(changed_on)}|{','.join(changed_off)}")
+else:
+    print(f"OK|{active}|{paused}||")
+PYEOF
+}
+
+cmd_restore() {
+  local restore_file="${1:-$RESTORE_FILE}"
+
+  [ -f "$restore_file" ] || return 0
+  [ -f "$SETTINGS" ] || return 0
+  command -v python3 &>/dev/null || return 0
+
+  python3 <<PYEOF
+import json
+
+restore_path = "$restore_file"
+settings_path = "$SETTINGS"
+
+with open(restore_path) as f:
+    prev_state = json.load(f)
+
+with open(settings_path) as f:
+    settings = json.load(f)
+
+settings["enabledPlugins"] = prev_state
+
+with open(settings_path, "w") as f:
+    json.dump(settings, f, indent=2)
+    f.write("\n")
+PYEOF
+
+  rm -f "$restore_file"
+}
+
+cmd_status() {
+  local project_dir="${1:-.}"
+
+  [ -f "$CONFIG" ] || { echo "No config: $CONFIG"; return 1; }
+  command -v python3 &>/dev/null || { echo "python3 required"; return 1; }
+
+  python3 <<PYEOF
+import json, glob, os
+
+config_path = "$CONFIG"
+settings_path = "$SETTINGS"
+project_dir = "$project_dir"
+
+with open(config_path) as f:
+    config = json.load(f)
+
+enabled = {}
+if os.path.exists(settings_path):
+    with open(settings_path) as f:
+        enabled = json.load(f).get("enabledPlugins", {})
+
+print("PERMANENT:")
+for p in config.get("permanent", []):
+    state = "on" if enabled.get(p, True) else "OFF"
+    print(f"  {state}  {p}")
+
+print()
+print("DETECTED:")
+for rule_name, rule in config.get("detection", {}).items():
+    patterns = rule.get("files", [])
+    matched = False
+    for pattern in patterns:
+        if glob.glob(os.path.join(project_dir, pattern)) or \
+           glob.glob(os.path.join(project_dir, "*", pattern)) or \
+           glob.glob(os.path.join(project_dir, "src", "**", pattern), recursive=True):
+            matched = True
+            break
+    mark = "✔" if matched else "·"
+    plugins = rule.get("plugins", [])
+    states = []
+    for p in plugins:
+        s = "on" if enabled.get(p, True) else "off"
+        states.append(f"{p}({s})")
+    print(f"  {mark} {rule_name}: {', '.join(states)}")
+
+print()
+print("ON-DEMAND:")
+for p in config.get("on_demand", []):
+    state = "on" if enabled.get(p, True) else "off"
+    print(f"  {state}  {p}")
+PYEOF
+}
+
+cmd_print_summary() {
+  local result="$1"
+  local status active paused on off
+  IFS='|' read -r status active paused on off <<< "$result"
+
+  if [ "$status" = "CHANGED" ]; then
+    printf "  ${G}▸${R} Skills: ${C}%s active${R}, ${D}%s paused${R}\n" "$active" "$paused"
+    if [ -n "$on" ]; then
+      printf "  ${D}  + %s${R}\n" "$(echo "$on" | tr ',' ' ')"
+    fi
+    if [ -n "$off" ]; then
+      printf "  ${D}  − %s${R}\n" "$(echo "$off" | tr ',' ' ')"
+    fi
+  else
+    printf "  ${G}▸${R} Skills: ${C}%s active${R}, ${D}%s paused${R}\n" "$active" "$paused"
+  fi
+}
+
+case "${1:-}" in
+  activate)
+    result=$(cmd_activate "${2:-.}")
+    cmd_print_summary "$result"
+    ;;
+  activate-quiet)
+    cmd_activate "${2:-.}" > /dev/null
+    ;;
+  restore)
+    cmd_restore "${2:-}"
+    ;;
+  status)
+    cmd_status "${2:-.}"
+    ;;
+  restore-file)
+    echo "$RESTORE_FILE"
+    ;;
+  *)
+    echo "Usage: skill-manager {activate|restore|status} [project-dir]"
+    echo ""
+    echo "  activate [dir]   Enable project-needed plugins, disable rest"
+    echo "  restore          Re-enable all plugins (previous state)"
+    echo "  status [dir]     Show which plugins would be active"
+    ;;
+esac

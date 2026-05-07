@@ -1,0 +1,42 @@
+{
+  "permanent": [
+    "caveman@caveman",
+    "claude-mem@thedotmack",
+    "superpowers@claude-plugins-official"
+  ],
+  "detection": {
+    "frontend": {
+      "files": ["*.tsx", "*.jsx", "*.vue", "*.svelte", "*.css", "*.scss", "*.less", "tailwind.config.*", "postcss.config.*", "vite.config.*"],
+      "plugins": ["frontend-design@claude-plugins-official", "design-for-ai@rtd"]
+    },
+    "playwright": {
+      "files": ["playwright.config.*", "cypress.config.*", "*.spec.ts"],
+      "plugins": ["playwright@claude-plugins-official"]
+    },
+    "pr-workflow": {
+      "files": [".github/pull_request_template*", ".github/workflows/*", ".github/CODEOWNERS"],
+      "plugins": ["pr-review-toolkit@claude-plugins-official"]
+    },
+    "code-review": {
+      "files": ["*.ts", "*.js", "*.py", "*.go", "*.rs", "*.java", "*.rb", "*.sh", "*.tsx", "*.jsx"],
+      "plugins": ["code-review@claude-plugins-official"]
+    },
+    "security": {
+      "files": ["*.ts", "*.js", "*.py", "*.go", "*.rs", "*.java"],
+      "plugins": ["security-guidance@claude-plugins-official"]
+    },
+    "slack": {
+      "files": [".slack*", "slack.json", "slack-*.json"],
+      "plugins": ["slack@claude-plugins-official"]
+    },
+    "docs": {
+      "files": ["CLAUDE.md", "AGENTS.md", "GEMINI.md"],
+      "plugins": ["claude-md-management@claude-plugins-official"]
+    }
+  },
+  "on_demand": [
+    "skill-creator@claude-plugins-official",
+    "claude-code-setup@claude-plugins-official",
+    "ralph-loop@claude-plugins-official"
+  ]
+}
