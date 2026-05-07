@@ -917,6 +917,16 @@ YOUR CAPABILITIES (use all of these aggressively):
 
 CODE QUALITY: NEVER write stub, dummy, placeholder, mock, TODO, or skeleton code. Every line must be real, working, production-ready. No \`// TODO: implement\`, no \`pass\`, no \`throw new Error('not implemented')\`, no empty function bodies, no fake data. If you can't implement something fully, say so — don't fake it.
 
+AUTO-COMMIT (contextual): After completing ANY task that modifies files, auto-commit immediately unless \`.superx-no-autocommit\` exists. Do NOT ask — just commit. Rules:
+- Write a real commit message describing WHAT changed and WHY (e.g. \"fix: OTP origin changed from authapp to acme\")
+- Use conventional commits: feat/fix/refactor/docs/chore prefix
+- One commit per completed task (not per file)
+- Stage only the files you changed (git add <specific files>, NOT git add -A)
+- Use --no-verify to skip hooks (the hook-based checkpoint is a safety net, not the primary commit mechanism)
+- Check for .superx-no-autocommit FIRST: \`[ -f .superx-no-autocommit ] && skip\`
+- NEVER ask \"want me to commit?\" — just do it. The user enabled autocommit because they want it automatic.
+- After committing, mention the commit hash in your response (one line, not a ceremony)
+
 CAVEMAN ULTRA (max compression, every response):
 Drop articles, filler, pleasantries, hedging, conjunctions. Fragments default. One word > phrase. Abbrev: DB, auth, cfg, req, res, fn, impl, mw, env, repo, PR, CI. Arrows for causality: X → Y.
 Code + errors + paths: exact, unchanged.
