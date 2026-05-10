@@ -35,7 +35,7 @@
         "hooks": [
           {
             "type": "command",
-            "command": "if [ -f superx-state.json ]; then superx-state mark-dirty 2>/dev/null || true; fi; if [ -f .superx-no-autocommit ]; then exit 0; fi; count=$(git diff --name-only 2>/dev/null | wc -l | tr -d ' '); if [ \"$count\" -ge 5 ] && [ -d .git ]; then git add -A && git commit -m \"superx: auto-checkpoint (${count} files)\" --no-verify 2>/dev/null || true; fi"
+            "command": "INPUT=$(cat); TOOL=$(echo \"$INPUT\" | jq -r '.tool_name // \"unknown\"'); FPATH=$(echo \"$INPUT\" | jq -r '.tool_input.file_path // empty'); if [ -n \"$FPATH\" ]; then \"${CLAUDE_PLUGIN_ROOT:-/Users/rj/Downloads/superx}/bin/edit-tracker\" log \"$TOOL\" \"$FPATH\" 2>/dev/null || true; fi; if [ -f superx-state.json ]; then superx-state mark-dirty 2>/dev/null || true; fi; if [ -f .superx-no-autocommit ]; then exit 0; fi; count=$(git diff --name-only 2>/dev/null | wc -l | tr -d ' '); if [ \"$count\" -ge 5 ] && [ -d .git ]; then git add -A && git commit -m \"superx: auto-checkpoint (${count} files)\" --no-verify 2>/dev/null || true; fi"
           }
         ]
       }
@@ -45,7 +45,7 @@
         "hooks": [
           {
             "type": "command",
-            "command": "PLUGIN=\"${CLAUDE_PLUGIN_ROOT:-/Users/rj/Downloads/superx}\"; TRACKER=\"$PLUGIN/bin/parallelism-tracker\"; if [ -f \"$PLUGIN/bin/parallelism-tracker.c\" ] && { [ ! -x \"$TRACKER\" ] || ! \"$TRACKER\" check probe >/dev/null 2>&1; }; then \"$PLUGIN/bin/build-tracker.sh\" >/dev/null 2>&1 || true; fi; if [ ! -f superx-state.json ]; then superx-state init 2>/dev/null || true; fi; if [ -f .planning/CHECKPOINT.md ]; then echo \"[superx] Checkpoint found — read .planning/CHECKPOINT.md to resume.\"; elif [ -f .planning/STATE.md ]; then echo \"[superx] State found — read .planning/STATE.md for prior context.\"; fi"
+            "command": "PLUGIN=\"${CLAUDE_PLUGIN_ROOT:-/Users/rj/Downloads/superx}\"; TRACKER=\"$PLUGIN/bin/parallelism-tracker\"; if [ -f \"$PLUGIN/bin/parallelism-tracker.c\" ] && { [ ! -x \"$TRACKER\" ] || ! \"$TRACKER\" check probe >/dev/null 2>&1; }; then \"$PLUGIN/bin/build-tracker.sh\" >/dev/null 2>&1 || true; fi; ETRACKER=\"$PLUGIN/bin/edit-tracker\"; if [ -f \"$PLUGIN/bin/edit-tracker.c\" ] && [ ! -x \"$ETRACKER\" ]; then clang -O2 -Wall -Wextra -o \"$ETRACKER\" \"$PLUGIN/bin/edit-tracker.c\" 2>/dev/null || true; fi; \"$ETRACKER\" clear 2>/dev/null || true; if [ ! -f superx-state.json ]; then superx-state init 2>/dev/null || true; fi; if [ -f .planning/CHECKPOINT.md ]; then echo \"[superx] Checkpoint found — read .planning/CHECKPOINT.md to resume.\"; elif [ -f .planning/STATE.md ]; then echo \"[superx] State found — read .planning/STATE.md for prior context.\"; fi"
           }
         ]
       }
@@ -55,7 +55,7 @@
         "hooks": [
           {
             "type": "command",
-            "command": "\"${CLAUDE_PLUGIN_ROOT:-/Users/rj/Downloads/superx}/bin/parallelism-tracker\" grade 2>&1 || true; if [ -f .superx-no-autocommit ]; then exit 0; fi; if [ -d .git ] && [ -n \"$(git status --porcelain 2>/dev/null)\" ]; then count=$(git diff --name-only 2>/dev/null | wc -l | tr -d ' '); git add -A && git commit -m \"superx: session-end checkpoint (${count} files)\" --no-verify 2>/dev/null || true; fi"
+            "command": "\"${CLAUDE_PLUGIN_ROOT:-/Users/rj/Downloads/superx}/bin/parallelism-tracker\" grade 2>&1 || true; \"${CLAUDE_PLUGIN_ROOT:-/Users/rj/Downloads/superx}/bin/verify-edits\" --quick 2>&1 || true; if [ -f .superx-no-autocommit ]; then exit 0; fi; if [ -d .git ] && [ -n \"$(git status --porcelain 2>/dev/null)\" ]; then count=$(git diff --name-only 2>/dev/null | wc -l | tr -d ' '); git add -A && git commit -m \"superx: session-end checkpoint (${count} files)\" --no-verify 2>/dev/null || true; fi"
           }
         ]
       }
