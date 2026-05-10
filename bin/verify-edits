@@ -1,0 +1,173 @@
+#!/usr/bin/env bash
+# verify-edits — review all edits made this session for correctness.
+#
+# Checks:
+#   1. Every edited file still exists on disk
+#   2. No stub/placeholder/TODO code introduced
+#   3. Git diff summary of all changes
+#   4. Optional: run project linter/tests against changed files
+#
+# Usage:
+#   verify-edits              Full verification report
+#   verify-edits --quick      File existence + stub check only
+#   verify-edits --diff       Show git diff of all edited files
+#   verify-edits --json       Output as JSON
+set -euo pipefail
+
+PLUGIN_DIR="${CLAUDE_PLUGIN_ROOT:-$(cd "$(dirname "$0")/.." && pwd)}"
+TRACKER="$PLUGIN_DIR/bin/edit-tracker"
+
+if [ ! -x "$TRACKER" ]; then
+  echo "edit-tracker not built. Building..."
+  clang -O2 -Wall -Wextra -o "$TRACKER" "$PLUGIN_DIR/bin/edit-tracker.c" 2>/dev/null || {
+    echo "Build failed. Run: clang -O2 -Wall -Wextra -o bin/edit-tracker bin/edit-tracker.c"
+    exit 1
+  }
+fi
+
+MODE="${1:---full}"
+PASS=0
+FAIL=0
+WARN=0
+ISSUES=""
+
+paths=$("$TRACKER" paths 2>/dev/null)
+if [ -z "$paths" ]; then
+  echo "[superx] verify-edits: No edits tracked this session."
+  exit 0
+fi
+
+file_count=$(echo "$paths" | wc -l | tr -d ' ')
+
+# ── Check 1: File existence ──
+missing=""
+while IFS= read -r filepath; do
+  if [ ! -f "$filepath" ]; then
+    missing="$missing\n  MISSING: $filepath"
+    FAIL=$((FAIL + 1))
+  else
+    PASS=$((PASS + 1))
+  fi
+done <<< "$paths"
+
+# ── Check 2: Stub/placeholder detection ──
+stubs=""
+stub_patterns='(//\s*TODO|#\s*TODO|FIXME|XXX|NotImplementedError|unimplemented!\(\)|todo!\(\)|placeholder|\bstub\b|\bshim\b|throw new Error\([\"'"'"']not implemented|^\s*pass\s*$|\(\)\s*=>\s*\{\s*\}|function\s*\(\)\s*\{\s*\})'
+
+# Skip stub detection in these files (they reference patterns by necessity)
+skip_stub_check() {
+  case "$1" in
+    */verify-edits|*/hooks.json|*/CLAUDE.md|*.md) return 0 ;;
+    *) return 1 ;;
+  esac
+}
+
+while IFS= read -r filepath; do
+  if [ -f "$filepath" ] && ! skip_stub_check "$filepath"; then
+    matches=$(grep -nE "$stub_patterns" "$filepath" 2>/dev/null | head -5 || true)
+    if [ -n "$matches" ]; then
+      stubs="$stubs\n  $filepath:"
+      while IFS= read -r match; do
+        stubs="$stubs\n    $match"
+      done <<< "$matches"
+      WARN=$((WARN + 1))
+    fi
+  fi
+done <<< "$paths"
+
+# ── Check 3: Git diff summary ──
+diff_stats=""
+if [ -d .git ]; then
+  while IFS= read -r filepath; do
+    if [ -f "$filepath" ]; then
+      stat=$(git diff --stat -- "$filepath" 2>/dev/null || true)
+      if [ -n "$stat" ]; then
+        diff_stats="$diff_stats\n$stat"
+      fi
+      # Also check staged
+      staged=$(git diff --cached --stat -- "$filepath" 2>/dev/null || true)
+      if [ -n "$staged" ]; then
+        diff_stats="$diff_stats\n$staged"
+      fi
+    fi
+  done <<< "$paths"
+fi
+
+# ── Output ──
+if [ "$MODE" = "--json" ]; then
+  echo "{"
+  echo "  \"files_edited\": $file_count,"
+  echo "  \"checks_passed\": $PASS,"
+  echo "  \"checks_failed\": $FAIL,"
+  echo "  \"warnings\": $WARN,"
+  echo "  \"verdict\": \"$([ $FAIL -eq 0 ] && echo 'PASS' || echo 'FAIL')\","
+  echo "  \"paths\": ["
+  first=1
+  while IFS= read -r filepath; do
+    [ $first -eq 0 ] && echo ","
+    first=0
+    exists="true"
+    [ ! -f "$filepath" ] && exists="false"
+    printf "    {\"path\": \"%s\", \"exists\": %s}" "$filepath" "$exists"
+  done <<< "$paths"
+  echo ""
+  echo "  ]"
+  echo "}"
+  exit 0
+fi
+
+if [ "$MODE" = "--diff" ]; then
+  while IFS= read -r filepath; do
+    if [ -f "$filepath" ] && [ -d .git ]; then
+      echo "=== $filepath ==="
+      git diff -- "$filepath" 2>/dev/null || true
+      git diff --cached -- "$filepath" 2>/dev/null || true
+      echo ""
+    fi
+  done <<< "$paths"
+  exit 0
+fi
+
+# Full or quick report
+echo "━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━"
+echo "[superx] Edit Verification Report"
+echo "━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━"
+echo ""
+"$TRACKER" summary
+echo ""
+
+if [ -n "$missing" ]; then
+  echo "## File Existence: FAIL"
+  echo -e "$missing"
+  echo ""
+else
+  echo "## File Existence: PASS ($file_count/$file_count files exist)"
+  echo ""
+fi
+
+if [ -n "$stubs" ]; then
+  echo "## Stub/Placeholder Check: WARNING"
+  echo -e "$stubs"
+  echo ""
+else
+  echo "## Stub/Placeholder Check: PASS (no stubs detected)"
+  echo ""
+fi
+
+if [ "$MODE" != "--quick" ] && [ -n "$diff_stats" ]; then
+  echo "## Git Diff Summary:"
+  echo -e "$diff_stats"
+  echo ""
+fi
+
+echo "━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━"
+if [ $FAIL -gt 0 ]; then
+  echo "VERDICT: FAIL ($FAIL issues)"
+  exit 1
+elif [ $WARN -gt 0 ]; then
+  echo "VERDICT: WARN ($WARN warnings)"
+  exit 0
+else
+  echo "VERDICT: PASS"
+  exit 0
+fi

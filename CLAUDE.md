@@ -23,6 +23,14 @@
 - Prefer small, focused files over large monoliths
 - Name things clearly — a reader should understand without context
 
+## Edit Verification
+- All Write/Edit ops auto-logged by `edit-tracker` (PostToolUse hook)
+- Run `verify-edits` to check all session edits: file existence, stub detection, git diff
+- Run `verify-edits --quick` for fast check, `--diff` for full diffs, `--json` for structured output
+- `edit-tracker summary` shows files edited + operation counts
+- `edit-tracker paths` lists unique edited file paths
+- SessionEnd auto-runs `verify-edits --quick`
+
 ## Token Efficiency
 - Caveman ultra mode active: terse output, abbreviations, arrows for causality
 - Drop articles, filler, hedging — code and paths stay exact
