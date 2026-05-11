@@ -21,14 +21,7 @@ Update with:
 - **Decisions made**: key architectural/design decisions from this session
 - **Key files changed**: list of files modified in this session
 
-### 2. `.planning/CONTEXT.md`
-Update with:
-- Tech stack observations from this session
-- Patterns discovered in the codebase
-- User preferences expressed during the session
-- Constraints encountered
-
-### 3. `.planning/CHECKPOINT.md` (NEW — the handoff note)
+### 2. `.planning/CHECKPOINT.md` (the handoff note — most important file)
 Write a concise handoff note that another Claude session can read and immediately continue:
 
 ```markdown
@@ -56,6 +49,11 @@ Write a concise handoff note that another Claude session can read and immediatel
 - [File A imports from File B — don't break this]
 - [User wants: specific preference]
 
+## Tech Stack & Patterns
+- [Stack: React 18 + TypeScript + Vite, etc.]
+- [Pattern: services use singleton pattern, components use compound pattern]
+- [Constraint: must support Node 18+, no ESM-only deps]
+
 ## Project Settings
 - Parallelism: [max 10 / max 5 / sequential — what worked for this project]
 - Model routing: [any overrides from defaults, e.g. "sonnet works fine for React components here"]
@@ -68,7 +66,7 @@ Write a concise handoff note that another Claude session can read and immediatel
 - User preferences: [e.g. "prefers tabs over spaces", "wants detailed commit messages", "hates emojis in code"]
 ```
 
-### 4. `.planning/settings.json` (project-specific superx config)
+### 3. `.planning/settings.json` (project-specific superx config)
 Write or update project-specific execution settings:
 
 ```json
@@ -101,7 +99,7 @@ Write or update project-specific execution settings:
 
 This file is read mechanically on every `superx` launch (injected into preamble alongside CHECKPOINT.md). Claude doesn't need to "discover" test/lint/build commands — they're hardcoded from the first run.
 
-### 5. Git checkpoint
+### 4. Git checkpoint
 ```bash
 git add -A && git commit -m "superx: checkpoint — [brief description]"
 ```
@@ -109,7 +107,7 @@ git add -A && git commit -m "superx: checkpoint — [brief description]"
 ## Rules
 - ALWAYS write `.planning/CHECKPOINT.md` — this is the most important file
 - ALWAYS write `.planning/settings.json` — project settings must persist
-- Keep the handoff note under 60 lines — terse, actionable
+- Keep the handoff note under 80 lines — terse, actionable
 - Include commit hashes for everything completed
 - The "Resume Instructions" section should be specific enough that a fresh Claude session can start working immediately without asking questions
 - The "Project Settings" section captures how THIS project likes to be built — commands, parallelism, model preferences
