@@ -824,6 +824,17 @@ Phase: $phase. Read .planning/STATE.md for decisions, blockers, progress.
       printf "  \033[38;2;100;100;120m▸ State loaded\033[0m — phase: %s\n" "$phase"
     fi
   fi
+
+  # Backward compat: load CONTEXT.md if it exists (merged into CHECKPOINT.md in newer saves)
+  local ctx="$WORK_DIR/.planning/CONTEXT.md"
+  if [ -f "$ctx" ]; then
+    CHECKPOINT_CONTEXT="${CHECKPOINT_CONTEXT}
+--- PROJECT CONTEXT (from .planning/CONTEXT.md) ---
+$(head -50 "$ctx")
+--- END CONTEXT ---
+"
+    printf "  \033[38;2;155;89;182m▸ Context loaded\033[0m (legacy)\n"
+  fi
 }
 
 # ── Main: ensure deps, then launch Claude ──
