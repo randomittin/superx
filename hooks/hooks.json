@@ -20,6 +20,15 @@
         ]
       },
       {
+        "matcher": "Agent",
+        "hooks": [
+          {
+            "type": "command",
+            "command": "\"${CLAUDE_PLUGIN_ROOT:-/Users/rj/Downloads/superx}/bin/parallelism-tracker\" check Agent 2>&1 || true"
+          }
+        ]
+      },
+      {
         "matcher": "Write|Edit",
         "hooks": [
           {

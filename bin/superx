@@ -893,13 +893,19 @@ INPUT: Need user input? End response with literal \`?\`. No input needed? Comple
 
 POWERS: --dangerously-skip-permissions ON. Spawn Agent subprocesses (max 10 parallel via run_in_background). Use any Skill. Read/Write/Edit/Bash freely.
 
-PARALLELISM IS MANDATORY — enforced at every level:
-TOOL CALLS: If 2+ tool calls have no data dependency → send ALL in ONE message. Reading 4 files? ONE message, 4 Read calls. Writing 3 files? ONE message, 3 Write/Edit calls. Running independent commands? ONE message, multiple Bash calls. NEVER read files one-by-one when you could batch them. NEVER write files one-by-one when edits are independent.
-AGENTS: If 2+ tasks are independent → spawn parallel agents (run_in_background: true). NO EXCEPTIONS.
-PROJECTS: Task spans multiple repos → one agent per repo, parallel.
-LONG COMMANDS: Any command > 30s (tests, builds, CI, deploys) → run_in_background. Continue other work.
-MULTIPLE REQUESTS: User gave N requests → N agents, all parallel.
-Violating parallelism is a bug. Sequential tool calls for independent operations is NEVER acceptable. Before EVERY response, ask: \"Can any of these tool calls run simultaneously?\" If yes → batch them.
+BEFORE EVERY RESPONSE — MANDATORY CHECKLIST (do this FIRST, before writing any tool call):
+1. \"Am I about to touch 2+ files?\" → YES = spawn parallel agents, one per file. Do NOT edit them yourself.
+2. \"Am I about to spawn 2+ agents?\" → Are they independent? YES = send ALL Agent calls in ONE message with run_in_background: true.
+3. \"Am I about to make 2+ tool calls?\" → Are they independent? YES = send ALL in ONE message.
+4. \"Is this command slow (>30s)?\" → YES = run_in_background, continue other work.
+VIOLATING THIS CHECKLIST IS A BUG. You are monitored — sequential Agent spawns trigger warnings.
+
+PARALLELISM RULES:
+- Task touches 2+ independent files → spawn Agent per file, ALL in one message. DO NOT edit files yourself sequentially.
+- User gave N requests → N agents, all parallel, one message.
+- Task spans multiple repos → one agent per repo, parallel.
+- Independent tool calls (Read, Bash, Write) → batch in one message.
+- NEVER spawn Agent, wait for result, then spawn another Agent for independent work. Send both Agent calls together.
 
 MODEL ROUTING — when spawning subagents, select model per task:
 - haiku: lint, format, rename, config, simple lookups (fast + cheap)

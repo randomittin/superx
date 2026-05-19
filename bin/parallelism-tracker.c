@@ -38,6 +38,7 @@
 
 #define BATCH_THRESHOLD_MS 500
 #define SOLO_TRIGGER 3
+#define AGENT_SOLO_TRIGGER 2
 
 typedef struct {
     long long last_ts;
@@ -46,6 +47,9 @@ typedef struct {
     long total_turns;
     long current_turn_size;
     long calls;
+    long agent_solo;
+    long agent_calls;
+    long agent_batched;
 } state_t;
 
 static long long now_ms(void) {
@@ -114,6 +118,9 @@ static int read_state(const char *path, state_t *s) {
         else if (strcmp(key, "total_turns") == 0)   s->total_turns       = strtol(val, NULL, 10);
         else if (strcmp(key, "current_turn_size") == 0) s->current_turn_size = strtol(val, NULL, 10);
         else if (strcmp(key, "calls") == 0)         s->calls             = strtol(val, NULL, 10);
+        else if (strcmp(key, "agent_solo") == 0)    s->agent_solo        = strtol(val, NULL, 10);
+        else if (strcmp(key, "agent_calls") == 0)   s->agent_calls       = strtol(val, NULL, 10);
+        else if (strcmp(key, "agent_batched") == 0)  s->agent_batched     = strtol(val, NULL, 10);
     }
     fclose(f);
     return 0;
@@ -130,6 +137,9 @@ static int write_state_atomic(const char *path, const state_t *s) {
     fprintf(f, "total_turns=%ld\n", s->total_turns);
     fprintf(f, "current_turn_size=%ld\n", s->current_turn_size);
     fprintf(f, "calls=%ld\n", s->calls);
+    fprintf(f, "agent_solo=%ld\n", s->agent_solo);
+    fprintf(f, "agent_calls=%ld\n", s->agent_calls);
+    fprintf(f, "agent_batched=%ld\n", s->agent_batched);
     fflush(f);
     fclose(f);
     if (rename(tmp, path) != 0) {
@@ -174,10 +184,26 @@ static int do_check(const char *tool) {
 
     s.last_ts = now;
 
+    int is_agent = (tool && strcmp(tool, "Agent") == 0);
+    if (is_agent) {
+        s.agent_calls += 1;
+        if (s.last_ts != 0 && delta < BATCH_THRESHOLD_MS) {
+            s.agent_batched += 1;
+            s.agent_solo = 0;
+        } else {
+            s.agent_solo += 1;
+        }
+    }
+
     int nudge = 0;
+    int agent_nudge = 0;
     if (s.solo >= SOLO_TRIGGER) {
         nudge = 1;
         s.solo = 0;
+    }
+    if (is_agent && s.agent_solo >= AGENT_SOLO_TRIGGER) {
+        agent_nudge = 1;
+        s.agent_solo = 0;
     }
 
     write_state_atomic(spath, &s);
@@ -185,7 +211,14 @@ static int do_check(const char *tool) {
     flock(lock_fd, LOCK_UN);
     close(lock_fd);
 
-    if (nudge) {
+    if (agent_nudge) {
+        fprintf(stderr,
+                "[superx] SEQUENTIAL AGENT SPAWNS DETECTED. "
+                "You spawned %d Agent calls in separate turns. "
+                "If these tasks are independent, send ALL Agent calls in ONE message "
+                "with run_in_background: true. Sequential agents = slow. Parallel = fast.\n",
+                AGENT_SOLO_TRIGGER);
+    } else if (nudge) {
         fprintf(stderr,
                 "[superx parallelism] %d consecutive solo tool turns (last: %s). "
                 "If next calls are independent, batch them in one assistant message "
@@ -225,14 +258,20 @@ static int do_grade(void) {
             fprintf(m,
                     "{\"ts\":\"%s\",\"session\":\"%s\",\"metric\":\"parallelism\","
                     "\"total_turns\":%ld,\"batch_turns\":%ld,\"total_calls\":%ld,"
-                    "\"parallel_ratio\":%.2f}\n",
-                    ts, sid, s.total_turns, s.batch_turns, s.calls, ratio);
+                    "\"parallel_ratio\":%.2f,"
+                    "\"agent_calls\":%ld,\"agent_batched\":%ld}\n",
+                    ts, sid, s.total_turns, s.batch_turns, s.calls, ratio,
+                    s.agent_calls, s.agent_batched);
             fclose(m);
         }
     }
 
-    printf("[superx] parallelism: %ld batched / %ld turns (ratio %.2f, %ld calls)\n",
+    printf("[superx] parallelism: %ld batched / %ld turns (ratio %.2f, %ld calls)",
            s.batch_turns, s.total_turns, ratio, s.calls);
+    if (s.agent_calls > 0) {
+        printf(" | agents: %ld calls, %ld batched", s.agent_calls, s.agent_batched);
+    }
+    printf("\n");
 
     unlink(spath);
     unlink(lpath);
