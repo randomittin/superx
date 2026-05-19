@@ -35,8 +35,22 @@ if [ -f "$PLANNING/dispatch/queue.jsonl" ]; then
   DISPATCH="${running}run/${pending}q"
 fi
 
+# Active goal indicator
+GOAL=""
+if [ -f "$PROJECT/superx-state.json" ]; then
+  GOAL=$(python3 -c "
+import json
+try:
+    s = json.load(open('$PROJECT/superx-state.json'))
+    c = s.get('goal', {}).get('condition')
+    if c: print('goal')
+except: pass
+" 2>/dev/null)
+fi
+
 # Output compact line
 printf "[SUPERX] %s" "$PHASE"
 [ -n "$WAVE_INFO" ] && printf " | %s tasks" "$WAVE_INFO"
 [ -n "$DISPATCH" ] && printf " | %s" "$DISPATCH"
+[ -n "$GOAL" ] && printf " | ◎ %s" "$GOAL"
 printf "\n"

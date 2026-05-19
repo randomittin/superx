@@ -119,3 +119,34 @@ Write the final plan to `.planning/PLAN-{phase}.md`. Include:
 - Dependency graph (text-based)
 - Verification checklist results
 - Total estimated wall-clock time (sum of sequential wave times, NOT sum of all task times)
+
+## Goal Condition Generation
+
+After writing the plan, generate a `/goal` condition string for the orchestrator.
+
+### Process:
+1. Collect all acceptance criteria from every task in the plan
+2. Prioritize criteria that are observable from conversation transcript (the `/goal` evaluator reads transcript only, not filesystem)
+3. Synthesize into a single condition under 4000 characters
+4. Always append baseline: "all tests pass, lint clean, build succeeds"
+
+### Output:
+At the end of the plan file, add a dedicated section:
+
+```
+## Goal Condition
+
+Set via `/goal` for autonomous execution:
+
+\`\`\`
+<synthesized condition string>
+\`\`\`
+```
+
+### Rules for good goal conditions:
+- Use AND semantics (all must be true)
+- Prefer test/build command results over file existence (evaluator can't read files)
+- Keep under 4000 chars — truncate by dropping lower-priority criteria
+- Good: "API endpoint /users returns 200 with user list, all tests pass"
+- Bad: "src/api/users.ts exists and exports getUsers"
+- Frame as outcomes Claude can demonstrate in conversation output

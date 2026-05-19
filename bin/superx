@@ -517,9 +517,39 @@ if [[ "${1:-}" == "--resume" || "${1:-}" == "-r" ]]; then
     echo "  ▸ superx state loaded"
   fi
 
+  # Restore active goal from state or checkpoint
+  GOAL_CONDITION=""
+  if [ -f "$WORK_DIR/superx-state.json" ]; then
+    GOAL_CONDITION=$(python3 -c "
+import json
+try:
+    with open('$WORK_DIR/superx-state.json') as f:
+        s = json.load(f)
+    cond = s.get('goal', {}).get('condition')
+    if cond: print(cond)
+except: pass
+" 2>/dev/null)
+  fi
+  if [ -z "$GOAL_CONDITION" ] && [ -f "$WORK_DIR/.planning/settings.json" ]; then
+    GOAL_CONDITION=$(python3 -c "
+import json
+try:
+    with open('$WORK_DIR/.planning/settings.json') as f:
+        s = json.load(f)
+    cond = s.get('goal', {}).get('condition')
+    if cond: print(cond)
+except: pass
+" 2>/dev/null)
+  fi
+
   # Write preamble for resume
   RESUME_PREAMBLE_FILE=$(mktemp /tmp/superx-resume-XXXXXX)
-  echo "${PREAMBLE:-superx resumed}" > "$RESUME_PREAMBLE_FILE"
+  if [ -n "$GOAL_CONDITION" ]; then
+    printf "superx resumed.\n\nRESTORE GOAL: A goal was active in the previous session. Restore it immediately:\n/goal %s\n\nThen read .planning/CHECKPOINT.md and continue working." "$GOAL_CONDITION" > "$RESUME_PREAMBLE_FILE"
+    printf "  \033[38;2;224;86;160m▸ Goal restored\033[0m\n"
+  else
+    echo "${PREAMBLE:-superx resumed}" > "$RESUME_PREAMBLE_FILE"
+  fi
 
   # Activate project-aware skills
   SKILL_MGR="$PLUGIN_DIR/bin/skill-manager"
@@ -596,6 +626,7 @@ if [[ "${1:-}" == "--help" || "${1:-}" == "-h" ]]; then
   echo "  superx --resume         Resume last session (conversation + .planning state)"
   echo "  superx --dashboard      Start the pixel dashboard (http://localhost:8080)"
   echo "  superx --auto           Use auto-mode (safer alternative to skip-permissions)"
+  echo "  superx --no-goal         Disable goal-driven execution for this run"
   echo "  superx --skip-checkpoint Start fresh, ignore last checkpoint/settings"
   echo "  superx --no-autocommit  Disable auto git commits for this project"
   echo "  superx --autocommit     Re-enable auto git commits"
@@ -628,6 +659,11 @@ if [[ "${1:-}" == "--auto" ]]; then
 fi
 if [[ "${1:-}" == "--skip-checkpoint" || "${1:-}" == "--fresh" ]]; then
   SKIP_CHECKPOINT=true
+  shift
+fi
+USE_GOAL=true
+if [[ "${1:-}" == "--no-goal" ]]; then
+  USE_GOAL=false
   shift
 fi
 

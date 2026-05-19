@@ -498,9 +498,72 @@ When spawning an agent, provide:
 
 ---
 
-## 6. The "At It" Execution Loop
+## 6. Goal-Driven Execution
 
-This is your core loop. Run it continuously:
+superx uses Claude Code's `/goal` command for autonomous execution with built-in verification. This replaces manual looping with native goal evaluation — a separate Haiku evaluator checks completion after each turn.
+
+### 6a. Setting the Goal
+
+After the planner creates a plan with acceptance criteria (Phase 3), synthesize a goal condition:
+
+1. Collect ALL acceptance criteria from `.planning/PLAN-{phase}.md`
+2. Aggregate into a single goal condition string (max 4000 chars)
+3. Focus on observable outcomes from conversation transcript (the evaluator has no filesystem access — it only reads what appears in the conversation)
+4. Always include baseline checks:
+   - "all tests pass"
+   - "lint clean"
+   - "build succeeds"
+   - "no TODO/stub/placeholder code in changed files"
+5. Add domain-specific criteria from the plan
+
+**Goal condition template:**
+```
+/goal <plan-specific criteria>, all tests pass, lint clean, build succeeds, no TODO/stub/placeholder in changed files
+```
+
+**Example:**
+```
+/goal login API returns JWT on valid credentials, auth middleware rejects expired tokens, rate limiter blocks after 100 req/min, all tests pass, lint clean, build succeeds
+```
+
+6. Set the goal: invoke `/goal <condition>`
+7. Track it: `superx-state goal-set "<condition>" "planner"`
+8. Proceed with wave execution (Section 5)
+
+### 6b. Goal Lifecycle
+
+- **One goal per session.** When a new plan is created, set a new goal (replaces old).
+- **Check status:** Bare `/goal` shows active condition and evaluator assessment.
+- **Clear:** `/goal clear` when switching tasks or user wants manual control.
+- **Restore:** On session resume (`--resume`), restore goal from `superx-state goal-get`.
+- **Checkpoint:** `/superx:save` persists active goal condition for cross-session restore.
+
+### 6c. Two-Tier Verification
+
+The Haiku evaluator (built into `/goal`) and the verifier agent serve complementary roles:
+
+| Layer | Model | Access | Checks | Cost |
+|-------|-------|--------|--------|------|
+| `/goal` evaluator | Haiku | Conversation transcript only | "Does it look done from the conversation?" | Very low |
+| Verifier agent | Opus | Full filesystem + commands | Runs actual acceptance criteria commands | Higher |
+
+**Flow:**
+1. Work proceeds through wave execution
+2. After each turn, the `/goal` evaluator checks the transcript
+3. If evaluator says "not done" → continue to next wave (or retry failed tasks)
+4. If evaluator says "done" → spawn verifier agent for deep filesystem confirmation
+5. If verifier passes → truly done, ship it
+6. If verifier fails → evaluator was premature. Continue working.
+
+This prevents premature completion claims. The Haiku evaluator is cheap enough to run every turn; the Opus verifier only runs when the evaluator is optimistic.
+
+### 6d. When NOT to Set Per-Wave Goals
+
+Only one goal active at a time. Do NOT set per-wave goals — this replaces the overall goal. Keep the top-level goal set for the entire plan. Wave-level verification uses acceptance criteria checks directly (non-goal-based). The `/goal` tracks overall plan completion.
+
+### 6e. Fallback: Manual Loop
+
+If `/goal` is unavailable (older Claude Code version <2.1.139), fall back to the manual loop:
 
 ```
 while task_not_complete:
@@ -521,32 +584,22 @@ while task_not_complete:
      - Levels 1-2: escalate to user with full context
 ```
 
-### Loop termination conditions:
-- All sub-projects complete
-- All tests pass
-- All quality gates clear
-- User confirms completion (at levels 1-2)
-
-### Error Recovery
+### 6f. Error Recovery
 
 When an agent fails (crash, context limit, garbage output, timeout):
 
 1. **Detect**: Agent returns an error, produces no output files, or output fails grading
 2. **Classify**:
-   - **Transient** (timeout, context overflow): Retry with a narrower scope — split the sub-project in half
-   - **Systematic** (wrong approach, bad assumptions): Re-spawn architect agent to re-plan that sub-project
+   - **Transient** (timeout, context overflow): Retry with narrower scope — split the sub-project
+   - **Systematic** (wrong approach, bad assumptions): Re-spawn architect agent to re-plan
    - **Blocking** (missing dependency, ambiguous requirement): Escalate to user
 3. **Retry policy**:
    - Max 2 retries per sub-project
    - On first retry: same agent type, same scope, fresh context
-   - On second retry: reduce scope (split sub-project) or switch agent approach
+   - On second retry: reduce scope (split sub-project) or switch approach
    - After 2 retries: mark sub-project as `"status": "failed"` and escalate
-4. **State tracking**: Log failures in agent_history:
-   ```bash
-   superx-state set '.agent_history[-1].status' '"failed"'
-   superx-state set '.agent_history[-1].error' '"<brief description>"'
-   ```
-5. **Communication**: "Agent for [sub-project] failed: [brief reason]. Retrying with [adjusted approach]." If escalating: "I've tried twice and can't get [sub-project] working. The issue is [specific problem]. Need your input."
+4. **State tracking**: Log failures in agent_history
+5. **Communication**: "Agent for [sub-project] failed: [reason]. Retrying with [adjusted approach]."
 
 Never silently drop a failed sub-project. Either retry, escalate, or explicitly mark as failed.
 

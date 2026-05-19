@@ -104,6 +104,31 @@ This file is read mechanically on every `superx` launch (injected into preamble 
 git add -A && git commit -m "superx: checkpoint — [brief description]"
 ```
 
+### 5. Goal checkpoint
+
+If a `/goal` is currently active, save it for next session restoration:
+
+1. Check current goal: `superx-state goal-get`
+2. If a goal is active (not "none"), include in CHECKPOINT.md under a new section:
+
+```markdown
+## Active Goal
+Condition: <the goal condition string>
+Source: <planner|launcher|manual>
+
+On resume, restore with: `/goal <condition>`
+```
+
+3. Also persist in `.planning/settings.json` under a `goal` key:
+```json
+{
+  "goal": {
+    "condition": "<the condition string>",
+    "source": "planner"
+  }
+}
+```
+
 ## Rules
 - ALWAYS write `.planning/CHECKPOINT.md` — this is the most important file
 - ALWAYS write `.planning/settings.json` — project settings must persist
@@ -111,4 +136,5 @@ git add -A && git commit -m "superx: checkpoint — [brief description]"
 - Include commit hashes for everything completed
 - The "Resume Instructions" section should be specific enough that a fresh Claude session can start working immediately without asking questions
 - The "Project Settings" section captures how THIS project likes to be built — commands, parallelism, model preferences
+- If a /goal is active, ALWAYS persist it to CHECKPOINT.md and settings.json
 - Update `settings.json` whenever you discover a new command or preference (don't wait for checkpoint)

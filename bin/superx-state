@@ -54,6 +54,9 @@ Commands:
   add-tokens <count>            Add tokens to budget tracker (warns if over limit)
   set-budget <limit>            Set token budget limit
   budget                        Show token usage summary
+  goal-set <condition> [source]  Set active goal condition
+  goal-clear                     Clear active goal
+  goal-get                       Get current goal condition
   migrate                       Migrate state file to latest schema version
   status                        Print a formatted status summary
 EOF
@@ -104,6 +107,11 @@ cmd_init() {
     "total_agents_spawned": 0,
     "token_limit": null,
     "warn_at_percent": 80
+  },
+  "goal": {
+    "condition": null,
+    "set_at": null,
+    "source": null
   }
 }
 INIT
@@ -230,6 +238,18 @@ cmd_status() {
   echo "  Tokens used:  ${total_tok}"
   echo "  Token limit:  ${limit_tok}"
   echo "  Agents total: $(jq -r '.budget.total_agents_spawned // 0' "$STATE_FILE")"
+  echo ""
+  echo "Goal:"
+  local goal_cond
+  goal_cond=$(jq -r '.goal.condition // "none"' "$STATE_FILE")
+  if [ "$goal_cond" != "none" ] && [ "$goal_cond" != "null" ]; then
+    echo "  Active:     yes"
+    echo "  Condition:  ${goal_cond:0:80}..."
+    echo "  Set at:     $(jq -r '.goal.set_at // "unknown"' "$STATE_FILE")"
+    echo "  Source:     $(jq -r '.goal.source // "unknown"' "$STATE_FILE")"
+  else
+    echo "  Active:     no"
+  fi
 }
 
 cmd_add_tokens() {
@@ -296,6 +316,12 @@ cmd_migrate() {
     changed=1
   fi
 
+  # v1.1.0 → v1.2.0: add goal tracking
+  if ! jq -e '.goal' "$tmp" >/dev/null 2>&1; then
+    jq '. + {"goal": {"condition": null, "set_at": null, "source": null}}' "$tmp" > "${tmp}.new" && mv "${tmp}.new" "$tmp"
+    changed=1
+  fi
+
   # v1.0.0 → v1.1.0: add communication_log if missing
   if ! jq -e '.communication_log' "$tmp" >/dev/null 2>&1; then
     jq '. + {"communication_log": []}' "$tmp" > "${tmp}.new" && mv "${tmp}.new" "$tmp"
@@ -310,14 +336,46 @@ cmd_migrate() {
 
   # Update version
   if [ "$changed" -eq 1 ]; then
-    jq '.version = "1.1.0"' "$tmp" > "${tmp}.new" && mv "${tmp}.new" "$tmp"
+    jq '.version = "1.2.0"' "$tmp" > "${tmp}.new" && mv "${tmp}.new" "$tmp"
     mv "$tmp" "$STATE_FILE"
-    echo "Migrated superx-state.json to v1.1.0"
+    echo "Migrated superx-state.json to v1.2.0"
   else
     rm "$tmp"
     echo "State file is already up to date."
   fi
   release_lock
+}
+
+cmd_goal_set() {
+  ensure_state
+  acquire_lock
+  local condition="${1:?goal condition required}"
+  local source="${2:-agent}"
+  local ts
+  ts=$(date -u +"%Y-%m-%dT%H:%M:%SZ")
+  local tmp
+  tmp=$(mktemp)
+  jq --arg cond "$condition" --arg src "$source" --arg ts "$ts" \
+    '.goal.condition = $cond | .goal.set_at = $ts | .goal.source = $src' \
+    "$STATE_FILE" > "$tmp" && mv "$tmp" "$STATE_FILE"
+  release_lock
+  echo "Goal set: $condition"
+}
+
+cmd_goal_clear() {
+  ensure_state
+  acquire_lock
+  local tmp
+  tmp=$(mktemp)
+  jq '.goal.condition = null | .goal.set_at = null | .goal.source = null' \
+    "$STATE_FILE" > "$tmp" && mv "$tmp" "$STATE_FILE"
+  release_lock
+  echo "Goal cleared."
+}
+
+cmd_goal_get() {
+  ensure_state
+  jq -r '.goal.condition // "none"' "$STATE_FILE"
 }
 
 # Dispatch
@@ -333,6 +391,9 @@ case "${1:-}" in
   add-tokens)         cmd_add_tokens "${2:-}" ;;
   set-budget)         cmd_set_budget "${2:-}" ;;
   budget)             cmd_budget_status ;;
+  goal-set)           cmd_goal_set "${2:-}" "${3:-}" ;;
+  goal-clear)         cmd_goal_clear ;;
+  goal-get)           cmd_goal_get ;;
   migrate)            cmd_migrate ;;
   status)             cmd_status ;;
   *)                  usage; exit 1 ;;
