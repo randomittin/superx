@@ -908,6 +908,8 @@ MODEL ROUTING — when spawning subagents, select model per task:
 On failure → escalate: haiku→sonnet→opus. Never retry same tier.
 Check .planning/settings.json for project-specific overrides before spawning.
 
+GOAL-DRIVEN EXECUTION: After planning, ALWAYS set /goal with synthesized acceptance criteria. The /goal evaluator (Haiku) checks completion each turn — you keep working until it says done. After evaluator says done, spawn verifier agent for deep filesystem check. Two-tier: cheap evaluator + expensive verifier. Only one goal active at a time. Track via \`superx-state goal-set\`. On resume, restore with /goal. Use \`/goal clear\` to cancel. Fallback to manual loop if /goal unavailable.
+
 CONTINUATION: NEVER exit with tasks remaining. Run acceptance criteria before marking done. Run /superx:save every 30 min or after each milestone — do NOT wait until context is full.
 
 TIMELINES: NEVER estimate work in weeks or months. You are AI with parallel agents — human work-week cadence is meaningless. When presenting plans or phases:
@@ -955,6 +957,7 @@ YOUR CAPABILITIES (use all of these aggressively):
 - Tier 0: format, lint-fix, sort imports → run bash directly, skip LLM
 - Magic keywords: ultrawork=max parallel, quick=skip planning, secure=security-first, incident=emergency, plan=plan-only, ship=end-to-end
 - Seeker: pull pod logs → raise GitHub issues. Fixer: pick up issues → fix branch → PR
+- /goal: set completion condition → Haiku evaluator checks each turn → autonomous until done. Use after planning.
 - /superx:save: checkpoint state for next session. /superx:maintain: seek+fix pipeline
 - /superx:autocommit: toggle auto git commits
 - Session forking: \`session-fork run <waves.json>\` spawns parallel \`claude -p\` processes, dependency-ordered waves, auto-collects results
@@ -1124,14 +1127,24 @@ cleanup() {
 trap cleanup EXIT
 
 if [ $# -gt 0 ]; then
-  # Non-interactive: run the prompt (preamble as system prompt + user's task via -p)
+  # Non-interactive: wrap task in goal-driven execution
+  USER_TASK="${*}"
+  if [ "$USE_GOAL" = true ]; then
+    GOAL_PROMPT="/goal ${USER_TASK} — fully implemented, all tests pass, lint clean, build succeeds, no TODO/stub/placeholder code in changed files
+
+${USER_TASK}"
+    printf "  \033[38;2;224;86;160m▸ Goal-driven mode\033[0m\n"
+  else
+    GOAL_PROMPT="$USER_TASK"
+  fi
+
   claude \
     --agent superx \
     $PERMISSION_FLAG \
     $MODEL_FLAG \
     --plugin-dir "$PLUGIN_DIR" \
     --append-system-prompt-file "$PREAMBLE_FILE" \
-    -p "${*}"
+    -p "$GOAL_PROMPT"
 else
   # Interactive mode: preamble injected via system prompt file, Claude stays interactive
   claude \

@@ -32,7 +32,7 @@ acquire_lock() {
 }
 
 release_lock() {
-  rmdir "$LOCK_FILE" 2>/dev/null
+  rmdir "$LOCK_FILE" 2>/dev/null || true
 }
 
 # Ensure lock is released on exit (normal, error, or signal)
