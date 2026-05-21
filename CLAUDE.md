@@ -1,5 +1,12 @@
 # Project Conventions (managed by superx)
 
+## Parallelism (MANDATORY)
+- 2+ independent tool calls → send ALL in ONE message (batch Read, Write, Edit, Bash)
+- 2+ independent tasks → spawn ALL agents in ONE message with `run_in_background: true`
+- Task touches 2+ independent files → one agent per file, ALL spawned together
+- NEVER: spawn agent → wait → spawn another agent for independent work
+- NEVER: read file → read next file → read next file (batch all reads in one message)
+
 ## Rules
 - All code, configs, docs go in this project directory
 - Planning state lives in `.planning/` (human-readable, git-committed)

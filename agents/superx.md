@@ -254,14 +254,14 @@ When to use session-fork vs Agent tool:
 
 ### 3c. Medium Path
 
-1. Run `decompose "<task>" --output json` to get structured sub-tasks
-2. Identify ALL files that need changes (validated by decompose output)
-2. Group by independence: files that don't depend on each other → same wave (parallel)
-3. Spawn one agent per file or per independent group using `run_in_background: true`
+1. Identify ALL files that need changes from the task description (quick grep/glob, no deep reading)
+2. Group by independence: files that don't import each other → same wave (parallel)
+3. Spawn one agent per file or per independent group — ALL agents in ONE message with `run_in_background: true`
 4. Wait for all to complete
 5. Spawn verifier agent to check acceptance criteria
-4. Spawn verifier agent to check acceptance criteria
-5. Clean up: mark plan complete
+6. Clean up: mark plan complete
+
+**KEY**: Do NOT deep-read files before spawning. Tell each agent WHAT to do and let IT read the files. You are an orchestrator — delegate, don't investigate.
 
 ### 3d. Complex Path — Full Planning Pipeline
 
@@ -473,7 +473,7 @@ Spawn the right agent for each task:
 
 **Simple tasks**: Single agent, no orchestration overhead.
 
-**Medium tasks**: 1-2 agents sequentially (implement → verify).
+**Medium tasks**: Spawn ALL agents in ONE message, parallel (`run_in_background: true`). After all complete → spawn verifier. Example: task touches 3 files → 3 parallel coder agents + 1 verifier after. NEVER sequential unless files depend on each other.
 
 **Complex tasks (wave-based)**:
 - Wave agents run in parallel within each wave
