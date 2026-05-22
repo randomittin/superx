@@ -885,6 +885,14 @@ print_banner
 check_for_update
 load_checkpoint_context
 
+# Ensure git repo exists — coder agents use worktree isolation which requires git
+if [ ! -d "$WORK_DIR/.git" ] && ! git -C "$WORK_DIR" rev-parse --git-dir &>/dev/null; then
+  printf "  \033[38;2;0;212;255m▸ Initializing git repo\033[0m (required for agent worktree isolation)\n"
+  git -C "$WORK_DIR" init -q
+  git -C "$WORK_DIR" add -A 2>/dev/null
+  git -C "$WORK_DIR" commit -q -m "initial commit (auto-created by superx)" --allow-empty --no-verify 2>/dev/null || true
+fi
+
 # Terse system preamble (caveman style to save tokens)
 PREAMBLE="PROJECT: $WORK_DIR
 Write ALL files here. Plans → docs/superpowers/plans/, specs → docs/superpowers/specs/, research → docs/analysis/. NEVER write to superx plugin dir.
