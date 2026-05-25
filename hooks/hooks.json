@@ -24,7 +24,7 @@
         "hooks": [
           {
             "type": "command",
-            "command": "\"${CLAUDE_PLUGIN_ROOT:-/Users/rj/Downloads/superx}/bin/parallelism-tracker\" check Agent 2>&1 || true"
+            "command": "INPUT=$(cat); DESC=$(echo \"$INPUT\" | jq -r '.tool_input.description // empty'); TRACKER=\"${CLAUDE_PLUGIN_ROOT:-/Users/rj/Downloads/superx}/bin/parallelism-tracker\"; OUTPUT=$(\"$TRACKER\" check Agent 2>&1) || true; if echo \"$OUTPUT\" | grep -q 'SEQUENTIAL AGENT SPAWNS'; then if ! echo \"$DESC\" | grep -qiE '(depends|sequential|after previous|wait for|result of|following up|verify|review)'; then echo '{\"error\": \"BLOCKED: Sequential agent spawn. You already spawned an Agent solo in a previous turn. REQUIRED: List ALL remaining agents needed, then send them ALL in ONE message with run_in_background: true. If this agent genuinely depends on a prior agent result, add depends-on to the description to bypass.\"}'; exit 2; fi; fi"
           }
         ]
       },
