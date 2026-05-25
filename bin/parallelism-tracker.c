@@ -220,9 +220,12 @@ static int do_check(const char *tool) {
                 AGENT_SOLO_TRIGGER);
     } else if (nudge) {
         fprintf(stderr,
-                "[superx parallelism] %d consecutive solo tool turns (last: %s). "
-                "If next calls are independent, batch them in one assistant message "
-                "(multiple tool_use blocks).\n",
+                "[superx] STOP READING — DELEGATE NOW. "
+                "%d consecutive solo tool calls (last: %s). "
+                "You are the orchestrator, not the implementer. "
+                "Spawn parallel agents and let THEM read/investigate. "
+                "Your job: identify tasks → spawn agents → verify results. "
+                "Do NOT deep-read files yourself.\n",
                 SOLO_TRIGGER, tool ? tool : "unknown");
     }
     return 0;
