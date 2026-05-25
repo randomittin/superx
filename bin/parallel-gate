@@ -1,0 +1,89 @@
+#!/usr/bin/env bash
+# parallel-gate — UserPromptSubmit hook. Detects multi-part tasks and injects
+# a delegation directive at decision time (before the model responds).
+#
+# Why this exists: system-prompt instructions to "delegate / parallelize" are
+# read once at session start and forgotten by the time the model acts. A
+# UserPromptSubmit hook fires fresh on EVERY prompt — it puts the directive
+# right where the model decides what to do, so it can't drift past it.
+#
+# Heuristic only — no LLM call, ~1ms. Biases toward detection: a false
+# "multi-part" on a single task just makes the model spawn one agent (cheap).
+# Missing a real multi-part task is the expensive failure we're preventing.
+#
+# Reads PreToolUse-style JSON on stdin: {"prompt": "..."}.
+# On multi-part detection, prints JSON with hookSpecificOutput.additionalContext
+# which Claude Code injects as context for the upcoming turn.
+
+set -euo pipefail
+
+INPUT=$(cat 2>/dev/null || echo '{}')
+
+PROMPT=$(printf '%s' "$INPUT" | jq -r '.prompt // empty' 2>/dev/null || echo "")
+[ -z "$PROMPT" ] && exit 0
+
+# Lowercase copy for matching
+LOWER=$(printf '%s' "$PROMPT" | tr '[:upper:]' '[:lower:]')
+
+# Skip trivial prompts (greetings, single short questions, status checks)
+WORD_COUNT=$(printf '%s' "$PROMPT" | wc -w | tr -d ' ')
+if [ "$WORD_COUNT" -lt 4 ]; then exit 0; fi
+
+# Skip pure questions / status checks — these aren't work tasks
+case "$LOWER" in
+  "is it done"*|"are you done"*|"status"*|"what"*|"why"*|"how"*|"explain"*|"show me"*|"did you"*|"can you tell"*)
+    exit 0 ;;
+esac
+
+score=0
+
+# Signal 1: numbered list (1. 2. 3. or 1) 2) 3))
+numbered=$(printf '%s\n' "$PROMPT" | grep -cE '^[[:space:]]*[0-9]+[.)]' || true)
+if [ "$numbered" -ge 2 ]; then score=$((score + numbered)); fi
+
+# Signal 2: bullet list
+bullets=$(printf '%s\n' "$PROMPT" | grep -cE '^[[:space:]]*[-*•]' || true)
+if [ "$bullets" -ge 2 ]; then score=$((score + bullets)); fi
+
+# Signal 3: task-separating connectives (each = likely a distinct subtask)
+for kw in " also" " also," "further" "additionally" "plus," "as well as" " then " "after that" "next," "moreover" " and also"; do
+  if printf '%s' "$LOWER" | grep -qF "$kw"; then score=$((score + 1)); fi
+done
+
+# Signal 4: multiple distinct imperative verbs (separate actions)
+verbs="add fix update create check build write refactor remove implement analyze generate review test deploy migrate rename delete configure setup install patch audit document optimize"
+verb_hits=0
+for v in $verbs; do
+  if printf '%s' "$LOWER" | grep -qE "\b${v}\b"; then verb_hits=$((verb_hits + 1)); fi
+done
+if [ "$verb_hits" -ge 2 ]; then score=$((score + verb_hits - 1)); fi
+
+# Signal 5: explicit multi-part language
+for kw in "multi-part" "multipart" "several things" "few things" "a couple things" "multiple" "in parallel" "at the same time" "simultaneously"; do
+  if printf '%s' "$LOWER" | grep -qF "$kw"; then score=$((score + 2)); fi
+done
+
+# Threshold: 2+ = multi-part
+if [ "$score" -lt 2 ]; then exit 0; fi
+
+# Estimate part count (cap at 10 — max parallel agents)
+parts=$score
+[ "$parts" -gt 10 ] && parts=10
+[ "$parts" -lt 2 ] && parts=2
+
+DIRECTIVE="⚡ MULTI-PART TASK DETECTED (~${parts} independent subtasks).
+
+MANDATORY EXECUTION CONTRACT for this turn:
+1. Your FIRST response MUST spawn parallel agents — one Agent tool call per independent subtask, ALL in this single message, each with run_in_background: true.
+2. Do NOT read/grep/investigate files yourself first. The agents read their own files. You are the orchestrator (CTO), not the implementer.
+3. Doing the work yourself (Read/Edit/Bash) instead of delegating = FAILURE of your core function.
+4. Only exception: a quick \`ls\`/\`grep\` to learn WHICH files exist so you can scope agents — then spawn immediately.
+5. If subtasks have dependencies, spawn the independent ones now in parallel; chain the dependent ones after (mark them 'depends on ...').
+
+Output a one-line delegation plan, then the parallel Agent calls. Go."
+
+# Emit as additionalContext (Claude Code injects this into the turn)
+jq -n --arg ctx "$DIRECTIVE" \
+  '{hookSpecificOutput: {hookEventName: "UserPromptSubmit", additionalContext: $ctx}}'
+
+exit 0
