@@ -25,7 +25,7 @@
         "hooks": [
           {
             "type": "command",
-            "command": "INPUT=$(cat); TOOL=$(echo \"$INPUT\" | jq -r '.tool_name // \"unknown\"'); \"${CLAUDE_PLUGIN_ROOT:-/Users/rj/Downloads/superx}/bin/parallelism-tracker\" check \"$TOOL\" 2>&1 || true"
+            "command": "INPUT=$(cat); TOOL=$(printf '%s' \"$INPUT\" | jq -r '.tool_name // \"unknown\"' 2>/dev/null || echo unknown); \"${CLAUDE_PLUGIN_ROOT:-/Users/rj/Downloads/superx}/bin/parallelism-tracker\" check \"$TOOL\" 2>&1 || true"
           }
         ]
       },
@@ -34,7 +34,7 @@
         "hooks": [
           {
             "type": "command",
-            "command": "INPUT=$(cat); DESC=$(echo \"$INPUT\" | jq -r '.tool_input.description // empty'); TRACKER=\"${CLAUDE_PLUGIN_ROOT:-/Users/rj/Downloads/superx}/bin/parallelism-tracker\"; OUTPUT=$(\"$TRACKER\" check Agent 2>&1) || true; if echo \"$OUTPUT\" | grep -q 'SEQUENTIAL AGENT SPAWNS'; then if ! echo \"$DESC\" | grep -qiE '(depends|sequential|after previous|wait for|result of|following up|verify|review)'; then echo '{\"error\": \"BLOCKED: Sequential agent spawn. You already spawned an Agent solo in a previous turn. REQUIRED: List ALL remaining agents needed, then send them ALL in ONE message with run_in_background: true. If this agent genuinely depends on a prior agent result, add depends-on to the description to bypass.\"}'; exit 2; fi; fi"
+            "command": "INPUT=$(cat); TRACKER=\"${CLAUDE_PLUGIN_ROOT:-/Users/rj/Downloads/superx}/bin/parallelism-tracker\"; OUTPUT=$(\"$TRACKER\" check Agent 2>&1) || true; if echo \"$OUTPUT\" | grep -q 'SEQUENTIAL AGENT SPAWNS'; then DESC=$(printf '%s' \"$INPUT\" | jq -r '.tool_input.description // empty' 2>/dev/null); if [ $? -eq 0 ] && [ -n \"$DESC\" ] && ! printf '%s' \"$DESC\" | grep -qiE '(depends|sequential|after previous|wait for|result of|following up|verify|review)'; then echo '{\"error\": \"BLOCKED: Sequential agent spawn. List ALL remaining agents and send them in ONE message with run_in_background: true. Add depends-on, verify, or review to the description to bypass.\"}'; exit 2; fi; fi"
           }
         ]
       },
@@ -43,7 +43,7 @@
         "hooks": [
           {
             "type": "command",
-            "command": "INPUT=$(cat); CONTENT=$(echo \"$INPUT\" | jq -r '.tool_input.content // .tool_input.new_string // empty'); TOOL=$(echo \"$INPUT\" | jq -r '.tool_name // \"unknown\"'); \"${CLAUDE_PLUGIN_ROOT:-/Users/rj/Downloads/superx}/bin/parallelism-tracker\" check \"$TOOL\" 2>&1 || true; if [ -z \"$CONTENT\" ]; then exit 0; fi; if echo \"$CONTENT\" | grep -qiE '(//\\s*TODO|#\\s*TODO|FIXME|XXX|NotImplementedError|unimplemented!\\(\\)|todo!\\(\\)|placeholder|\\bstub\\b|\\bshim\\b)'; then echo '{\"error\": \"BLOCKED: stub/placeholder code detected. Write real implementation or explain why you cannot.\"}'; exit 2; fi; if echo \"$CONTENT\" | grep -qE 'throw new Error\\([\"'\"'\"'\"]not implemented[\"'\"'\"'\"]\\)'; then echo '{\"error\": \"BLOCKED: stub/placeholder code detected. Write real implementation or explain why you cannot.\"}'; exit 2; fi; if echo \"$CONTENT\" | grep -qE '^\\s*pass\\s*$'; then echo '{\"error\": \"BLOCKED: stub/placeholder code detected. Write real implementation or explain why you cannot.\"}'; exit 2; fi; if echo \"$CONTENT\" | grep -qE '\\(\\)\\s*=>\\s*\\{\\s*\\}|function\\s*\\(\\)\\s*\\{\\s*\\}'; then echo '{\"error\": \"BLOCKED: stub/placeholder code detected. Write real implementation or explain why you cannot.\"}'; exit 2; fi"
+            "command": "INPUT=$(cat); CONTENT=$(printf '%s' \"$INPUT\" | jq -r '.tool_input.content // .tool_input.new_string // empty' 2>/dev/null); TOOL=$(printf '%s' \"$INPUT\" | jq -r '.tool_name // \"unknown\"' 2>/dev/null || echo unknown); \"${CLAUDE_PLUGIN_ROOT:-/Users/rj/Downloads/superx}/bin/parallelism-tracker\" check \"$TOOL\" 2>&1 || true; if [ -z \"$CONTENT\" ]; then exit 0; fi; if echo \"$CONTENT\" | grep -qiE '(//\\s*TODO|#\\s*TODO|FIXME|XXX|NotImplementedError|unimplemented!\\(\\)|todo!\\(\\)|placeholder|\\bstub\\b|\\bshim\\b)'; then echo '{\"error\": \"BLOCKED: stub/placeholder code detected. Write real implementation or explain why you cannot.\"}'; exit 2; fi; if echo \"$CONTENT\" | grep -qE 'throw new Error\\([\"'\"'\"'\"]not implemented[\"'\"'\"'\"]\\)'; then echo '{\"error\": \"BLOCKED: stub/placeholder code detected. Write real implementation or explain why you cannot.\"}'; exit 2; fi; if echo \"$CONTENT\" | grep -qE '^\\s*pass\\s*$'; then echo '{\"error\": \"BLOCKED: stub/placeholder code detected. Write real implementation or explain why you cannot.\"}'; exit 2; fi; if echo \"$CONTENT\" | grep -qE '\\(\\)\\s*=>\\s*\\{\\s*\\}|function\\s*\\(\\)\\s*\\{\\s*\\}'; then echo '{\"error\": \"BLOCKED: stub/placeholder code detected. Write real implementation or explain why you cannot.\"}'; exit 2; fi"
           }
         ]
       }
