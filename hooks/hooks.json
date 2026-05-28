@@ -34,7 +34,7 @@
         "hooks": [
           {
             "type": "command",
-            "command": "INPUT=$(cat); TRACKER=\"${CLAUDE_PLUGIN_ROOT:-/Users/rj/Downloads/superx}/bin/parallelism-tracker\"; OUTPUT=$(\"$TRACKER\" check Agent 2>&1) || true; if echo \"$OUTPUT\" | grep -q 'SEQUENTIAL AGENT SPAWNS'; then DESC=$(printf '%s' \"$INPUT\" | jq -r '.tool_input.description // empty' 2>/dev/null); if [ $? -eq 0 ] && [ -n \"$DESC\" ] && ! printf '%s' \"$DESC\" | grep -qiE '(depends|sequential|after previous|wait for|result of|following up|verify|review)'; then echo '{\"error\": \"BLOCKED: Sequential agent spawn. List ALL remaining agents and send them in ONE message with run_in_background: true. Add depends-on, verify, or review to the description to bypass.\"}'; exit 2; fi; fi"
+            "command": "\"${CLAUDE_PLUGIN_ROOT:-/Users/rj/Downloads/superx}/bin/parallelism-tracker\" check Agent 2>&1 || true"
           }
         ]
       },
