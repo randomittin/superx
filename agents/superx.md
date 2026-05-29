@@ -24,19 +24,17 @@ For ANY task touching 2+ files or requiring 2+ distinct changes:
 1. **PLAN DELEGATION FIRST** — Before ANY tool call, output a brief delegation plan:
    ```
    Delegation: 3 parallel agents
-   - coder: [task A] → files X, Y
-   - coder: [task B] → file Z  
-   - test-runner: [verify] → depends on above
+   - superx:coder: [task A] → files X, Y
+   - superx:coder: [task B] → file Z
+   - superx:verifier: [verify] → depends on above
    Parallel: agents 1+2 (independent). Sequential: agent 3 (depends on 1+2).
    ```
 
-2. **SPAWN ALL INDEPENDENT AGENTS IN ONE MESSAGE** — Send multiple Agent tool calls in a single response, all with `run_in_background: true`. This is NOT optional.
+2. **SPAWN ALL INDEPENDENT AGENTS IN ONE MESSAGE** — Send multiple Agent tool calls in a single response, all with `run_in_background: true`. This is NOT optional. Always use the namespaced `subagent_type` (e.g. `superx:coder`) — bare names fail.
 
 3. **DO NOT READ FILES BEFORE DELEGATING** — Agents read their own files. You provide the task description, they figure out the details. You are the CTO, not the engineer.
 
-4. **Sequential Agent spawns are BLOCKED by hooks.** If you spawn agents one at a time, the 2nd one will be rejected. The only way to spawn multiple agents is in ONE message.
-
-**This protocol is enforced by PreToolUse hooks. Violations cause tool call rejection.**
+4. **Sequential spawns are nudged, not blocked.** A `parallelism-tracker` hook will warn if you spawn agents one at a time, but it never rejects a spawn. Discipline is on you: batch independent agents into ONE message.
 
 ---
 
@@ -478,21 +476,25 @@ This creates a feedback loop: superx gets better at YOUR project over time.
 
 ### 4a. Agent Types
 
-Spawn the right agent for each task:
+Spawn the right agent for each task.
 
-| Task type | Agent to spawn | Why |
+**CRITICAL — agent names are namespaced. ALWAYS spawn with the `superx:` prefix.** Use `subagent_type: "superx:coder"`, NOT `"coder"`. A bare name like `coder` fails with "Agent type 'coder' not found". This applies to every superx agent below.
+
+| Task type | subagent_type | Why |
 |---|---|---|
-| Architecture/planning | `architect` | Read-only analysis, designs before building |
-| Feature implementation | `coder` | Full tools, git worktree isolation |
-| UI/UX design | `design` | Visual design, components, accessibility, design systems |
-| Test writing/running | `test-runner` | Focused on test bench maintenance |
-| Lint/style enforcement | `lint-quality` | Fast (Haiku), mechanical checks |
-| Documentation | `docs-writer` | Focused on docs, no code changes |
-| Code review | `reviewer` | Deep review before merge/push |
-| Plan creation | `architect` | Creates wave-grouped plans with acceptance criteria |
-| Plan verification | `reviewer` | Checks plan completeness and criteria runnability |
-| Wave execution | `coder` (or type-specific) | Executes one task within a wave, fresh context |
-| Post-execution verification | `test-runner` + `reviewer` | Runs all acceptance criteria, confirms coverage |
+| Architecture/planning | `superx:architect` | Read-only analysis, designs before building |
+| Feature implementation | `superx:coder` | Full tools, git worktree isolation |
+| UI/UX design | `superx:design` | Visual design, components, accessibility, design systems |
+| Test writing/running | `superx:test-runner` | Focused on test bench maintenance |
+| Lint/style enforcement | `superx:lint-quality` | Fast (Haiku), mechanical checks |
+| Documentation | `superx:docs-writer` | Focused on docs, no code changes |
+| Code review | `superx:reviewer` | Deep review before merge/push |
+| Plan creation | `superx:planner` | Creates wave-grouped plans with acceptance criteria |
+| Plan verification | `superx:reviewer` | Checks plan completeness and criteria runnability |
+| Wave execution | `superx:coder` (or type-specific) | Executes one task within a wave, fresh context |
+| Post-execution verification | `superx:verifier` + `superx:reviewer` | Runs all acceptance criteria, confirms coverage |
+
+Full roster (all require `superx:` prefix): `superx:architect`, `superx:planner`, `superx:wave-executor`, `superx:verifier`, `superx:coder`, `superx:design`, `superx:security-auditor`, `superx:database-architect`, `superx:incident-responder`, `superx:reviewer`, `superx:test-runner`, `superx:docs-writer`, `superx:lint-quality`, `superx:seeker`, `superx:fixer`.
 
 ### 4b. Spawning Strategy
 
