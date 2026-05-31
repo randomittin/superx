@@ -22,6 +22,35 @@ Pass gate: **SSIM ≥ 0.95 OR pixelDiffPct ≤ 5%**.
 
 Do NOT use for: unit logic, redux state shape, navigation graph correctness — those are not visual.
 
+## Quick Start (one command)
+
+From the RN project root:
+
+```bash
+designmatch init "<claude-design-url-or-path>" --app-dir .
+```
+
+This:
+
+1. Copies `assets/visual-qa.ts` into the app (`src/lib/visual-qa.ts` by default; auto-detects `src/utils/`, `src/`, `app/`, or root).
+2. Writes default `.designmatch/state.vqa.json` (seeds user / recipient / bonus / transfer per spec).
+3. Registers the canonical source in `.designmatch/config.json` (URL → lazy Playwright fetch; local dir/file → copied).
+4. Updates `.gitignore` (excludes `.designmatch/canonical/` and `.designmatch/screens/`).
+5. Prints the wiring snippet for `App.tsx` and the next-step iterate command.
+
+Slash command equivalent (inside a superx session): `/superx:designmatch <url-or-path>`.
+
+App-side only (skip canonical registration): `designmatch wire --app-dir .` — useful when registering the canonical later or iterating on local screenshots.
+
+After bootstrap:
+
+```bash
+designmatch action-types     # print ACTION_TYPES starter to paste into visual-qa.ts
+designmatch iterate Home --platform android --device emulator-5554
+```
+
+Peer deps the app must have: `@react-native-async-storage/async-storage`, `react-native-restart`. Dev deps for the harness: `playwright pixelmatch pngjs ssim.js sharp`.
+
 ## Architecture
 
 ```

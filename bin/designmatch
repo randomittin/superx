@@ -1,0 +1,327 @@
+#!/usr/bin/env bash
+# designmatch — match a Claude Design HTML canonical to a React Native app
+# to ≥95% visual parity. CLI dispatcher for the designmatch skill.
+#
+# Subcommands:
+#   init <canonical-source> [--app-dir <path>] [--target <rel>] [--force]
+#                 — one-shot bootstrap. Copies visual-qa.ts into the RN
+#                   app, writes default state.vqa.json, registers the
+#                   canonical source (URL or local path), updates
+#                   .gitignore, and prints the wiring snippet.
+#   wire          — app-side only (skip canonical setup). Same as init
+#                   without the canonical source arg.
+#   render <src> --out <png> [--state <json>] [--screen <name>] [--wait <ms|sel>]
+#                 — Playwright canonical render at 1080x2444.
+#   diff <canonical.png> <native.png> --out-dir <dir> [--threshold <n>]
+#                 — pixelmatch + SSIM + composite triptych.
+#   iterate <ScreenName> [--platform android|ios] [--device <id>]
+#                 — per-screen loop: render + capture + diff + open.
+#   action-types  — print sample ACTION_TYPES map for visual-qa.ts.
+#   help          — this text.
+#
+# canonical-source forms:
+#   - https://... URL (e.g. Claude Design link) → registered for lazy fetch
+#   - /path/to/dir → copied wholesale into .designmatch/canonical/
+#   - /path/to/file.html → copied as the canonical entry
+
+set -euo pipefail
+
+SELF="$0"
+if command -v readlink &>/dev/null; then
+  SELF=$(readlink -f "$0" 2>/dev/null || readlink "$0" 2>/dev/null || echo "$0")
+fi
+PLUGIN_DIR="$(cd "$(dirname "$SELF")/.." && pwd)"
+SKILL_DIR="$PLUGIN_DIR/skills/designmatch"
+ASSET_VQA="$SKILL_DIR/assets/visual-qa.ts"
+SCRIPT_RENDER="$SKILL_DIR/scripts/render-canonical.js"
+SCRIPT_DIFF="$SKILL_DIR/scripts/visual-diff.js"
+SCRIPT_ITERATE="$SKILL_DIR/scripts/iterate-screen.sh"
+
+red()    { printf "\033[31m%s\033[0m" "$*"; }
+green()  { printf "\033[32m%s\033[0m" "$*"; }
+cyan()   { printf "\033[36m%s\033[0m" "$*"; }
+dim()    { printf "\033[2m%s\033[0m" "$*"; }
+die()    { echo "$(red "✗") $*" >&2; exit 1; }
+ok()     { echo "$(green "✓") $*"; }
+info()   { echo "$(cyan "▸") $*"; }
+
+usage() {
+  cat <<EOF
+designmatch — match Claude Design HTML canonical to React Native at ≥95% visual parity.
+
+Usage:
+  designmatch init <canonical-source> [--app-dir <path>] [--target <rel>] [--force]
+  designmatch wire [--app-dir <path>] [--target <rel>] [--force]
+  designmatch render <src> --out <png> [--state <json>] [--screen <n>] [--wait <ms|sel>]
+  designmatch diff <canonical.png> <native.png> --out-dir <dir> [--threshold <n>]
+  designmatch iterate <ScreenName> [--platform android|ios] [--device <id>]
+  designmatch action-types
+  designmatch help
+
+Quick start:
+  designmatch init "https://api.anthropic.com/v1/design/h/HASH?open_file=App.html" --app-dir ./
+  # → copies visual-qa.ts, writes state.vqa.json, registers canonical URL,
+  #   updates .gitignore, prints wiring snippet.
+
+  designmatch iterate Home --platform android --device emulator-5554
+  # → renders canonical, captures device screenshot, diffs, opens composite.
+EOF
+}
+
+# Default Visual-QA seed (matches skills/designmatch SPEC).
+default_state_json() {
+  cat <<'JSON'
+{
+  "user": {
+    "kycStatus": "verified",
+    "phone_verified": true,
+    "iso": "GBR",
+    "name": "Visual QA"
+  },
+  "recipient": {
+    "id": "vqa-r1",
+    "name": "Test Recipient",
+    "country": "IND",
+    "phone": "+919999900000"
+  },
+  "bonus": {
+    "balance": 1000,
+    "ledger": [],
+    "applyCapPct": 50
+  },
+  "transfer": {
+    "sendingCountry": "GBR",
+    "receivingCountry": "IND"
+  }
+}
+JSON
+}
+
+# Resolve a sensible target path for visual-qa.ts inside an RN app.
+resolve_target() {
+  local app_dir="$1"
+  if [ -d "$app_dir/src/lib" ];      then echo "src/lib/visual-qa.ts"
+  elif [ -d "$app_dir/src/utils" ];  then echo "src/utils/visual-qa.ts"
+  elif [ -d "$app_dir/src" ];        then echo "src/visual-qa.ts"
+  elif [ -d "$app_dir/app" ];        then echo "app/visual-qa.ts"
+  else                                    echo "visual-qa.ts"
+  fi
+}
+
+# Validate RN project root (must have package.json with react-native dep).
+validate_rn_app() {
+  local app_dir="$1"
+  [ -f "$app_dir/package.json" ] || die "no package.json in $app_dir — pass --app-dir <rn-project-root>"
+  if ! grep -q '"react-native"' "$app_dir/package.json"; then
+    echo "$(red "!") react-native not declared in $app_dir/package.json — proceeding anyway" >&2
+  fi
+}
+
+# Copy visual-qa.ts into the app and write state.vqa.json. Shared by init + wire.
+do_app_side() {
+  local app_dir="$1" target_rel="$2" force="$3"
+  local target_abs="$app_dir/$target_rel"
+
+  if [ -e "$target_abs" ] && [ "$force" -eq 0 ]; then
+    die "exists: $target_abs (use --force to overwrite)"
+  fi
+
+  mkdir -p "$(dirname "$target_abs")"
+  cp "$ASSET_VQA" "$target_abs"
+  ok "wrote $target_rel"
+
+  mkdir -p "$app_dir/.designmatch/canonical" "$app_dir/.designmatch/screens"
+  if [ ! -f "$app_dir/.designmatch/state.vqa.json" ] || [ "$force" -eq 1 ]; then
+    default_state_json > "$app_dir/.designmatch/state.vqa.json"
+    ok "wrote .designmatch/state.vqa.json"
+  else
+    info "kept existing .designmatch/state.vqa.json (use --force to overwrite)"
+  fi
+
+  # Update .gitignore (idempotent).
+  local gi="$app_dir/.gitignore"
+  if [ ! -f "$gi" ] || ! grep -q '^\.designmatch/canonical' "$gi"; then
+    {
+      [ -f "$gi" ] && tail -c1 "$gi" | read -r _ || true
+      echo ""
+      echo "# designmatch — canonical bundle + per-screen captures (regenerated)"
+      echo ".designmatch/canonical/"
+      echo ".designmatch/screens/"
+    } >> "$gi"
+    ok "updated .gitignore"
+  fi
+}
+
+# Register canonical source (URL or local path) in .designmatch/config.json.
+register_canonical() {
+  local app_dir="$1" source="$2"
+  local kind=""
+  local stored=""
+  local ts; ts=$(date -u +"%Y-%m-%dT%H:%M:%SZ")
+
+  if [[ "$source" =~ ^https?:// ]]; then
+    kind="url"
+    stored="$source"
+    ok "registered canonical URL"
+    info "fetched lazily by Playwright at render time"
+  elif [ -d "$source" ]; then
+    kind="local-dir"
+    cp -R "$source"/* "$app_dir/.designmatch/canonical/" 2>/dev/null || true
+    stored=".designmatch/canonical"
+    ok "copied canonical bundle from $source"
+  elif [ -f "$source" ]; then
+    kind="local-file"
+    local html_name; html_name=$(basename "$source")
+    cp "$source" "$app_dir/.designmatch/canonical/$html_name"
+    # Also copy sibling files if it's part of a bundle (best-effort).
+    local src_dir; src_dir=$(dirname "$source")
+    for ext in jsx js css png svg; do
+      cp "$src_dir"/*."$ext" "$app_dir/.designmatch/canonical/" 2>/dev/null || true
+    done
+    stored=".designmatch/canonical/$html_name"
+    ok "copied canonical HTML: $html_name"
+  else
+    die "canonical-source not found: $source"
+  fi
+
+  cat > "$app_dir/.designmatch/config.json" <<JSON
+{
+  "canonical_source": "$stored",
+  "kind": "$kind",
+  "registered_at": "$ts",
+  "viewport": { "width": 1080, "height": 2444, "deviceScaleFactor": 1 }
+}
+JSON
+}
+
+print_wiring() {
+  local target_rel="$1"
+  local import_path
+  import_path=$(printf '%s' "$target_rel" | sed 's|\.ts$||; s|^src/|./src/|')
+  cat <<EOF
+
+──────────── WIRING ────────────
+Add to your App.tsx (or root component):
+
+  import {
+    primeVisualQaFlag, applyVisualQaState, overrideFeatureFlags,
+    useVqaLongPressDetector, toggleVqaAndRestart, VqaBadge,
+  } from '$import_path';
+  import RNRestart from 'react-native-restart';
+
+  // At boot, before createStore:
+  await primeVisualQaFlag();
+  const store = createStore(...);
+  applyVisualQaState(store.dispatch);
+  const isFeatureEnabled = overrideFeatureFlags(originalIsFeatureEnabled);
+
+  // In AppLogo component:
+  const { onPress } = useVqaLongPressDetector(() => toggleVqaAndRestart(RNRestart));
+  <Pressable onPress={onPress}>...</Pressable>
+
+  // In root layout (inside SafeAreaProvider):
+  <VqaBadge />
+
+──────────── NEXT ────────────
+1. Edit $target_rel → set ACTION_TYPES to match your reducers
+   (run \`designmatch action-types\` for a starter)
+2. Install peer deps if missing:
+   npm i @react-native-async-storage/async-storage react-native-restart
+3. Iterate a screen:
+   designmatch iterate <ScreenName> --platform android --device <id>
+EOF
+}
+
+cmd_init() {
+  [ $# -gt 0 ] || die "init requires <canonical-source>. Run \`designmatch help\`."
+  local source="$1"; shift
+
+  local app_dir="$PWD"
+  local target=""
+  local force=0
+  while [ $# -gt 0 ]; do
+    case "$1" in
+      --app-dir) app_dir="$2"; shift 2 ;;
+      --target)  target="$2"; shift 2 ;;
+      --force)   force=1; shift ;;
+      *) die "unknown flag: $1" ;;
+    esac
+  done
+
+  app_dir="$(cd "$app_dir" && pwd)"
+  validate_rn_app "$app_dir"
+  [ -z "$target" ] && target=$(resolve_target "$app_dir")
+
+  do_app_side "$app_dir" "$target" "$force"
+  register_canonical "$app_dir" "$source"
+  print_wiring "$target"
+}
+
+cmd_wire() {
+  local app_dir="$PWD"
+  local target=""
+  local force=0
+  while [ $# -gt 0 ]; do
+    case "$1" in
+      --app-dir) app_dir="$2"; shift 2 ;;
+      --target)  target="$2"; shift 2 ;;
+      --force)   force=1; shift ;;
+      *) die "unknown flag: $1" ;;
+    esac
+  done
+
+  app_dir="$(cd "$app_dir" && pwd)"
+  validate_rn_app "$app_dir"
+  [ -z "$target" ] && target=$(resolve_target "$app_dir")
+
+  do_app_side "$app_dir" "$target" "$force"
+  print_wiring "$target"
+}
+
+cmd_render() {
+  command -v node >/dev/null || die "node required for render"
+  [ -f "$SCRIPT_RENDER" ] || die "missing $SCRIPT_RENDER"
+  exec node "$SCRIPT_RENDER" "$@"
+}
+
+cmd_diff() {
+  command -v node >/dev/null || die "node required for diff"
+  [ -f "$SCRIPT_DIFF" ] || die "missing $SCRIPT_DIFF"
+  exec node "$SCRIPT_DIFF" "$@"
+}
+
+cmd_iterate() {
+  [ -f "$SCRIPT_ITERATE" ] || die "missing $SCRIPT_ITERATE"
+  exec bash "$SCRIPT_ITERATE" "$@"
+}
+
+cmd_action_types() {
+  cat <<'TS'
+// Sample ACTION_TYPES — paste into visual-qa.ts and edit to match your reducers.
+// The names on the right are action `type` strings your reducers handle.
+export const ACTION_TYPES = {
+  USER_SET:                 'user/set',
+  RECIPIENT_ADD:            'recipient/add',
+  RECIPIENT_SELECT:         'recipient/setSelected',
+  BONUS_SET:                'bonus/set',
+  TRANSFER_SET_COUNTRIES:   'transfer/setCountries',
+} as const;
+TS
+}
+
+main() {
+  local cmd="${1:-help}"
+  [ $# -gt 0 ] && shift || true
+  case "$cmd" in
+    init)          cmd_init "$@" ;;
+    wire)          cmd_wire "$@" ;;
+    render)        cmd_render "$@" ;;
+    diff)          cmd_diff "$@" ;;
+    iterate)       cmd_iterate "$@" ;;
+    action-types)  cmd_action_types ;;
+    help|-h|--help) usage ;;
+    *) echo "unknown command: $cmd" >&2; usage; exit 1 ;;
+  esac
+}
+
+main "$@"
