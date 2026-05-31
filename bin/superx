@@ -568,7 +568,7 @@ except: pass
   claude --continue \
     --agent superx \
     $PERMISSION_FLAG \
-    --model claude-opus-4-7 \
+    --model claude-opus-4-8 \
     --plugin-dir "$PLUGIN_DIR" \
     --append-system-prompt-file "$RESUME_PREAMBLE_FILE"
   exit $?
@@ -597,12 +597,12 @@ if [[ "${1:-}" == "--team" ]]; then
 
   tmux new-session -d -s "$SESSION" -n "lead"
   # Lead worker gets the task
-  tmux send-keys -t "$SESSION:lead" "cd $WORK_DIR && claude --agent superx $PERMISSION_FLAG --model claude-opus-4-7 --plugin-dir $PLUGIN_DIR" Enter
+  tmux send-keys -t "$SESSION:lead" "cd $WORK_DIR && claude --agent superx $PERMISSION_FLAG --model claude-opus-4-8 --plugin-dir $PLUGIN_DIR" Enter
 
   # Spawn additional worker panes
   for i in $(seq 2 "$TEAM_SIZE"); do
     tmux split-window -t "$SESSION" -h
-    tmux send-keys -t "$SESSION" "cd $WORK_DIR && claude --agent superx $PERMISSION_FLAG --model claude-opus-4-7 --plugin-dir $PLUGIN_DIR" Enter
+    tmux send-keys -t "$SESSION" "cd $WORK_DIR && claude --agent superx $PERMISSION_FLAG --model claude-opus-4-8 --plugin-dir $PLUGIN_DIR" Enter
     tmux select-layout -t "$SESSION" tiled
   done
 
@@ -1001,7 +1001,7 @@ ${CHECKPOINT_CONTEXT}
 # ── Smart model selection (runs AFTER checkpoint load) ──
 
 select_model() {
-  MODEL_FLAG="--model claude-opus-4-7"
+  MODEL_FLAG="--model claude-opus-4-8"
   MODEL_NAME="opus"
 
   # 1. Check project settings (loaded from checkpoint)
@@ -1018,7 +1018,7 @@ except: pass
     case "$override" in
       haiku)  MODEL_FLAG="--model claude-haiku-4-5"; MODEL_NAME="haiku (project override)" ;;
       sonnet) MODEL_FLAG="--model claude-sonnet-4-6"; MODEL_NAME="sonnet (project override)" ;;
-      opus)   MODEL_FLAG="--model claude-opus-4-7"; MODEL_NAME="opus (project override)" ;;
+      opus)   MODEL_FLAG="--model claude-opus-4-8"; MODEL_NAME="opus (project override)" ;;
     esac
   fi
 
@@ -1029,7 +1029,7 @@ except: pass
       MODEL_FLAG="--model claude-sonnet-4-6"
       MODEL_NAME="sonnet (simple task)"
     elif echo "$prompt_lower" | grep -qE '(architect|design system|security audit|incident|migrate|refactor entire)'; then
-      MODEL_FLAG="--model claude-opus-4-7"
+      MODEL_FLAG="--model claude-opus-4-8"
       MODEL_NAME="opus (complex task)"
     fi
   fi

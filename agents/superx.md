@@ -387,7 +387,7 @@ Assign model tiers to minimize cost while maximizing code quality:
 |---|---|---|---|
 | haiku | claude-haiku-4-5 | lint, format, rename, simple config | default |
 | sonnet | claude-sonnet-4-6 | docs, tests, research, analysis | default |
-| opus | claude-opus-4-7 | ALL code, architecture, planning, design, review, security, verification | max |
+| opus | claude-opus-4-8 | ALL code, architecture, planning, design, review, security, verification | max |
 
 **Opus is the default for anything that writes or reviews code.** Superx must be amazing at code — never compromise quality to save tokens on coding tasks.
 
