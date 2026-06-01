@@ -60,9 +60,19 @@ Optional flags after the source:
 
 5. If the user did NOT include a canonical source, fall back to `designmatch wire --app-dir "$PWD"` (app-side only setup) and explain that the canonical can be registered later with another `init` call.
 
+## Build path (port-first, mandatory)
+
+Once bootstrapped, every screen follows port-first:
+
+1. `designmatch port <ScreenName> --out src/screens/<ScreenName>.tsx` — emits canonical JSX preceded by a TRANSLATION GUIDE (web → RN idiom map).
+2. Translate top-down per the guide (`<div>`→`<View>`, `className`→`StyleSheet` with `normalize()`, `fontWeight` on bold-family → Platform.OS gate, etc.).
+3. `designmatch iterate <ScreenName>` — diff verifies. Refine only deltas the diff surfaces.
+
+The orchestrator MUST steer the user toward `designmatch port` for any "build/recreate/match this screen" prompt. Rebuilding by eyeballing PNGs is anti-pattern #9 — do not start an agent on a screen without porting the canonical source first.
+
 ## When NOT to use
 
-- The RN project already has `src/lib/visual-qa.ts` AND `.designmatch/config.json` AND the user is iterating, not bootstrapping → use `designmatch iterate <Screen>` directly instead.
+- The RN project already has `src/lib/visual-qa.ts` AND `.designmatch/config.json` AND the user is iterating, not bootstrapping → use `designmatch port <Screen>` then `designmatch iterate <Screen>` directly instead.
 - The user wants the diff harness on screenshots they already have → use `designmatch diff <canonical.png> <native.png> --out-dir <dir>`.
 
 ## Related

@@ -51,6 +51,29 @@ designmatch iterate Home --platform android --device emulator-5554
 
 Peer deps the app must have: `@react-native-async-storage/async-storage`, `react-native-restart`. Dev deps for the harness: `playwright pixelmatch pngjs ssim.js sharp`.
 
+## Build Path (port-first, mandatory)
+
+**Methodology: port the canonical source, do NOT eyeball pixels.** The HTML/JSX in the canonical bundle is the spec; the PNG is the verification gate. Eyeballing pixels re-derives layout / spacing / colors that already exist in the source — drift, token bloat, 30-wave grind (see appco case study, Waves 15.0–15.32).
+
+Per-screen flow:
+
+1. **Port** — `designmatch port <ScreenName> --out src/screens/<ScreenName>.tsx`
+   Emits the canonical JSX preceded by a TRANSLATION GUIDE (web → RN idiom map). Optional `--guide-only` prints just the guide; `--no-guide` skips it.
+2. **Translate** — apply the guide top-down:
+   - `<div>` → `<View>`; `<span>` / `<p>` / `<h*>` → `<Text>`; `<img>` → `<Image>`; `<button>` → `<Pressable>`
+   - `className` / Tailwind → `StyleSheet.create()`
+   - All px literals → `normalize(n)`
+   - `fontWeight` on bold-family text → `Platform.OS` gate (anti-pattern #2)
+   - `<svg>` → `react-native-svg` primitives
+   - Keep variable names + structure identical to canonical.
+3. **Verify** — `designmatch iterate <ScreenName> --platform android --device <id>`
+   Renders canonical, captures device, diffs, opens composite. Pass when **SSIM ≥ 0.95 OR pixel-diff ≤ 5%**.
+4. **Refine** — only adjust translation deltas the diff surfaces. **Do NOT freelance pixel adjustments.**
+
+If the canonical is registered as a URL (not yet downloaded), `designmatch port` errors — fetch / save the bundle locally and re-register via `designmatch init <local-dir>`.
+
+**Why mandatory:** rebuilding by eyeballing PNGs is anti-pattern #9. PNGs are the gate, not the build input.
+
 ## Architecture
 
 ```
@@ -73,7 +96,7 @@ skills/designmatch/
 ├── assets/
 │   └── visual-qa.ts             # RN VQA stub helper (drop-in)
 └── references/
-    ├── anti-patterns.md         # 8-item checklist
+    ├── anti-patterns.md         # 9-item checklist (incl. port-first rule)
     └── canonical-values.md      # typography + spacing cheat-sheet
 ```
 

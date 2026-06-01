@@ -1,4 +1,4 @@
-# designmatch — anti-patterns (8-item checklist)
+# designmatch — anti-patterns (9-item checklist)
 
 Each item: ❌ wrong / ✅ right + one-line reason.
 
@@ -241,3 +241,37 @@ import { Typography } from '@/components/Typography';
 ```
 
 Reason: parallel agents without a shared spec each invent a convention → every screen has its own typography rules → no single fix lifts SSIM across the app.
+
+---
+
+## 9. Rebuilding screens by eyeballing PNGs instead of porting canonical source
+
+❌
+```tsx
+// Agent reads the canonical PNG, guesses paddings / colors / font sizes,
+// hand-rolls a Send screen from scratch.
+export const SendScreen = () => (
+  <View style={{ padding: 24, backgroundColor: '#FFFFFF' }}>
+    <Text style={{ fontSize: 28, fontWeight: '700' }}>Send</Text>
+    {/* …rebuilds layout via per-pixel inspection of canonical.png… */}
+  </View>
+);
+```
+
+✅
+```bash
+designmatch port Send --out src/screens/Send.tsx
+```
+```tsx
+// The emitted file is the canonical JSX preceded by a TRANSLATION GUIDE.
+// Translate top-down per the guide:
+//   <div>          → <View>
+//   className=…    → StyleSheet.create + normalize(px)
+//   onClick=       → onPress
+//   fontWeight on bold-family → Platform.OS gate (see #2)
+// Keep variable names + structure identical to the canonical source.
+// Then `designmatch iterate Send` → diff verifies; refine only the deltas
+// the diff surfaces. Do NOT freelance pixel adjustments.
+```
+
+Reason: the canonical JSX is the spec; the PNG is the verification gate. Eyeballing pixels re-derives layout / spacing / colors that already exist in source → drift, token bloat, and 30-wave grind. appco Send-screen Waves 15.0→15.32 was exactly this miss.

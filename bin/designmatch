@@ -52,16 +52,20 @@ designmatch — match Claude Design HTML canonical to React Native at ≥95% vis
 Usage:
   designmatch init <canonical-source> [--app-dir <path>] [--target <rel>] [--force]
   designmatch wire [--app-dir <path>] [--target <rel>] [--force]
+  designmatch port <ScreenName> [--app-dir <path>] [--out <path>] [--guide-only] [--no-guide]
   designmatch render <src> --out <png> [--state <json>] [--screen <n>] [--wait <ms|sel>]
   designmatch diff <canonical.png> <native.png> --out-dir <dir> [--threshold <n>]
   designmatch iterate <ScreenName> [--platform android|ios] [--device <id>]
   designmatch action-types
   designmatch help
 
-Quick start:
+Quick start (port-first, mandatory):
   designmatch init "https://api.anthropic.com/v1/design/h/HASH?open_file=App.html" --app-dir ./
-  # → copies visual-qa.ts, writes state.vqa.json, registers canonical URL,
-  #   updates .gitignore, prints wiring snippet.
+  # → copies visual-qa.ts, writes state.vqa.json, registers canonical, gitignore.
+
+  designmatch port Home --out src/screens/Home.tsx
+  # → emits canonical JSX preceded by TRANSLATION GUIDE (web → RN idiom map).
+  #   Translate top-down per guide; PNG is the gate, JSX is the spec.
 
   designmatch iterate Home --platform android --device emulator-5554
   # → renders canonical, captures device screenshot, diffs, opens composite.
@@ -309,12 +313,161 @@ export const ACTION_TYPES = {
 TS
 }
 
+# Web JSX → React Native translation guide. Prepended to ported source so
+# the translation step has the idiom map inline.
+print_translation_guide() {
+  cat <<'GUIDE'
+// ════════════════════════════════════════════════════════════════════
+// designmatch TRANSLATION GUIDE — web JSX → React Native
+// ════════════════════════════════════════════════════════════════════
+// Methodology: port the source, do NOT eyeball pixels. PNG is the
+// verification gate; the JSX below is the spec. Translate top-down,
+// then `designmatch iterate <Screen>` to verify with the diff harness.
+//
+// IDIOM MAP
+//
+//   Element / attribute (web)    →  React Native
+//   ──────────────────────────────────────────────
+//   <div>                        →  <View>
+//   <span> <p> <h1>..<h6>        →  <Text>
+//   <img src=>                   →  <Image source={{ uri }} />
+//   <button onClick=>            →  <Pressable onPress=>
+//   <a href=>                    →  <Pressable onPress={() => Linking.openURL()}>
+//   <input>                      →  <TextInput>
+//   <svg>...</svg>               →  react-native-svg primitives
+//
+//   className="..."              →  style={s.<name>} via StyleSheet.create
+//   Tailwind classes             →  resolve each class to RN style props
+//   style={{ padding: 16 }}      →  style={{ padding: normalize(16) }}
+//   px values                    →  normalize(n) — always-on
+//
+//   display: flex                →  default; RN root is column!
+//   flex-row                     →  flexDirection: 'row'
+//   justify-content              →  justifyContent
+//   align-items                  →  alignItems
+//   gap: N                       →  gap: normalize(N)  (RN ≥ 0.71)
+//
+//   font-weight: 600/700/800     →  Platform.OS === 'android'
+//                                     ? { fontFamily: 'Family-Bold' }
+//                                     : { fontWeight: '600' }
+//                                   (see anti-pattern #2)
+//   font-family                  →  fontFamily: '<RN-registered-name>'
+//
+//   onClick / onChange           →  onPress / onChangeText (TextInput)
+//   onMouseEnter / hover         →  no equivalent — drop or use Pressable
+//   onScroll                     →  onScroll on ScrollView/FlatList
+//
+//   position: absolute           →  same
+//   z-index                      →  zIndex + elevation (Android)
+//
+//   useState / useEffect         →  unchanged (React-shared)
+//   document / window            →  remove or replace with RN APIs
+//   localStorage                 →  AsyncStorage
+//
+// STRUCTURAL RULES (from designmatch SKILL.md, must hold):
+//   • Wrap all px values in normalize() — no literal px in StyleSheet.
+//   • <Text> default font is body — headings MUST specify display family.
+//   • Single safe-area: Screen wrapper OR inner container, never both.
+//   • Header: native stack header OR in-screen PushHeader, never both.
+//
+// PROCESS:
+//   1. Read the canonical source below verbatim.
+//   2. Translate top-down. Keep variable names + structure identical.
+//   3. Replace web idioms with RN per the map above.
+//   4. Save to your screen file, then:
+//        designmatch iterate <ScreenName> --platform android --device <id>
+//   5. PNG diff is the verification gate. Refine until SSIM ≥ 0.95
+//      OR pixel-diff ≤ 5%.
+//
+// ════════════════════════════════════════════════════════════════════
+GUIDE
+}
+
+cmd_port() {
+  local screen=""
+  local app_dir="$PWD"
+  local out=""
+  local guide_only=0
+  local no_guide=0
+  while [ $# -gt 0 ]; do
+    case "$1" in
+      --app-dir)    app_dir="$2"; shift 2 ;;
+      --out)        out="$2"; shift 2 ;;
+      --guide-only) guide_only=1; shift ;;
+      --no-guide)   no_guide=1; shift ;;
+      -*) die "unknown flag: $1" ;;
+      *)  [ -z "$screen" ] && { screen="$1"; shift; } || die "unexpected arg: $1" ;;
+    esac
+  done
+
+  if [ "$guide_only" -eq 1 ]; then
+    print_translation_guide
+    exit 0
+  fi
+
+  [ -n "$screen" ] || die "port requires <ScreenName>. Run \`designmatch help\`."
+
+  app_dir="$(cd "$app_dir" && pwd)"
+  local cfg="$app_dir/.designmatch/config.json"
+  [ -f "$cfg" ] || die "no .designmatch/config.json — run \`designmatch init\` first"
+
+  command -v python3 >/dev/null || die "python3 required to read config.json"
+  local kind canonical_source
+  kind=$(python3 -c "import json,sys; print(json.load(open('$cfg')).get('kind',''))" 2>/dev/null || echo "")
+  canonical_source=$(python3 -c "import json,sys; print(json.load(open('$cfg')).get('canonical_source',''))" 2>/dev/null || echo "")
+
+  local canonical_dir=""
+  case "$kind" in
+    url)
+      die "canonical is a URL — port needs local source. Save the bundle locally and re-run \`designmatch init <local-dir>\`, or place source files under .designmatch/canonical/ and update config.json kind to \"local-dir\"." ;;
+    local-dir)
+      canonical_dir="$app_dir/$canonical_source" ;;
+    local-file)
+      canonical_dir="$(dirname "$app_dir/$canonical_source")" ;;
+    *)
+      die "unknown canonical kind: \"$kind\" in $cfg" ;;
+  esac
+
+  [ -d "$canonical_dir" ] || die "canonical dir not found: $canonical_dir"
+
+  # Resolve source file — try common patterns first, then case-insensitive find.
+  local found=""
+  for pat in \
+    "screen-${screen}.jsx" "screen-${screen}.tsx" \
+    "${screen}Screen.jsx" "${screen}Screen.tsx" \
+    "${screen}.jsx" "${screen}.tsx" \
+    "Screen${screen}.jsx" "Screen${screen}.tsx"; do
+    if [ -f "$canonical_dir/$pat" ]; then found="$canonical_dir/$pat"; break; fi
+  done
+  if [ -z "$found" ]; then
+    found=$(find "$canonical_dir" -maxdepth 4 -type f \( -iname "*${screen}*.jsx" -o -iname "*${screen}*.tsx" -o -iname "*${screen}*.js" \) 2>/dev/null | head -1)
+  fi
+  [ -n "$found" ] && [ -f "$found" ] || die "no source matching screen \"$screen\" under $canonical_dir"
+
+  emit_port() {
+    [ "$no_guide" -eq 0 ] && print_translation_guide
+    echo ""
+    echo "// ─── canonical source: $(basename "$found") ───"
+    cat "$found"
+  }
+
+  if [ -n "$out" ]; then
+    mkdir -p "$(dirname "$out")"
+    emit_port > "$out"
+    ok "ported $(basename "$found") → $out"
+    info "next: translate idioms per guide, then \`designmatch iterate $screen\` to verify"
+  else
+    emit_port
+  fi
+}
+
 main() {
   local cmd="${1:-help}"
   [ $# -gt 0 ] && shift || true
   case "$cmd" in
     init)          cmd_init "$@" ;;
     wire)          cmd_wire "$@" ;;
+    port)          cmd_port "$@" ;;
     render)        cmd_render "$@" ;;
     diff)          cmd_diff "$@" ;;
     iterate)       cmd_iterate "$@" ;;
