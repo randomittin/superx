@@ -36,6 +36,7 @@ ASSET_VQA="$SKILL_DIR/assets/visual-qa.ts"
 SCRIPT_RENDER="$SKILL_DIR/scripts/render-canonical.js"
 SCRIPT_DIFF="$SKILL_DIR/scripts/visual-diff.js"
 SCRIPT_ITERATE="$SKILL_DIR/scripts/iterate-screen.sh"
+SCRIPT_FETCH="$SKILL_DIR/scripts/fetch-canonical.js"
 
 red()    { printf "\033[31m%s\033[0m" "$*"; }
 green()  { printf "\033[32m%s\033[0m" "$*"; }
@@ -51,24 +52,30 @@ designmatch — match Claude Design HTML canonical to React Native at ≥95% vis
 
 Usage:
   designmatch init <canonical-source> [--app-dir <path>] [--target <rel>] [--force]
+                                      [--no-fetch] [--port-all] [--headed]
   designmatch wire [--app-dir <path>] [--target <rel>] [--force]
+  designmatch fetch [--app-dir <path>] [--force] [--headed]
   designmatch port <ScreenName> [--app-dir <path>] [--out <path>] [--guide-only] [--no-guide]
+  designmatch port-all [--app-dir <path>] [--out-dir src/screens] [--force] [--no-guide]
   designmatch render <src> --out <png> [--state <json>] [--screen <n>] [--wait <ms|sel>]
   designmatch diff <canonical.png> <native.png> --out-dir <dir> [--threshold <n>]
   designmatch iterate <ScreenName> [--platform android|ios] [--device <id>]
   designmatch action-types
   designmatch help
 
-Quick start (port-first, mandatory):
-  designmatch init "https://api.anthropic.com/v1/design/h/HASH?open_file=App.html" --app-dir ./
-  # → copies visual-qa.ts, writes state.vqa.json, registers canonical, gitignore.
+Quick start — URL in, ready-to-translate out:
+  designmatch init "https://api.anthropic.com/v1/design/h/HASH?open_file=App.html" \\
+    --app-dir ./ --port-all
+  # → 1) copies visual-qa.ts + state.vqa.json + .gitignore
+  # → 2) Playwright-fetches the bundle to .designmatch/canonical/
+  # → 3) ports every screen-*.jsx to src/screens/<Name>.tsx with TRANSLATION GUIDE
+  # → 4) prints wiring snippet for App.tsx
 
-  designmatch port Home --out src/screens/Home.tsx
-  # → emits canonical JSX preceded by TRANSLATION GUIDE (web → RN idiom map).
-  #   Translate top-down per guide; PNG is the gate, JSX is the spec.
-
+  # Then translate each src/screens/<Name>.tsx top-down per the GUIDE and:
   designmatch iterate Home --platform android --device emulator-5554
-  # → renders canonical, captures device screenshot, diffs, opens composite.
+
+Auth: if the canonical URL is behind login, add --headed to launch a
+visible Chromium for interactive auth (fetch picks up after sign-in).
 EOF
 }
 
@@ -243,11 +250,17 @@ cmd_init() {
   local app_dir="$PWD"
   local target=""
   local force=0
+  local no_fetch=0
+  local port_all=0
+  local headed=0
   while [ $# -gt 0 ]; do
     case "$1" in
-      --app-dir) app_dir="$2"; shift 2 ;;
-      --target)  target="$2"; shift 2 ;;
-      --force)   force=1; shift ;;
+      --app-dir)  app_dir="$2"; shift 2 ;;
+      --target)   target="$2"; shift 2 ;;
+      --force)    force=1; shift ;;
+      --no-fetch) no_fetch=1; shift ;;
+      --port-all) port_all=1; shift ;;
+      --headed)   headed=1; shift ;;
       *) die "unknown flag: $1" ;;
     esac
   done
@@ -258,6 +271,24 @@ cmd_init() {
 
   do_app_side "$app_dir" "$target" "$force"
   register_canonical "$app_dir" "$source"
+
+  # Auto-fetch URL canonicals unless --no-fetch.
+  local cfg="$app_dir/.designmatch/config.json"
+  local kind_now
+  kind_now=$(python3 -c "import json; print(json.load(open('$cfg')).get('kind',''))" 2>/dev/null || echo "")
+  if [ "$kind_now" = "url" ] && [ "$no_fetch" -eq 0 ]; then
+    local fetch_args=(--app-dir "$app_dir")
+    [ "$headed" -eq 1 ] && fetch_args+=(--headed)
+    cmd_fetch "${fetch_args[@]}" || die "fetch failed — pass --no-fetch to skip, or --headed for interactive auth"
+  fi
+
+  # Auto-port every screen if --port-all.
+  if [ "$port_all" -eq 1 ]; then
+    local pa_args=(--app-dir "$app_dir")
+    [ "$force" -eq 1 ] && pa_args+=(--force)
+    cmd_port_all "${pa_args[@]}"
+  fi
+
   print_wiring "$target"
 }
 
@@ -311,6 +342,149 @@ export const ACTION_TYPES = {
   TRANSFER_SET_COUNTRIES:   'transfer/setCountries',
 } as const;
 TS
+}
+
+cmd_fetch() {
+  local app_dir="$PWD"
+  local headed=0
+  local force=0
+  while [ $# -gt 0 ]; do
+    case "$1" in
+      --app-dir) app_dir="$2"; shift 2 ;;
+      --headed)  headed=1; shift ;;
+      --force)   force=1; shift ;;
+      *) die "unknown flag: $1" ;;
+    esac
+  done
+
+  app_dir="$(cd "$app_dir" && pwd)"
+  local cfg="$app_dir/.designmatch/config.json"
+  [ -f "$cfg" ] || die "no .designmatch/config.json — run \`designmatch init <url>\` first"
+
+  command -v node >/dev/null || die "node required for fetch"
+  command -v python3 >/dev/null || die "python3 required for config IO"
+  [ -f "$SCRIPT_FETCH" ] || die "missing $SCRIPT_FETCH"
+
+  local kind url
+  kind=$(python3 -c "import json; print(json.load(open('$cfg')).get('kind',''))" 2>/dev/null || echo "")
+  url=$(python3 -c "import json; print(json.load(open('$cfg')).get('canonical_source',''))" 2>/dev/null || echo "")
+
+  if [ "$kind" != "url" ]; then
+    if [ "$force" -eq 0 ]; then
+      info "canonical already local (kind=$kind) — pass --force to re-fetch"
+      return 0
+    fi
+    url=$(python3 -c "import json; print(json.load(open('$cfg')).get('original_url',''))" 2>/dev/null || echo "")
+    [ -n "$url" ] || die "cannot re-fetch: no original_url stored in config"
+  fi
+
+  local out_dir="$app_dir/.designmatch/canonical"
+  mkdir -p "$out_dir"
+
+  local fetch_args=(--url "$url" --out-dir "$out_dir")
+  [ "$headed" -eq 1 ] && fetch_args+=(--headed)
+
+  info "fetching canonical bundle (Playwright)"
+  node "$SCRIPT_FETCH" "${fetch_args[@]}" >/dev/null \
+    || die "fetch failed — try \`designmatch fetch --headed\` for interactive auth, or save the bundle manually and re-init with the local path"
+
+  # Promote config: url → local-dir, preserve original URL for re-fetch.
+  local ts; ts=$(date -u +"%Y-%m-%dT%H:%M:%SZ")
+  python3 - "$cfg" "$ts" <<'PY'
+import json, sys
+p, ts = sys.argv[1], sys.argv[2]
+c = json.load(open(p))
+if not c.get("original_url"):
+    c["original_url"] = c.get("canonical_source", "")
+c["canonical_source"] = ".designmatch/canonical"
+c["kind"] = "local-dir"
+c["fetched_at"] = ts
+json.dump(c, open(p, "w"), indent=2)
+PY
+
+  ok "fetched canonical → .designmatch/canonical/ (kind: url → local-dir)"
+}
+
+cmd_port_all() {
+  local app_dir="$PWD"
+  local out_dir="src/screens"
+  local force=0
+  local no_guide=0
+  while [ $# -gt 0 ]; do
+    case "$1" in
+      --app-dir)  app_dir="$2"; shift 2 ;;
+      --out-dir)  out_dir="$2"; shift 2 ;;
+      --force)    force=1; shift ;;
+      --no-guide) no_guide=1; shift ;;
+      *) die "unknown flag: $1" ;;
+    esac
+  done
+
+  app_dir="$(cd "$app_dir" && pwd)"
+  local cfg="$app_dir/.designmatch/config.json"
+  [ -f "$cfg" ] || die "no .designmatch/config.json — run \`designmatch init <url>\` first"
+
+  command -v python3 >/dev/null || die "python3 required"
+  local kind canonical_source
+  kind=$(python3 -c "import json; print(json.load(open('$cfg')).get('kind',''))" 2>/dev/null || echo "")
+  canonical_source=$(python3 -c "import json; print(json.load(open('$cfg')).get('canonical_source',''))" 2>/dev/null || echo "")
+
+  if [ "$kind" = "url" ]; then
+    info "canonical is URL — auto-fetching first"
+    cmd_fetch --app-dir "$app_dir" || die "auto-fetch failed"
+    kind=$(python3 -c "import json; print(json.load(open('$cfg')).get('kind',''))" 2>/dev/null || echo "")
+    canonical_source=$(python3 -c "import json; print(json.load(open('$cfg')).get('canonical_source',''))" 2>/dev/null || echo "")
+  fi
+
+  local canonical_dir=""
+  case "$kind" in
+    local-dir)  canonical_dir="$app_dir/$canonical_source" ;;
+    local-file) canonical_dir="$(dirname "$app_dir/$canonical_source")" ;;
+    *) die "cannot port-all: unknown kind \"$kind\"" ;;
+  esac
+  [ -d "$canonical_dir" ] || die "canonical dir not found: $canonical_dir"
+
+  local out_abs="$app_dir/$out_dir"
+  mkdir -p "$out_abs"
+
+  local files
+  files=$(find "$canonical_dir" -maxdepth 4 -type f \
+    \( -iname 'screen-*.jsx' -o -iname 'screen-*.tsx' \
+       -o -iname '*Screen.jsx' -o -iname '*Screen.tsx' \) 2>/dev/null)
+
+  [ -n "$files" ] || die "no screen sources found under $canonical_dir (looked for screen-*.{jsx,tsx} and *Screen.{jsx,tsx})"
+
+  local count=0 skipped=0 failed=0
+  while IFS= read -r src; do
+    [ -n "$src" ] || continue
+    local base name target
+    base=$(basename "$src")
+    name="${base%.*}"          # strip ext
+    name="${name#screen-}"     # strip leading screen-
+    name="${name%Screen}"      # strip trailing Screen
+    name="$(printf '%s' "${name:0:1}" | tr '[:lower:]' '[:upper:]')${name:1}"
+
+    target="$out_abs/$name.tsx"
+    if [ -e "$target" ] && [ "$force" -eq 0 ]; then
+      info "skip $name (exists; use --force to overwrite)"
+      skipped=$((skipped + 1))
+      continue
+    fi
+
+    local port_args=("$name" --app-dir "$app_dir" --out "$target")
+    [ "$no_guide" -eq 1 ] && port_args+=(--no-guide)
+    if ( cmd_port "${port_args[@]}" ) >/dev/null 2>&1; then
+      ok "ported $base → ${target#$app_dir/}"
+      count=$((count + 1))
+    else
+      info "fail $name (port error)"
+      failed=$((failed + 1))
+    fi
+  done <<< "$files"
+
+  echo ""
+  ok "port-all: $count ported, $skipped skipped, $failed failed → $out_dir/"
+  info "next: translate each $out_dir/*.tsx top-down per TRANSLATION GUIDE, then \`designmatch iterate <Screen>\`"
 }
 
 # Web JSX → React Native translation guide. Prepended to ported source so
@@ -416,14 +590,22 @@ cmd_port() {
   kind=$(python3 -c "import json,sys; print(json.load(open('$cfg')).get('kind',''))" 2>/dev/null || echo "")
   canonical_source=$(python3 -c "import json,sys; print(json.load(open('$cfg')).get('canonical_source',''))" 2>/dev/null || echo "")
 
+  # Auto-fetch URL canonicals transparently — port should "just work" on URLs.
+  if [ "$kind" = "url" ]; then
+    info "canonical is URL — auto-fetching first"
+    cmd_fetch --app-dir "$app_dir" || die "auto-fetch failed — try \`designmatch fetch --headed\` for interactive auth"
+    kind=$(python3 -c "import json; print(json.load(open('$cfg')).get('kind',''))" 2>/dev/null || echo "")
+    canonical_source=$(python3 -c "import json; print(json.load(open('$cfg')).get('canonical_source',''))" 2>/dev/null || echo "")
+  fi
+
   local canonical_dir=""
   case "$kind" in
-    url)
-      die "canonical is a URL — port needs local source. Save the bundle locally and re-run \`designmatch init <local-dir>\`, or place source files under .designmatch/canonical/ and update config.json kind to \"local-dir\"." ;;
     local-dir)
       canonical_dir="$app_dir/$canonical_source" ;;
     local-file)
       canonical_dir="$(dirname "$app_dir/$canonical_source")" ;;
+    url)
+      die "fetch did not complete (kind still url) — check fetch output above" ;;
     *)
       die "unknown canonical kind: \"$kind\" in $cfg" ;;
   esac
@@ -467,7 +649,9 @@ main() {
   case "$cmd" in
     init)          cmd_init "$@" ;;
     wire)          cmd_wire "$@" ;;
+    fetch)         cmd_fetch "$@" ;;
     port)          cmd_port "$@" ;;
+    port-all)      cmd_port_all "$@" ;;
     render)        cmd_render "$@" ;;
     diff)          cmd_diff "$@" ;;
     iterate)       cmd_iterate "$@" ;;

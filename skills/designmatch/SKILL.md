@@ -22,30 +22,33 @@ Pass gate: **SSIM ≥ 0.95 OR pixelDiffPct ≤ 5%**.
 
 Do NOT use for: unit logic, redux state shape, navigation graph correctness — those are not visual.
 
-## Quick Start (one command)
+## Quick Start — URL in, ready-to-translate out
 
 From the RN project root:
 
 ```bash
-designmatch init "<claude-design-url-or-path>" --app-dir .
+designmatch init "<claude-design-url>" --app-dir . --port-all
 ```
 
-This:
+This single command does the full bootstrap:
 
-1. Copies `assets/visual-qa.ts` into the app (`src/lib/visual-qa.ts` by default; auto-detects `src/utils/`, `src/`, `app/`, or root).
-2. Writes default `.designmatch/state.vqa.json` (seeds user / recipient / bonus / transfer per spec).
-3. Registers the canonical source in `.designmatch/config.json` (URL → lazy Playwright fetch; local dir/file → copied).
-4. Updates `.gitignore` (excludes `.designmatch/canonical/` and `.designmatch/screens/`).
-5. Prints the wiring snippet for `App.tsx` and the next-step iterate command.
+1. **App side**: copies `assets/visual-qa.ts` into the app (`src/lib/visual-qa.ts` by default; auto-detects `src/utils/`, `src/`, `app/`, or root), writes default `.designmatch/state.vqa.json`, updates `.gitignore`.
+2. **Fetch**: Playwright headless downloads the entire canonical bundle (HTML + JSX + assets) to `.designmatch/canonical/` by intercepting every network response, then flips `config.json` kind from `url` → `local-dir` (original URL preserved for re-fetch).
+3. **Port-all**: discovers every `screen-*.jsx|tsx` / `*Screen.jsx|tsx` in the bundle and writes each to `src/screens/<Name>.tsx` preceded by the TRANSLATION GUIDE (web → RN idiom map).
+4. **Wire**: prints the `App.tsx` snippet (primeVisualQaFlag / applyVisualQaState / overrideFeatureFlags / VqaBadge / long-press handler).
 
 Slash command equivalent (inside a superx session): `/superx:designmatch <url-or-path>`.
 
-App-side only (skip canonical registration): `designmatch wire --app-dir .` — useful when registering the canonical later or iterating on local screenshots.
+Auth: if the canonical URL is behind login, add `--headed` so Chromium launches visibly for interactive auth — the fetch picks up after sign-in.
 
-After bootstrap:
+Granular subcommands (when you want pieces, not the one-shot):
 
 ```bash
-designmatch action-types     # print ACTION_TYPES starter to paste into visual-qa.ts
+designmatch wire --app-dir .                       # app side only (no canonical)
+designmatch fetch --app-dir . [--headed]           # download URL bundle
+designmatch port <ScreenName> --out src/screens/<ScreenName>.tsx
+designmatch port-all --out-dir src/screens         # port every screen found
+designmatch action-types                           # print ACTION_TYPES starter
 designmatch iterate Home --platform android --device emulator-5554
 ```
 
@@ -70,7 +73,7 @@ Per-screen flow:
    Renders canonical, captures device, diffs, opens composite. Pass when **SSIM ≥ 0.95 OR pixel-diff ≤ 5%**.
 4. **Refine** — only adjust translation deltas the diff surfaces. **Do NOT freelance pixel adjustments.**
 
-If the canonical is registered as a URL (not yet downloaded), `designmatch port` errors — fetch / save the bundle locally and re-register via `designmatch init <local-dir>`.
+If the canonical is registered as a URL (not yet downloaded), `designmatch port` and `designmatch port-all` auto-run `designmatch fetch` first — transparent. Add `--headed` if the URL is behind login. To skip auto-fetch on init, pass `--no-fetch`.
 
 **Why mandatory:** rebuilding by eyeballing PNGs is anti-pattern #9. PNGs are the gate, not the build input.
 

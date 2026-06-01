@@ -40,25 +40,40 @@ Optional flags after the source:
 - `--app-dir <path>` — RN project root (default: cwd)
 - `--target <rel>` — explicit destination for `visual-qa.ts` (default: auto-detect)
 - `--force` — overwrite existing files
+- `--no-fetch` — skip auto-fetching URL canonicals (default: auto-fetch on)
+- `--no-port-all` — skip the bulk port step (default: port-all on)
+- `--headed` — launch Chromium visibly for interactive auth when fetching
 
 ## What the orchestrator should do
 
-1. Parse the canonical source (and any flags) from the slash command arguments.
-2. Run the bootstrap:
+URL in, ready-to-translate out. The default one-shot is:
 
-   ```bash
-   designmatch init "<source>" --app-dir "$PWD" [--target <rel>] [--force]
+```bash
+designmatch init "<source>" --app-dir "$PWD" --port-all
+```
+
+This runs the full pipeline:
+
+1. App-side: copies `visual-qa.ts` (→ `src/lib/visual-qa.ts` by default), writes `.designmatch/state.vqa.json`, updates `.gitignore`.
+2. Fetch (if URL): Playwright downloads the bundle to `.designmatch/canonical/` and flips config from `url` → `local-dir`.
+3. Port-all: discovers `screen-*.jsx|tsx` / `*Screen.jsx|tsx` in the bundle, emits each to `src/screens/<Name>.tsx` preceded by the TRANSLATION GUIDE.
+4. Wiring snippet: printed for `App.tsx`.
+
+Step-by-step the orchestrator does:
+
+1. Parse the canonical source (and any flags) from the slash command arguments. Add `--port-all` to the `init` invocation unless the user passed `--no-port-all`.
+2. If the user did NOT include a canonical source, fall back to `designmatch wire --app-dir "$PWD"` (app-side only setup).
+3. Run the assembled command, streaming output verbatim.
+4. After success, point the user at the per-screen next step:
+
+   ```
+   ✓ designmatch fully wired. N screens ported to src/screens/.
+   Edit src/lib/visual-qa.ts → set ACTION_TYPES to your reducers.
+   Translate each src/screens/<Name>.tsx top-down per the TRANSLATION GUIDE.
+   Verify: designmatch iterate <ScreenName> --platform android --device <id>
    ```
 
-3. Stream the CLI output verbatim (it prints status + wiring snippet).
-4. After success, prompt the user with the next step:
-
-   ```
-   ✓ designmatch wired. Edit src/lib/visual-qa.ts to map ACTION_TYPES to your reducers, then:
-     designmatch iterate <ScreenName> --platform android --device <id>
-   ```
-
-5. If the user did NOT include a canonical source, fall back to `designmatch wire --app-dir "$PWD"` (app-side only setup) and explain that the canonical can be registered later with another `init` call.
+5. If `designmatch fetch` fails (auth required), retry once with `--headed` and tell the user to sign in in the browser window that appears.
 
 ## Build path (port-first, mandatory)
 
