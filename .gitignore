@@ -40,3 +40,8 @@ docs/superpowers/plans/
 # logs
 *.log
 /tmp/superx-*
+
+# Playwright/npm artifacts from local smoke tests of designmatch scripts
+skills/designmatch/scripts/node_modules/
+skills/designmatch/scripts/package.json
+skills/designmatch/scripts/package-lock.json
