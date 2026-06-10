@@ -1,0 +1,259 @@
+#!/usr/bin/env bash
+# superx-demo — the first-five-minutes wow.
+#
+# Scaffolds a fully-specified demo task into a fresh project dir, then hands you
+# the exact command to paste into Claude Code (via superx) to watch superx build
+# a small but real full-stack app end-to-end.
+#
+# Usage:
+#   superx-demo [dir] [--dry|--run] [--force] [--help]
+#
+#   superx-demo                       Scaffold ./superx-demo-app (dry, safe)
+#   superx-demo /tmp/my-demo          Scaffold into a custom dir
+#   superx-demo --run                 Scaffold AND launch superx on the task
+#   superx-demo ./demo --force        Overwrite an existing scaffold
+#
+# Dry mode is the default and never executes work — it only writes files and
+# prints the paste-ready next step. --run additionally launches superx.
+#
+set -euo pipefail
+
+# ── Colors (24-bit truecolor with plain fallback, matching install.sh) ──
+
+if [[ "${COLORTERM:-}" == "truecolor" || "${COLORTERM:-}" == "24bit" || "${TERM:-}" == *256color* ]]; then
+  P='\033[38;2;224;86;160m'   # pink
+  C='\033[38;2;0;212;255m'    # cyan
+  V='\033[38;2;155;89;182m'   # violet
+  G='\033[38;2;78;204;163m'   # green
+  D='\033[38;2;100;100;120m'  # dim
+  W='\033[38;2;255;200;80m'   # warm yellow
+else
+  P='\033[35m'; C='\033[36m'; V='\033[34m'; G='\033[32m'; D='\033[37m'; W='\033[33m'
+fi
+B='\033[1m'; R='\033[0m'; UL='\033[4m'
+
+# ── Resolve plugin root (bin/superx-demo → superx/) ──
+
+SELF="$0"
+if command -v readlink &>/dev/null; then
+  SELF="$(readlink -f "$0" 2>/dev/null || readlink "$0" 2>/dev/null || echo "$0")"
+fi
+PLUGIN_DIR="$(cd "$(dirname "$SELF")/.." && pwd)"
+
+# ── Defaults ──
+
+TARGET_DIR=""
+MODE="dry"        # dry | run
+FORCE=false
+TASK_FILE=".superx-demo-task.md"
+PLAN_FILE=".planning/PLAN.md"
+
+# ── Usage ──
+
+usage() {
+  cat <<EOF
+$(printf "${P}${B}")superx-demo$(printf "${R}") — scaffold a real full-stack demo task and watch superx build it
+
+$(printf "${B}")USAGE$(printf "${R}")
+  superx-demo [dir] [--dry|--run] [--force]
+
+$(printf "${B}")ARGUMENTS$(printf "${R}")
+  dir            Target project directory (default: ./superx-demo-app)
+
+$(printf "${B}")FLAGS$(printf "${R}")
+  --dry          Scaffold + print the paste-ready command. Never executes. (default)
+  --run          Scaffold AND launch superx on the task (requires \`superx\` on PATH).
+  --force        Overwrite the target dir if it already exists.
+  -h, --help     Show this help.
+
+$(printf "${B}")WHAT IT DOES$(printf "${R}")
+  Writes a fully-specified canned task (a Todo REST API + single-page frontend
+  + tests + README) to <dir>/$TASK_FILE and a ready-to-run plan seed to
+  <dir>/$PLAN_FILE, then prints the exact command to run it.
+
+$(printf "${B}")EXAMPLES$(printf "${R}")
+  superx-demo                     # scaffold ./superx-demo-app (safe, dry)
+  superx-demo /tmp/demo           # custom dir
+  superx-demo --run               # scaffold and launch superx
+  superx-demo ./demo --force      # overwrite an existing scaffold
+EOF
+}
+
+# ── Parse args ──
+
+for arg in "$@"; do
+  case "$arg" in
+    -h|--help) usage; exit 0 ;;
+    --dry)     MODE="dry" ;;
+    --run)     MODE="run" ;;
+    --force)   FORCE=true ;;
+    -*)
+      printf "  ${P}✘${R} Unknown flag: ${B}%s${R}\n" "$arg" >&2
+      printf "  ${D}Run ${C}superx-demo --help${D} for usage.${R}\n" >&2
+      exit 2
+      ;;
+    *)
+      if [ -z "$TARGET_DIR" ]; then
+        TARGET_DIR="$arg"
+      else
+        printf "  ${P}✘${R} Unexpected extra argument: ${B}%s${R}\n" "$arg" >&2
+        exit 2
+      fi
+      ;;
+  esac
+done
+
+[ -z "$TARGET_DIR" ] && TARGET_DIR="./superx-demo-app"
+
+# ── Banner ──
+
+printf "\n"
+printf "  ${P}${B}░▒▓█${R} ${C}${B}S U P E R X   D E M O${R} ${P}${B}█▓▒░${R}\n"
+printf "  ${V}━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━${R}\n"
+printf "  ${D}One command → watch superx build a real full-stack app.${R}\n"
+printf "\n"
+
+# ── Idempotency guard ──
+
+if [ -e "$TARGET_DIR" ]; then
+  if [ "$FORCE" != true ]; then
+    printf "  ${W}⚠${R} Target already exists: ${B}%s${R}\n" "$TARGET_DIR"
+    printf "  ${D}Re-run with ${C}--force${D} to overwrite, or pick another dir:${R}\n"
+    printf "  ${C}superx-demo %s --force${R}\n\n" "$TARGET_DIR"
+    exit 1
+  fi
+  printf "  ${W}⚠${R} Overwriting existing ${B}%s${R} ${D}(--force)${R}\n" "$TARGET_DIR"
+  rm -rf "${TARGET_DIR:?}/$TASK_FILE" "${TARGET_DIR:?}/${PLAN_FILE}"
+fi
+
+# ── Scaffold dirs ──
+
+mkdir -p "$TARGET_DIR/.planning"
+ABS_DIR="$(cd "$TARGET_DIR" && pwd)"
+
+# ── The canned task prompt ──
+# Real, fully-specified, scoped to ~5 files, with runnable acceptance criteria.
+
+cat > "$ABS_DIR/$TASK_FILE" <<'TASK'
+# superx demo task — Todo REST API + single-page frontend
+
+Build a small but complete full-stack **Todo** application in this directory. Keep
+it to ~5 source files. Everything must run with zero cloud dependencies and an
+empty database on first launch (in-memory or a local SQLite file is fine).
+
+## Stack
+- **Backend:** Python 3 + FastAPI + Uvicorn (single `app.py`). Use Pydantic models.
+- **Storage:** in-memory store seeded empty; ids are monotonic integers.
+- **Frontend:** ONE static `index.html` (vanilla JS + fetch, no build step) served
+  by FastAPI at `GET /`. No framework, no bundler.
+- **Tests:** `pytest` + FastAPI `TestClient` in `test_app.py`.
+- **Docs:** `README.md` with run + test instructions.
+
+## Files to create (target ~5)
+1. `app.py`        — FastAPI app, models, routes, static index serving
+2. `index.html`    — single-page UI: list, add, toggle-complete, delete
+3. `test_app.py`   — endpoint tests covering the acceptance criteria below
+4. `requirements.txt` — fastapi, uvicorn, pytest, httpx
+5. `README.md`     — how to install, run, and test
+
+## API contract (exactly these endpoints)
+- `GET    /api/todos`            -> 200, JSON array of todos (empty `[]` at start)
+- `POST   /api/todos`            -> 201, body `{"title": "buy milk"}` -> returns the
+                                    created todo `{"id":1,"title":"buy milk","done":false}`.
+                                    Empty/whitespace title -> 422.
+- `PATCH  /api/todos/{id}`       -> 200, body `{"done": true}` toggles completion.
+                                    Unknown id -> 404.
+- `DELETE /api/todos/{id}`       -> 204, no body. Unknown id -> 404.
+- `GET    /`                     -> 200, serves `index.html` (Content-Type text/html).
+
+## Frontend behaviour
+- On load, fetch `GET /api/todos` and render the list.
+- An input + "Add" button POSTs a new todo and re-renders.
+- Each row has a checkbox (PATCH done) and a delete button (DELETE).
+- No inline secrets, no external CDNs — fully self-contained.
+
+## Acceptance criteria (must all pass — these are runnable)
+1. `pip install -r requirements.txt` succeeds.
+2. `pytest -q` -> all tests pass, exit 0. Tests MUST cover:
+   - empty list returns `[]`
+   - create returns 201 with `done:false` and an incrementing id
+   - empty title returns 422
+   - PATCH toggles `done` and persists across a subsequent GET
+   - DELETE returns 204 and the item is gone from the list
+   - PATCH/DELETE on unknown id returns 404
+3. `uvicorn app:app` boots without error and `GET /` returns the HTML page.
+4. `curl -s localhost:8000/api/todos` returns valid JSON.
+5. README documents the exact install/run/test commands above.
+6. Every endpoint must be fully implemented — no unfinished markers, no fake data.
+
+## Out of scope (do NOT add)
+- Auth, user accounts, pagination, a real database server, Docker, CI config,
+  or any JS build tooling. Keep it to the ~5 files above.
+TASK
+
+# ── The plan seed ──
+
+cat > "$ABS_DIR/$PLAN_FILE" <<'PLAN'
+# Plan seed — superx demo (Todo full-stack)
+
+This is a ready-to-execute plan for the task in `.superx-demo-task.md`.
+superx will refine and parallelize it; it exists so the demo starts with momentum.
+
+## Waves
+### Wave 1 — backend core (parallel-safe)
+- [ ] `app.py`: FastAPI app, Pydantic `Todo`/`TodoIn` models, in-memory store,
+      the five routes per the API contract, static `index.html` at `GET /`.
+- [ ] `requirements.txt`: fastapi, uvicorn, pytest, httpx.
+
+### Wave 2 — frontend + tests (parallel-safe, depend on Wave 1 contract)
+- [ ] `index.html`: vanilla-JS SPA (list / add / toggle / delete via fetch).
+- [ ] `test_app.py`: pytest + TestClient covering every acceptance criterion.
+
+### Wave 3 — docs + verify (sequential)
+- [ ] `README.md`: install / run / test instructions.
+- [ ] Run `pytest -q` -> green. Boot `uvicorn app:app` -> `GET /` serves HTML.
+
+## Definition of done
+All six acceptance criteria in `.superx-demo-task.md` pass with quoted evidence.
+PLAN
+
+# ── Output ──
+
+printf "  ${G}✔${R} Scaffolded demo project\n"
+printf "    ${D}dir   ${R}${C}%s${R}\n" "$ABS_DIR"
+printf "    ${D}task  ${R}%s\n" "$TASK_FILE"
+printf "    ${D}plan  ${R}%s\n" "$PLAN_FILE"
+printf "\n"
+printf "  ${V}━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━${R}\n"
+printf "  ${B}The task superx will build:${R}\n"
+printf "  ${D}A Todo REST API (FastAPI) + single-page frontend + pytest + README.${R}\n"
+printf "  ${D}Five real endpoints, runnable acceptance criteria, ~5 files.${R}\n"
+printf "  ${V}━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━${R}\n"
+printf "\n"
+
+# The exact prompt to hand superx — points it at the scaffolded task file.
+DEMO_PROMPT="Build the full-stack app specified in .superx-demo-task.md, following the plan seed in .planning/PLAN.md. All acceptance criteria must pass with runnable evidence."
+
+if [ "$MODE" = "run" ]; then
+  if ! command -v superx &>/dev/null; then
+    printf "  ${W}⚠${R} ${B}superx${R} not found on PATH — cannot auto-run.\n"
+    printf "  ${D}Install it, then paste the command below. Falling back to dry output.${R}\n\n"
+    MODE="dry"
+  else
+    printf "  ${P}▸${R} ${B}Launching superx${R} ${D}(--run)${R}\n"
+    printf "  ${D}cd %s && superx \"%s\"${R}\n\n" "$ABS_DIR" "$DEMO_PROMPT"
+    cd "$ABS_DIR"
+    exec superx "$DEMO_PROMPT"
+  fi
+fi
+
+# Dry mode (default & fallback): print the paste-ready next step, execute nothing.
+printf "  ${B}Next step${R} ${D}— paste this to watch superx build it:${R}\n"
+printf "\n"
+printf "  ${C}cd %s && superx \"%s\"${R}\n" "$ABS_DIR" "$DEMO_PROMPT"
+printf "\n"
+printf "  ${D}No ${C}superx${D} on PATH? Open Claude Code in that dir and say:${R}\n"
+printf "  ${D}  \"%s\"${R}\n" "$DEMO_PROMPT"
+printf "\n"
+printf "  ${W}▸${R} Safe by default — nothing was executed. Add ${C}--run${R} to launch automatically.\n"
+printf "\n"
