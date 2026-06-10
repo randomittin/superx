@@ -108,6 +108,15 @@ if [ -n "$ONLY_TASK" ] && [ "${#SELECTED[@]}" -eq 0 ]; then
   exit 1
 fi
 
+# ── Portable realpath (macOS bash 3.2 has no `realpath`). Resolves an
+# EXISTING directory to its canonical absolute path. Echoes path, or empty. ──
+canonical_dir() {
+  local d="$1"
+  ( cd "$d" 2>/dev/null && pwd -P ) 2>/dev/null && return 0
+  python3 -c 'import os,sys; print(os.path.realpath(sys.argv[1]))' "$d" 2>/dev/null && return 0
+  return 1
+}
+
 # ── Materialize a fresh scratch workspace for a task ──
 # Echoes the workspace path. Runs setup[] and writes any seed_files inline.
 materialize_workspace() {
@@ -118,10 +127,38 @@ materialize_workspace() {
   tmpl="${TMPDIR:-/tmp}/superx-bench.${xrun}"
   ws="$(mktemp -d "$tmpl")"
   # Write seed_files (object: relpath -> content) first so __SEED__ steps see them.
+  # SECURITY: task JSONs are untrusted community input. A seed_files key like
+  # `../../etc/cron.d/x`, `/abs/path`, or one with an embedded newline would
+  # escape the workspace. Reject unsafe keys, then verify the resolved write
+  # target stays inside $ws (defense-in-depth) before any mkdir/write.
   if jq -e '.seed_files' "$f" >/dev/null 2>&1; then
+    local ws_real
+    ws_real="$(canonical_dir "$ws")" || { echo "error: cannot resolve workspace: $ws" >&2; rm -rf "$ws"; return 1; }
     while IFS= read -r relpath; do
-      local dest="$ws/$relpath"
-      mkdir -p "$(dirname "$dest")"
+      # 1) Reject absolute paths, any `..` segment, embedded newline, empty key.
+      case "$relpath" in
+        /*|*..*|*$'\n'*|"") echo "error: unsafe seed_files key: $relpath" >&2; rm -rf "$ws"; return 1 ;;
+      esac
+      local dest="$ws/$relpath" parent parent_real
+      parent="$(dirname "$dest")"
+      # 2) Defense-in-depth: the parent dir must resolve to within $ws. Walk up
+      #    to the nearest EXISTING ancestor (the part dirname -p would create),
+      #    canonicalize it, and require it to be $ws or a descendant of $ws.
+      local probe="$parent"
+      while [ ! -d "$probe" ]; do probe="$(dirname "$probe")"; done
+      parent_real="$(canonical_dir "$probe")" || { echo "error: unsafe seed_files key: $relpath" >&2; rm -rf "$ws"; return 1; }
+      case "$parent_real/" in
+        "$ws_real/"*) ;;
+        *) echo "error: seed_files key escapes workspace: $relpath" >&2; rm -rf "$ws"; return 1 ;;
+      esac
+      # 3) Guard the mkdir step too: create dir, then re-verify the REAL parent
+      #    (now existing) is still inside $ws before writing the file.
+      mkdir -p "$parent"
+      parent_real="$(canonical_dir "$parent")" || { echo "error: unsafe seed_files key: $relpath" >&2; rm -rf "$ws"; return 1; }
+      case "$parent_real/" in
+        "$ws_real/"*) ;;
+        *) echo "error: seed_files key escapes workspace: $relpath" >&2; rm -rf "$ws"; return 1 ;;
+      esac
       jq -r --arg k "$relpath" '.seed_files[$k]' "$f" > "$dest"
     done < <(jq -r '.seed_files | keys[]' "$f")
   fi
