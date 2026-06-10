@@ -1,0 +1,25 @@
+{
+  "id": "02-bugfix-with-tests",
+  "title": "Bug fix with tests: off-by-one + timezone bug in date-range util",
+  "category": "bug fix with tests",
+  "strength": "Root-cause a failing test in seeded buggy code without breaking the green ones.",
+  "language": "node",
+  "prompt": "This project has a date utility in src/daterange.js with two bugs. `daysBetween(a, b)` is meant to return the number of whole calendar days from date `a` to date `b` (inclusive of neither endpoint difference rounding — a pure day delta), but it is off by one and also mishandles dates that straddle a daylight-saving boundary because it divides millisecond differences. `eachDay(a, b)` should yield every calendar date from `a` to `b` inclusive as YYYY-MM-DD strings, but it currently skips the final day and can loop forever across DST. There are failing tests in test/daterange.test.js that pin the correct behaviour. Do NOT edit the tests. Find the root cause of each bug, fix src/daterange.js so all tests pass, and keep the previously-passing tests green. Use UTC-based date math to be DST-safe.",
+  "setup": [
+    "npm init -y >/dev/null 2>&1",
+    "npm pkg set type=commonjs >/dev/null 2>&1",
+    "npm install --no-audit --no-fund jest >/dev/null 2>&1",
+    "mkdir -p src test",
+    "__SEED__"
+  ],
+  "seed_files": {
+    "src/daterange.js": "// Date-range utilities. NOTE: contains two intentional bugs for the benchmark.\nfunction daysBetween(a, b) {\n  const da = new Date(a);\n  const db = new Date(b);\n  // BUG: local-time ms division is not DST-safe, and the +1 is an off-by-one.\n  const ms = db.getTime() - da.getTime();\n  return Math.floor(ms / (1000 * 60 * 60 * 24)) + 1;\n}\n\nfunction eachDay(a, b) {\n  const out = [];\n  const cur = new Date(a);\n  const end = new Date(b);\n  // BUG: strict < skips the final day; local setDate can stall across DST.\n  while (cur < end) {\n    out.push(cur.toISOString().slice(0, 10));\n    cur.setDate(cur.getDate() + 1);\n  }\n  return out;\n}\n\nmodule.exports = { daysBetween, eachDay };\n",
+    "test/daterange.test.js": "const { daysBetween, eachDay } = require('../src/daterange');\n\ndescribe('daysBetween', () => {\n  test('same day is 0', () => {\n    expect(daysBetween('2021-03-01', '2021-03-01')).toBe(0);\n  });\n  test('one day apart is 1', () => {\n    expect(daysBetween('2021-03-01', '2021-03-02')).toBe(1);\n  });\n  test('spans a US spring-forward DST boundary correctly', () => {\n    // 2021-03-14 is DST start in US; pure calendar delta must be 7.\n    expect(daysBetween('2021-03-10', '2021-03-17')).toBe(7);\n  });\n  test('spans a US fall-back DST boundary correctly', () => {\n    expect(daysBetween('2021-11-04', '2021-11-11')).toBe(7);\n  });\n});\n\ndescribe('eachDay', () => {\n  test('inclusive of both endpoints', () => {\n    expect(eachDay('2021-01-01', '2021-01-03')).toEqual([\n      '2021-01-01', '2021-01-02', '2021-01-03',\n    ]);\n  });\n  test('single day yields that day', () => {\n    expect(eachDay('2021-06-15', '2021-06-15')).toEqual(['2021-06-15']);\n  });\n  test('crosses DST without stalling or skipping', () => {\n    expect(eachDay('2021-03-13', '2021-03-15')).toEqual([\n      '2021-03-13', '2021-03-14', '2021-03-15',\n    ]);\n  });\n});\n"
+  },
+  "verify": [
+    "test -f src/daterange.js",
+    "test -f test/daterange.test.js",
+    "git diff --quiet -- test/daterange.test.js || (echo 'tests were modified - not allowed' && false)",
+    "npx jest --silent"
+  ]
+}

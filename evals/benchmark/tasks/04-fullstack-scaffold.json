@@ -1,0 +1,24 @@
+{
+  "id": "04-fullstack-scaffold",
+  "title": "Full-stack scaffold: tiny notes API + static client + integration test",
+  "category": "small full-stack scaffold",
+  "strength": "Coordinated server + client + test scaffold where the layers must agree on a contract.",
+  "language": "node",
+  "prompt": "Scaffold a tiny full-stack notes app in this empty Node project. Backend: server.js exporting an Express `app` (do not auto-listen when required) with GET /api/notes (returns all notes as JSON array) and POST /api/notes (accepts {text}, validates non-empty, assigns an incrementing id, returns 201 with the created note; returns 400 {error} on empty text). Notes are stored in memory. Frontend: public/index.html plus public/app.js that fetches /api/notes on load, renders them into a <ul id=\"notes\">, and has a form (#note-form with input #note-text) that POSTs a new note and re-renders. Keep it dependency-light vanilla JS, no framework. Add a bin/serve.js that imports app and listens on process.env.PORT||3000. Write an integration test test/api.test.js using supertest that covers: empty list initially, POST creates a note returning 201 + id, the note then appears in GET, and POST with empty text returns 400. Wire package.json `test` script to jest. All tests must pass.",
+  "setup": [
+    "npm init -y >/dev/null 2>&1",
+    "npm pkg set type=commonjs >/dev/null 2>&1",
+    "npm install --no-audit --no-fund express jest supertest >/dev/null 2>&1"
+  ],
+  "verify": [
+    "test -f server.js",
+    "test -f public/index.html",
+    "test -f public/app.js",
+    "test -f bin/serve.js",
+    "test -f test/api.test.js",
+    "grep -q 'id=\"notes\"' public/index.html",
+    "grep -q 'id=\"note-form\"' public/index.html",
+    "node -e \"const a=require('./server'); if(typeof a!=='function' && typeof a.listen!=='function'){process.exit(1)}\"",
+    "npx jest --silent"
+  ]
+}

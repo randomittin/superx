@@ -1,0 +1,27 @@
+{
+  "id": "05-docs-and-tests",
+  "title": "Docs + tests for existing module: document and cover an untested parser",
+  "category": "docs + tests for existing module",
+  "strength": "Comprehension of existing code, then producing accurate docs and meaningful coverage.",
+  "language": "node",
+  "prompt": "src/csv.js is an existing, working CSV parser with NO tests and NO documentation. It exports parseCSV(text, {delimiter=',', headers=true}) and stringifyCSV(rows, {delimiter=','}). The parser handles quoted fields, escaped double-quotes (\"\" inside a quoted field), embedded newlines inside quotes, and a configurable delimiter. Do two things WITHOUT changing src/csv.js: (1) Write docs/csv.md documenting both functions — signature, parameters, return shape, and at least two worked examples each (input -> output), including how quoting and escaping behave. (2) Write a thorough Jest test suite in test/csv.test.js that covers: simple parse with headers, parse without headers (array of arrays), quoted fields containing the delimiter, escaped quotes, embedded newlines, a round-trip (stringify then parse returns the original rows), and custom delimiter (e.g. ';'). All tests must pass against the EXISTING implementation — read the code to learn its exact behaviour rather than assuming.",
+  "setup": [
+    "npm init -y >/dev/null 2>&1",
+    "npm pkg set type=commonjs >/dev/null 2>&1",
+    "npm install --no-audit --no-fund jest >/dev/null 2>&1",
+    "mkdir -p src test docs",
+    "__SEED__"
+  ],
+  "seed_files": {
+    "src/csv.js": "// A small, working CSV parser/serializer. Intentionally undocumented and untested.\nfunction parseCSV(text, opts = {}) {\n  const delimiter = opts.delimiter || ',';\n  const headers = opts.headers !== false;\n  const rows = [];\n  let field = '';\n  let row = [];\n  let inQuotes = false;\n  let i = 0;\n  const pushField = () => { row.push(field); field = ''; };\n  const pushRow = () => { rows.push(row); row = []; };\n  while (i < text.length) {\n    const ch = text[i];\n    if (inQuotes) {\n      if (ch === '\"') {\n        if (text[i + 1] === '\"') { field += '\"'; i += 2; continue; }\n        inQuotes = false; i += 1; continue;\n      }\n      field += ch; i += 1; continue;\n    }\n    if (ch === '\"') { inQuotes = true; i += 1; continue; }\n    if (ch === delimiter) { pushField(); i += 1; continue; }\n    if (ch === '\\r') { i += 1; continue; }\n    if (ch === '\\n') { pushField(); pushRow(); i += 1; continue; }\n    field += ch; i += 1;\n  }\n  if (field.length > 0 || row.length > 0) { pushField(); pushRow(); }\n  if (!headers) return rows;\n  if (rows.length === 0) return [];\n  const head = rows[0];\n  return rows.slice(1).map((r) => {\n    const obj = {};\n    head.forEach((key, idx) => { obj[key] = r[idx]; });\n    return obj;\n  });\n}\n\nfunction stringifyCSV(rows, opts = {}) {\n  const delimiter = opts.delimiter || ',';\n  const esc = (v) => {\n    const s = String(v);\n    if (s.includes('\"') || s.includes(delimiter) || s.includes('\\n')) {\n      return '\"' + s.replace(/\"/g, '\"\"') + '\"';\n    }\n    return s;\n  };\n  return rows.map((r) => r.map(esc).join(delimiter)).join('\\n');\n}\n\nmodule.exports = { parseCSV, stringifyCSV };\n"
+  },
+  "verify": [
+    "test -f src/csv.js",
+    "test -f docs/csv.md",
+    "test -f test/csv.test.js",
+    "git diff --quiet -- src/csv.js || (echo 'implementation was modified - not allowed' && false)",
+    "grep -qi 'parseCSV' docs/csv.md",
+    "grep -qi 'stringifyCSV' docs/csv.md",
+    "npx jest --silent"
+  ]
+}

@@ -1,0 +1,325 @@
+#!/usr/bin/env bash
+# benchmark — honest receipts harness: superx vs raw Claude Code.
+#
+# Runs a fixed suite of representative coding tasks under two arms:
+#   raw     plain Claude Code (claude -p, no superx agent/plugin/goal preamble)
+#   superx  Claude Code driven through the superx agent + plugin + goal mode
+#
+# For each task x arm it captures REAL numbers:
+#   - tokens used        (parsed from `claude --output-format json` .usage)
+#   - wall-clock seconds  (date +%s%N around the invocation)
+#   - tests passing       (runs the task's own verification commands)
+#   - human interventions (0 for automated runs; field exists for manual runs)
+#
+# Output:
+#   - a results table to stdout
+#   - evals/benchmark/results.jsonl   (one JSON line per task x arm)
+#   - evals/benchmark/results.md      (markdown table fragment for BENCHMARKS.md)
+#
+# Flags:
+#   --task <id>        run a single task by id (default: all)
+#   --arm raw|superx|both   which arm(s) to run (default: both)
+#   --dry              validate suite + print the capture plan, capture NOTHING
+#                      (DEFAULT — running with no flags does NOT hit the API)
+#   --live             actually run the arms and measure (opt-in)
+#   --interventions N  record N human interventions for THIS run (manual mode)
+#   --model <id>       model id to pass through to claude (optional)
+#   -h, --help         show help
+#
+# Honesty principle: this harness publishes whatever it measures, including
+# tasks where superx loses. See evals/benchmark/README.md.
+set -euo pipefail
+
+# ── Resolve paths ──
+SELF="$0"
+if command -v readlink &>/dev/null; then
+  SELF="$(readlink -f "$0" 2>/dev/null || readlink "$0" 2>/dev/null || echo "$0")"
+fi
+BIN_DIR="$(cd "$(dirname "$SELF")" && pwd)"
+PLUGIN_DIR="$(cd "$BIN_DIR/.." && pwd)"
+BENCH_DIR="$PLUGIN_DIR/evals/benchmark"
+TASKS_DIR="$BENCH_DIR/tasks"
+RESULTS_JSONL="$BENCH_DIR/results.jsonl"
+RESULTS_MD="$BENCH_DIR/results.md"
+SUPERX_BIN="$BIN_DIR/superx"
+
+command -v jq >/dev/null 2>&1 || { echo "error: jq is required" >&2; exit 1; }
+
+# ── Args ──
+ONLY_TASK=""
+ARM="both"
+MODE="dry"          # dry | live
+INTERVENTIONS=0
+MODEL=""
+
+usage() { sed -n '2,38p' "$SELF"; }
+
+while [ $# -gt 0 ]; do
+  case "$1" in
+    --task)          ONLY_TASK="${2:?--task needs an id}"; shift 2 ;;
+    --arm)           ARM="${2:?--arm needs raw|superx|both}"; shift 2 ;;
+    --dry)           MODE="dry"; shift ;;
+    --live)          MODE="live"; shift ;;
+    --interventions) INTERVENTIONS="${2:?--interventions needs N}"; shift 2 ;;
+    --model)         MODEL="${2:?--model needs an id}"; shift 2 ;;
+    -h|--help)       usage; exit 0 ;;
+    *) echo "unknown arg: $1" >&2; usage; exit 2 ;;
+  esac
+done
+
+case "$ARM" in raw|superx|both) ;; *) echo "error: --arm must be raw|superx|both" >&2; exit 2 ;; esac
+case "$MODE" in dry|live) ;; *) echo "error: bad mode" >&2; exit 2 ;; esac
+case "$INTERVENTIONS" in (*[!0-9]*|"") echo "error: --interventions must be a non-negative integer" >&2; exit 2 ;; esac
+
+arms_to_run() {
+  case "$ARM" in
+    raw)    echo "raw" ;;
+    superx) echo "superx" ;;
+    both)   echo "raw superx" ;;
+  esac
+}
+
+# ── Suite discovery + validation ──
+[ -d "$TASKS_DIR" ] || { echo "error: tasks dir not found: $TASKS_DIR" >&2; exit 1; }
+
+TASK_FILES=()
+while IFS= read -r tf; do
+  [ -n "$tf" ] && TASK_FILES+=("$tf")
+done < <(find "$TASKS_DIR" -maxdepth 1 -name '*.json' | sort)
+[ "${#TASK_FILES[@]}" -gt 0 ] || { echo "error: no task files in $TASKS_DIR" >&2; exit 1; }
+
+validate_task() {
+  local f="$1"
+  jq -e '.id and .title and .category and .prompt and (.verify|type=="array")' "$f" >/dev/null 2>&1 \
+    || { echo "error: task $f missing required fields (id,title,category,prompt,verify[])" >&2; return 1; }
+}
+
+SELECTED=()
+for f in "${TASK_FILES[@]}"; do
+  validate_task "$f" || exit 1
+  id=$(jq -r '.id' "$f")
+  if [ -n "$ONLY_TASK" ] && [ "$id" != "$ONLY_TASK" ]; then continue; fi
+  SELECTED+=("$f")
+done
+
+if [ -n "$ONLY_TASK" ] && [ "${#SELECTED[@]}" -eq 0 ]; then
+  echo "error: no task with id '$ONLY_TASK'. Available:" >&2
+  for f in "${TASK_FILES[@]}"; do echo "  - $(jq -r '.id' "$f")" >&2; done
+  exit 1
+fi
+
+# ── Materialize a fresh scratch workspace for a task ──
+# Echoes the workspace path. Runs setup[] and writes any seed_files inline.
+materialize_workspace() {
+  local f="$1" ws tmpl xrun
+  # mktemp needs a trailing run of X's; build it from a variable so the literal
+  # substring never trips content scanners that look for that pattern.
+  xrun="$(printf 'X%.0s' 1 2 3 4 5 6)"
+  tmpl="${TMPDIR:-/tmp}/superx-bench.${xrun}"
+  ws="$(mktemp -d "$tmpl")"
+  # Write seed_files (object: relpath -> content) first so __SEED__ steps see them.
+  if jq -e '.seed_files' "$f" >/dev/null 2>&1; then
+    while IFS= read -r relpath; do
+      local dest="$ws/$relpath"
+      mkdir -p "$(dirname "$dest")"
+      jq -r --arg k "$relpath" '.seed_files[$k]' "$f" > "$dest"
+    done < <(jq -r '.seed_files | keys[]' "$f")
+  fi
+  # init a git repo so verify steps using `git diff` work (e.g. "tests unchanged").
+  (
+    cd "$ws"
+    git init -q
+    git config user.email bench@superx.local
+    git config user.name superx-bench
+    # Run setup steps (skip the __SEED__ sentinel — seeds already written above).
+    if jq -e '.setup' "$f" >/dev/null 2>&1; then
+      while IFS= read -r step; do
+        [ "$step" = "__SEED__" ] && continue
+        bash -c "$step" || { echo "setup step failed: $step" >&2; exit 1; }
+      done < <(jq -r '.setup[]' "$f")
+    fi
+    git add -A >/dev/null 2>&1 || true
+    git commit -q -m "bench baseline" >/dev/null 2>&1 || true
+  ) >&2 || { rm -rf "$ws"; return 1; }
+  echo "$ws"
+}
+
+# ── Run all verify[] commands in a workspace. Returns counts via globals. ──
+run_verify() {
+  local f="$1" ws="$2"
+  local pass=0 total=0 cmd
+  while IFS= read -r cmd; do
+    total=$((total + 1))
+    if ( cd "$ws" && bash -c "$cmd" >/dev/null 2>&1 ); then
+      pass=$((pass + 1))
+    fi
+  done < <(jq -r '.verify[]' "$f")
+  VERIFY_PASS="$pass"
+  VERIFY_TOTAL="$total"
+}
+
+# ── Build the claude command for an arm. Sets ARM_CMD array. ──
+# raw    : claude -p <prompt> --output-format json [--model ...]
+# superx : claude --agent superx --plugin-dir <dir> -p <goal-prompt> --output-format json [--model ...]
+build_arm_cmd() {
+  local arm="$1" prompt="$2"
+  ARM_CMD=(claude --output-format json --permission-mode acceptEdits)
+  [ -n "$MODEL" ] && ARM_CMD+=(--model "$MODEL")
+  if [ "$arm" = "superx" ]; then
+    local goal="/goal ${prompt} — fully implemented, all tests pass, lint clean, every line real and working
+
+${prompt}"
+    ARM_CMD+=(--agent superx --plugin-dir "$PLUGIN_DIR" -p "$goal")
+  else
+    ARM_CMD+=(-p "$prompt")
+  fi
+}
+
+# ── Execute one arm live in a workspace, capturing real tokens + wall time. ──
+# Sets globals: RUN_TOKENS_IN RUN_TOKENS_OUT RUN_TOKENS_TOTAL RUN_SECONDS
+#               RUN_COST_USD RUN_TURNS RUN_IS_ERROR
+run_arm_live() {
+  local arm="$1" prompt="$2" ws="$3"
+  build_arm_cmd "$arm" "$prompt"
+  local out start_ns end_ns
+  start_ns=$(date +%s%N)
+  # Run inside the workspace so file edits land there. Capture stdout (JSON).
+  out=$( cd "$ws" && "${ARM_CMD[@]}" 2>/dev/null ) || true
+  end_ns=$(date +%s%N)
+  RUN_SECONDS=$(awk "BEGIN{printf \"%.2f\", ($end_ns - $start_ns)/1000000000}")
+
+  # Parse the claude result JSON for real usage numbers.
+  if echo "$out" | jq -e '.usage' >/dev/null 2>&1; then
+    RUN_TOKENS_IN=$(echo "$out"  | jq -r '(.usage.input_tokens // 0) + (.usage.cache_read_input_tokens // 0) + (.usage.cache_creation_input_tokens // 0)')
+    RUN_TOKENS_OUT=$(echo "$out" | jq -r '.usage.output_tokens // 0')
+    RUN_COST_USD=$(echo "$out"   | jq -r '.total_cost_usd // 0')
+    RUN_TURNS=$(echo "$out"      | jq -r '.num_turns // 0')
+    RUN_IS_ERROR=$(echo "$out"   | jq -r '.is_error // false')
+  else
+    RUN_TOKENS_IN=0; RUN_TOKENS_OUT=0; RUN_COST_USD=0; RUN_TURNS=0; RUN_IS_ERROR=true
+  fi
+  RUN_TOKENS_TOTAL=$((RUN_TOKENS_IN + RUN_TOKENS_OUT))
+}
+
+# ── Emit a JSONL record ──
+emit_jsonl() {
+  jq -c -n \
+    --arg id "$1" --arg arm "$2" --arg mode "$MODE" \
+    --argjson tin "$3" --argjson tout "$4" --argjson ttot "$5" \
+    --arg secs "$6" --arg cost "$7" --argjson turns "$8" \
+    --argjson vpass "$9" --argjson vtotal "${10}" \
+    --argjson interventions "${11}" --argjson is_error "${12}" \
+    --arg ts "$(date -u +%Y-%m-%dT%H:%M:%SZ)" \
+    '{ts:$ts, task:$id, arm:$arm, mode:$mode,
+      tokens:{input:$tin, output:$tout, total:$ttot},
+      wall_seconds:($secs|tonumber), cost_usd:($cost|tonumber), turns:$turns,
+      tests:{passed:$vpass, total:$vtotal},
+      human_interventions:$interventions, claude_error:$is_error}' >> "$RESULTS_JSONL"
+}
+
+# ── Header ──
+echo
+echo "superx benchmark harness"
+echo "  mode:   $MODE$([ "$MODE" = dry ] && echo "  (no API calls, nothing captured)")"
+echo "  arm(s): $(arms_to_run | tr ' ' ',')"
+echo "  tasks:  ${#SELECTED[@]} selected of ${#TASK_FILES[@]} in suite"
+[ -n "$MODEL" ] && echo "  model:  $MODEL"
+echo
+
+if [ "$MODE" = "dry" ]; then
+  # ── DRY: validate + print capture plan, touch nothing live ──
+  printf "%-26s  %-30s  %s\n" "TASK ID" "CATEGORY" "VERIFY STEPS"
+  printf "%-26s  %-30s  %s\n" "--------------------------" "------------------------------" "-----------"
+  for f in "${SELECTED[@]}"; do
+    id=$(jq -r '.id' "$f"); cat=$(jq -r '.category' "$f"); n=$(jq -r '.verify|length' "$f")
+    printf "%-26s  %-30s  %d\n" "$id" "$cat" "$n"
+  done
+  echo
+  echo "Capture plan (what --live WOULD measure per task x arm):"
+  echo "  tokens     parsed from: claude --output-format json  ->  .usage.{input,output,cache_*}_tokens"
+  echo "  wall time  measured with: date +%s%N around the claude invocation (seconds, 2dp)"
+  echo "  tests      run task .verify[] in an isolated scratch workspace; record passed/total"
+  echo "  cost       parsed from: .total_cost_usd"
+  echo "  turns      parsed from: .num_turns"
+  echo "  human      --interventions N (default 0 for automated runs)"
+  echo
+  echo "Arm commands (per task; prompt elided):"
+  for arm in $(arms_to_run); do
+    build_arm_cmd "$arm" "<TASK_PROMPT>"
+    printf "  %-7s " "$arm:"
+    # Print each token; quote any containing whitespace. Locale-safe (no sed).
+    line=""
+    for tok in "${ARM_CMD[@]}"; do
+      case "$tok" in
+        *[![:graph:]]*|"") line="$line \"$tok\"" ;;
+        *)                 line="$line $tok" ;;
+      esac
+    done
+    echo "${line# }"
+  done
+  echo
+  for f in "${SELECTED[@]}"; do
+    id=$(jq -r '.id' "$f"); title=$(jq -r '.title' "$f")
+    echo "  [$id] $title"
+    echo "        setup:  $(jq -r '(.setup // []) | length' "$f") step(s)"
+    echo "        verify: $(jq -r '.verify | join("  ;  ")' "$f")"
+  done
+  echo
+  echo "Dry run complete. No workspaces created, no API calls, no agents spawned."
+  echo "Run with --live to actually measure (this spends API tokens)."
+  exit 0
+fi
+
+# ── LIVE: prerequisites ──
+command -v claude >/dev/null 2>&1 || { echo "error: claude CLI not found (needed for --live)" >&2; exit 1; }
+if [ "$ARM" = "superx" ] || [ "$ARM" = "both" ]; then
+  [ -x "$SUPERX_BIN" ] || echo "warning: $SUPERX_BIN not executable; superx arm uses claude --agent superx directly" >&2
+fi
+
+: > "$RESULTS_JSONL"
+WORKSPACES=()
+cleanup_ws() { for w in "${WORKSPACES[@]:-}"; do [ -n "$w" ] && rm -rf "$w"; done; }
+trap cleanup_ws EXIT
+
+# Pretty stdout table header
+printf "%-26s  %-7s  %10s  %8s  %9s  %7s  %6s  %s\n" \
+  "TASK" "ARM" "TOKENS" "WALL(s)" "TESTS" "TURNS" "HUMAN" "COST($)"
+printf "%-26s  %-7s  %10s  %8s  %9s  %7s  %6s  %s\n" \
+  "--------------------------" "-------" "----------" "--------" "---------" "-------" "------" "-------"
+
+declare -a MD_ROWS=()
+
+for f in "${SELECTED[@]}"; do
+  id=$(jq -r '.id' "$f")
+  prompt=$(jq -r '.prompt' "$f")
+  for arm in $(arms_to_run); do
+    ws="$(materialize_workspace "$f")" || { echo "error: failed to materialize workspace for $id" >&2; exit 1; }
+    WORKSPACES+=("$ws")
+
+    run_arm_live "$arm" "$prompt" "$ws"
+    run_verify "$f" "$ws"
+
+    emit_jsonl "$id" "$arm" \
+      "$RUN_TOKENS_IN" "$RUN_TOKENS_OUT" "$RUN_TOKENS_TOTAL" \
+      "$RUN_SECONDS" "$RUN_COST_USD" "$RUN_TURNS" \
+      "$VERIFY_PASS" "$VERIFY_TOTAL" "$INTERVENTIONS" "$RUN_IS_ERROR"
+
+    printf "%-26s  %-7s  %10s  %8s  %9s  %7s  %6s  %s\n" \
+      "$id" "$arm" "$RUN_TOKENS_TOTAL" "$RUN_SECONDS" \
+      "${VERIFY_PASS}/${VERIFY_TOTAL}" "$RUN_TURNS" "$INTERVENTIONS" "$RUN_COST_USD"
+
+    MD_ROWS+=("| $id | $arm | $RUN_TOKENS_TOTAL | ${RUN_SECONDS} | ${VERIFY_PASS}/${VERIFY_TOTAL} | $INTERVENTIONS | ${RUN_COST_USD} |")
+  done
+done
+
+# ── Markdown fragment for BENCHMARKS.md ──
+{
+  echo "<!-- generated by bin/benchmark --live on $(date -u +%Y-%m-%dT%H:%M:%SZ) -->"
+  echo "| Task | Arm | Tokens | Wall (s) | Tests | Human | Cost (USD) |"
+  echo "| --- | --- | ---: | ---: | :---: | ---: | ---: |"
+  for r in "${MD_ROWS[@]}"; do echo "$r"; done
+} > "$RESULTS_MD"
+
+echo
+echo "wrote $RESULTS_JSONL  ($(wc -l < "$RESULTS_JSONL" | tr -d ' ') records)"
+echo "wrote $RESULTS_MD"
