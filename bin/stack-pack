@@ -1,0 +1,118 @@
+#!/usr/bin/env bash
+# stack-pack — Detect a target project's stack(s) and resolve the knowledge packs
+# that role agents (coder/architect/reviewer/...) should read at task start.
+#
+# Stack specialization ships as KNOWLEDGE PACKS loaded onto existing role agents,
+# never as new role x stack agents. A pack is a Markdown file of conventions,
+# directory layout, lint/test/build commands, acceptance-criteria templates, and
+# failure patterns living at skills/stacks/<stack-id>/PACK.md inside the plugin.
+#
+# Layering (cold-start scaffold -> per-repo refinement):
+#   1. Base pack    skills/stacks/<id>/PACK.md   — generic, plugin-shipped scaffold
+#   2. Repo refine  .planning/skills/*.md        — learned, repo-specific overrides
+# Agents read base packs first, then layer repo refinements on top.
+set -euo pipefail
+
+# Resolve this script's real directory so we can find sibling bin/ tools.
+SELF="$0"
+if command -v readlink >/dev/null 2>&1; then
+  SELF="$(readlink -f "$0" 2>/dev/null || readlink "$0" 2>/dev/null || echo "$0")"
+fi
+BIN_DIR="$(cd "$(dirname "$SELF")" && pwd)"
+# Plugin root: CLAUDE_PLUGIN_ROOT wins; else the parent of bin/.
+PLUGIN_ROOT="${CLAUDE_PLUGIN_ROOT:-$(cd "$BIN_DIR/.." && pwd)}"
+
+usage() {
+  cat <<'EOF'
+Usage: stack-pack <command> [PATH]
+
+Commands:
+  detect [PATH]   Run stack-detect on PATH (default: cwd). Emits stack-detect JSON.
+  load   [PATH]   Detect stacks in PATH, then print the pack file paths agents
+                  should read: base packs first, then .planning/skills/ refinements.
+  paths  [PATH]   Alias for load.
+  --help          Show this help.
+
+Resolution:
+  Base packs resolve via CLAUDE_PLUGIN_ROOT (or the plugin dir containing this
+  script) at: <plugin>/skills/stacks/<stack-id>/PACK.md
+  Repo refinements come from <PATH>/.planning/skills/*.md and layer on top.
+EOF
+}
+
+CMD="${1:-}"
+case "$CMD" in
+  --help|-h|"") usage; [ -z "$CMD" ] && exit 1 || exit 0 ;;
+esac
+shift || true
+
+TARGET="${1:-.}"
+DETECTOR="$BIN_DIR/stack-detect"
+
+run_detect() {
+  if [ -x "$DETECTOR" ]; then
+    "$DETECTOR" "$TARGET"
+  elif [ -f "$DETECTOR" ]; then
+    bash "$DETECTOR" "$TARGET"
+  else
+    # Detector missing -> behave like an empty result rather than crashing.
+    printf '{"stacks":[],"signals":[]}\n'
+  fi
+}
+
+# Extract the "stacks" array from stack-detect JSON, one id per line.
+parse_stacks() {
+  local json="$1"
+  if command -v jq >/dev/null 2>&1; then
+    printf '%s' "$json" | jq -r '.stacks[]?' 2>/dev/null || true
+  else
+    # Fallback parser: pull the bracketed stacks array and split quoted tokens.
+    printf '%s' "$json" \
+      | sed -n 's/.*"stacks":\[\([^]]*\)\].*/\1/p' \
+      | tr ',' '\n' \
+      | sed -e 's/^[[:space:]]*"//' -e 's/"[[:space:]]*$//' \
+      | grep -v '^$' || true
+  fi
+}
+
+case "$CMD" in
+  detect)
+    run_detect
+    ;;
+
+  load|paths)
+    DETECT_JSON="$(run_detect)"
+    found_any=0
+
+    # 1. Base packs from the plugin (cold-start scaffold).
+    while IFS= read -r stack; do
+      [ -n "$stack" ] || continue
+      pack="$PLUGIN_ROOT/skills/stacks/$stack/PACK.md"
+      if [ -f "$pack" ]; then
+        printf '%s\n' "$pack"
+        found_any=1
+      fi
+    done <<EOF
+$(parse_stacks "$DETECT_JSON")
+EOF
+
+    # 2. Repo-specific refinements (layered on top of base packs).
+    REFINE_DIR="$TARGET/.planning/skills"
+    if [ -d "$REFINE_DIR" ]; then
+      for refine in "$REFINE_DIR"/*.md; do
+        [ -f "$refine" ] || continue
+        printf '%s\n' "$refine"
+        found_any=1
+      done
+    fi
+
+    # Nothing resolved: succeed quietly with no output (no pack is a valid state).
+    [ "$found_any" -eq 1 ] || true
+    ;;
+
+  *)
+    printf 'stack-pack: unknown command %q\n' "$CMD" >&2
+    usage >&2
+    exit 1
+    ;;
+esac

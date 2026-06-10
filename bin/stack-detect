@@ -1,0 +1,169 @@
+#!/usr/bin/env bash
+# stack-detect — Scan a target project for tech-stack signals and emit detected stack id(s).
+# Reads file CONTENTS (not just existence) to classify. Never crashes on missing/malformed files.
+# Output: {"stacks":["nextjs"],"signals":["package.json:next"]}. Empty: {"stacks":[],"signals":[]}.
+set -euo pipefail
+
+usage() {
+  cat <<'EOF'
+Usage: stack-detect [PATH]
+
+Scans PATH (default: current directory) for tech-stack signals and emits a JSON
+object of detected stack ids and the signals that produced them.
+
+Detection (reads file contents, not just existence):
+  package.json   -> next? nextjs | react-native/expo? react-native | react? react
+                    | vue? vue | svelte? svelte | else node
+  build.gradle / build.gradle.kts / pom.xml -> spring-boot? spring-boot | else jvm
+  requirements.txt / pyproject.toml -> fastapi? fastapi | django? django
+                    | flask? flask | else python
+  go.mod         -> go
+  Cargo.toml     -> rust
+
+Output JSON: {"stacks":["nextjs"],"signals":["package.json:next"]}
+No match:    {"stacks":[],"signals":[]}
+EOF
+}
+
+case "${1:-}" in
+  --help|-h) usage; exit 0 ;;
+esac
+
+ROOT="${1:-.}"
+
+# Emit empty result and exit cleanly when the path is unusable.
+emit_empty() {
+  printf '{"stacks":[],"signals":[]}\n'
+  exit 0
+}
+
+[ -d "$ROOT" ] || emit_empty
+
+STACKS=()
+SIGNALS=()
+
+add() {
+  # add <stack-id> <signal>; de-dupes stack ids, keeps every signal.
+  local stack="$1" signal="$2" s
+  for s in "${STACKS[@]:-}"; do
+    [ "$s" = "$stack" ] && { SIGNALS+=("$signal"); return; }
+  done
+  STACKS+=("$stack")
+  SIGNALS+=("$signal")
+}
+
+# Read a file safely: prints contents, or nothing if unreadable. Never errors.
+safe_read() {
+  [ -f "$1" ] && [ -r "$1" ] && cat "$1" 2>/dev/null || true
+}
+
+# Case-insensitive fixed-ish grep that never trips set -e.
+has() {
+  # has <pattern> <content>
+  printf '%s' "$2" | grep -qiE "$1" 2>/dev/null
+}
+
+# ---- Node / JS ecosystem (package.json) ----
+PKG="$ROOT/package.json"
+if [ -f "$PKG" ]; then
+  content="$(safe_read "$PKG")"
+  # Prefer parsing the dependency maps when jq is available; fall back to grep.
+  deps=""
+  if command -v jq >/dev/null 2>&1; then
+    deps="$(printf '%s' "$content" \
+      | jq -r '[(.dependencies // {}), (.devDependencies // {}), (.peerDependencies // {})] | add // {} | keys[]?' 2>/dev/null || true)"
+  fi
+  # If jq produced nothing (malformed JSON or jq absent), fall back to raw content.
+  haystack="${deps:-$content}"
+
+  if has '(^|[^a-z@/-])next([^a-z-]|$)|"next"' "$haystack"; then
+    add nextjs "package.json:next"
+  elif has 'react-native|"expo"|(^|[^a-z])expo([^a-z]|$)' "$haystack"; then
+    add react-native "package.json:react-native"
+  elif has '"react"|(^|[^a-z-])react([^a-z-]|$)' "$haystack"; then
+    add react "package.json:react"
+  elif has '"vue"|(^|[^a-z-])vue([^a-z-]|$)' "$haystack"; then
+    add vue "package.json:vue"
+  elif has '"svelte"|(^|[^a-z-])svelte([^a-z-]|$)' "$haystack"; then
+    add svelte "package.json:svelte"
+  else
+    add node "package.json:node"
+  fi
+fi
+
+# ---- JVM (Gradle / Maven) ----
+for gradle in "$ROOT/build.gradle" "$ROOT/build.gradle.kts"; do
+  if [ -f "$gradle" ]; then
+    content="$(safe_read "$gradle")"
+    base="$(basename "$gradle")"
+    if has 'spring-boot|org\.springframework\.boot|springBootVersion' "$content"; then
+      add spring-boot "$base:spring-boot"
+    else
+      add jvm "$base:jvm"
+    fi
+  fi
+done
+if [ -f "$ROOT/pom.xml" ]; then
+  content="$(safe_read "$ROOT/pom.xml")"
+  if has 'spring-boot' "$content"; then
+    add spring-boot "pom.xml:spring-boot"
+  else
+    add jvm "pom.xml:jvm"
+  fi
+fi
+
+# ---- Python ----
+for pyfile in "$ROOT/requirements.txt" "$ROOT/pyproject.toml"; do
+  if [ -f "$pyfile" ]; then
+    content="$(safe_read "$pyfile")"
+    base="$(basename "$pyfile")"
+    if has 'fastapi' "$content"; then
+      add fastapi "$base:fastapi"
+    elif has '(^|[^a-z])django([^a-z]|$)' "$content"; then
+      add django "$base:django"
+    elif has '(^|[^a-z])flask([^a-z]|$)' "$content"; then
+      add flask "$base:flask"
+    else
+      add python "$base:python"
+    fi
+  fi
+done
+
+# ---- Go ----
+if [ -f "$ROOT/go.mod" ]; then
+  add go "go.mod:go"
+fi
+
+# ---- Rust ----
+if [ -f "$ROOT/Cargo.toml" ]; then
+  add rust "Cargo.toml:rust"
+fi
+
+# ---- Emit JSON ----
+json_array() {
+  # json_array <element...> -> ["a","b"]. Empty input -> [].
+  local out="[" first=1 el esc
+  for el in "$@"; do
+    esc="${el//\\/\\\\}"
+    esc="${esc//\"/\\\"}"
+    if [ "$first" -eq 1 ]; then first=0; else out+=","; fi
+    out+="\"$esc\""
+  done
+  out+="]"
+  printf '%s' "$out"
+}
+
+# Build arrays without the "${arr[@]:-}" trap (which injects one empty element
+# into an otherwise-empty array). Only pass elements when the array is non-empty.
+if [ "${#STACKS[@]}" -gt 0 ]; then
+  STACKS_JSON="$(json_array "${STACKS[@]}")"
+else
+  STACKS_JSON="[]"
+fi
+if [ "${#SIGNALS[@]}" -gt 0 ]; then
+  SIGNALS_JSON="$(json_array "${SIGNALS[@]}")"
+else
+  SIGNALS_JSON="[]"
+fi
+
+printf '{"stacks":%s,"signals":%s}\n' "$STACKS_JSON" "$SIGNALS_JSON"
