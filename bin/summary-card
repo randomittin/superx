@@ -1,0 +1,214 @@
+#!/usr/bin/env bash
+# summary-card — superx end-of-run summary card.
+# Renders a truecolor ASCII box from .planning/STATE.md + superx-state.json + git log.
+# Pure shell. No network, no model involvement. Missing data → "—", never crashes.
+#
+# Usage: summary-card [PROJECT_DIR]   (defaults to cwd)
+set -uo pipefail
+
+PROJECT="${1:-.}"
+PLANNING="$PROJECT/.planning"
+STATE_MD="$PLANNING/STATE.md"
+STATE_JSON="$PROJECT/superx-state.json"
+
+# ── Color detection (mirrors install.sh) ──
+if [[ "${COLORTERM:-}" == "truecolor" || "${COLORTERM:-}" == "24bit" || "${TERM:-}" == *256color* ]]; then
+  P='\033[38;2;224;86;160m'   # pink
+  C='\033[38;2;0;212;255m'    # cyan
+  G='\033[38;2;78;204;163m'   # green
+  W='\033[38;2;255;200;80m'   # warm yellow
+  RED='\033[38;2;255;95;110m' # red
+  D='\033[38;2;100;100;120m'  # dim
+elif [ -t 1 ] || [ -n "${TERM:-}" ]; then
+  P='\033[35m'; C='\033[36m'; G='\033[32m'; W='\033[33m'; RED='\033[31m'; D='\033[37m'
+else
+  P=''; C=''; G=''; W=''; RED=''; D=''
+fi
+B='\033[1m'; R='\033[0m'
+
+DASH="—"
+
+# ── JSON reader (python3 → jq → defaults) ──
+# Emits: tests lint dirty total limit  (space-separated)
+read_state_json() {
+  [ -f "$STATE_JSON" ] || { echo "- - - - -"; return; }
+  if command -v python3 >/dev/null 2>&1; then
+    python3 - "$STATE_JSON" <<'PY' 2>/dev/null && return
+import json, sys
+try:
+    s = json.load(open(sys.argv[1]))
+except Exception:
+    print("- - - - -"); sys.exit(0)
+g = s.get("quality_gates", {}) or {}
+b = s.get("budget", {}) or {}
+def b2s(v): return "1" if v is True else ("0" if v is False else "-")
+tot = b.get("total_tokens"); lim = b.get("token_limit")
+print(b2s(g.get("tests_passing")), b2s(g.get("lint_clean")), b2s(g.get("dirty")),
+      tot if isinstance(tot,(int,float)) else "-",
+      lim if isinstance(lim,(int,float)) else "-")
+PY
+  fi
+  if command -v jq >/dev/null 2>&1; then
+    jq -r '
+      def b2s: if .==true then "1" elif .==false then "0" else "-" end;
+      [ (.quality_gates.tests_passing|b2s), (.quality_gates.lint_clean|b2s),
+        (.quality_gates.dirty|b2s), (.budget.total_tokens // "-"),
+        (.budget.token_limit // "-") ] | join(" ")
+    ' "$STATE_JSON" 2>/dev/null && return
+  fi
+  echo "- - - - -"
+}
+
+read -r ST_TESTS ST_LINT ST_DIRTY ST_TOTAL ST_LIMIT <<<"$(read_state_json)"
+
+# ── Task / phase name from STATE.md ──
+TASK="$DASH"
+if [ -f "$STATE_MD" ]; then
+  # Prefer an explicit task_name/goal/title; else current_phase; else first H1.
+  t=$(grep -m1 -iE '^(task_name|goal|title):' "$STATE_MD" 2>/dev/null | sed -E 's/^[^:]*: *//')
+  [ -z "$t" ] && t=$(grep -m1 '^current_phase:' "$STATE_MD" 2>/dev/null | sed 's/current_phase: *//')
+  [ -z "$t" ] && t=$(grep -m1 '^# ' "$STATE_MD" 2>/dev/null | sed 's/^# *//')
+  [ -n "$t" ] && TASK="$t"
+fi
+
+# ── Phase ──
+PHASE="$DASH"
+if [ -f "$STATE_MD" ]; then
+  p=$(grep -m1 '^current_phase:' "$STATE_MD" 2>/dev/null | sed 's/current_phase: *//')
+  [ -n "$p" ] && PHASE="$p"
+fi
+
+# ── Waves completed (scan PLAN-*.md + SUMMARY-*) ──
+WAVES="$DASH"
+for plan in "$PLANNING"/PLAN-*.md; do
+  [ -f "$plan" ] || continue
+  phase_num=$(basename "$plan" | grep -o '[0-9]*')
+  total=$(grep -c "^### Task:" "$plan" 2>/dev/null || echo 0)
+  done_count=0
+  for summary in "$PLANNING"/SUMMARY-"$phase_num"-wave-*.md; do
+    [ -f "$summary" ] || continue
+    done_count=$((done_count + $(grep -c "| DONE |" "$summary" 2>/dev/null || echo 0)))
+  done
+  WAVES="$done_count/$total"
+  break
+done
+
+# ── Commits this session ──
+# Boundary = most recent superx session-end checkpoint commit. Count commits
+# AFTER it (i.e. work done since last session closed). If none found, count
+# all commits reachable from HEAD (capped display).
+COMMITS="$DASH"
+if [ -d "$PROJECT/.git" ] || git -C "$PROJECT" rev-parse --git-dir >/dev/null 2>&1; then
+  boundary=$(git -C "$PROJECT" log --grep='superx: session-end checkpoint' \
+              --format='%H' -n1 2>/dev/null || true)
+  if [ -n "$boundary" ]; then
+    c=$(git -C "$PROJECT" rev-list --count "${boundary}..HEAD" 2>/dev/null || echo "")
+  else
+    c=$(git -C "$PROJECT" rev-list --count HEAD 2>/dev/null || echo "")
+  fi
+  [ -n "$c" ] && COMMITS="$c"
+fi
+
+# ── Gate glyphs / labels ──
+gate_label() { # value, ok-text, bad-text
+  case "$1" in
+    1) printf "%bPASS%b" "$G" "$R" ;;
+    0) printf "%bFAIL%b" "$RED" "$R" ;;
+    *) printf "%b%s%b" "$D" "$DASH" "$R" ;;
+  esac
+}
+TESTS_LBL=$(gate_label "$ST_TESTS")
+LINT_LBL=$(gate_label "$ST_LINT")
+case "$ST_DIRTY" in
+  1) DIRTY_LBL=$(printf "%bdirty ●%b" "$W" "$R") ;;
+  0) DIRTY_LBL=$(printf "%bclean ○%b" "$G" "$R") ;;
+  *) DIRTY_LBL=$(printf "%b%s%b" "$D" "$DASH" "$R") ;;
+esac
+
+# ── Token figures + raw-Claude-Code estimate ──
+fmt_tokens() {
+  awk -v n="$1" 'BEGIN{
+    if (n=="-" ) { print "—"; exit }
+    if (n+0 >= 1000000) printf "%.2fM", n/1000000;
+    else if (n+0 >= 1000) printf "%.1fk", n/1000;
+    else printf "%d", n;
+  }'
+}
+if [ "$ST_TOTAL" != "-" ]; then
+  SPENT=$(fmt_tokens "$ST_TOTAL")
+  # Estimate of raw (non-superx) Claude Code usage at a ~4x efficiency baseline.
+  EST_RAW=$(awk -v t="$ST_TOTAL" 'BEGIN{printf "%d", t/0.25}')
+  EST_LBL=$(fmt_tokens "$EST_RAW")
+else
+  SPENT="$DASH"
+  EST_LBL="$DASH"
+fi
+
+# ── Box rendering ──
+# Fixed inner width; pad/truncate each line's visible text to fit.
+WIDTH=54
+hr() { # char
+  local c="$1" out="" i
+  for ((i=0; i<WIDTH; i++)); do out="${out}${c}"; done
+  printf "%s" "$out"
+}
+
+# Print a content row: label (dim) + value, padded to WIDTH visible chars.
+# Args: label, value-plain, value-colored
+row() {
+  local label="$1" vplain="$2" vcolored="$3"
+  local left="  ${label} "
+  # Visible length = left + vplain
+  local vis=$(( ${#left} + ${#vplain} ))
+  local pad=$(( WIDTH - vis ))
+  [ "$pad" -lt 0 ] && pad=0
+  local spaces=""; local i
+  for ((i=0; i<pad; i++)); do spaces="${spaces} "; done
+  printf "%b│%b%b%s%b%b%s%b│%b\n" \
+    "$D" "$R" "$D" "$left" "$R" "$vcolored" "$spaces" "$D" "$R"
+}
+
+# Title row (centered-ish, bold pink)
+title_row() {
+  local txt="$1"
+  local vis=$(( ${#txt} + 2 ))
+  local pad=$(( WIDTH - vis ))
+  [ "$pad" -lt 0 ] && pad=0
+  local spaces=""; local i
+  for ((i=0; i<pad; i++)); do spaces="${spaces} "; done
+  printf "%b│%b %b%b%s%b%s %b│%b\n" "$D" "$R" "$B" "$P" "$txt" "$R" "$spaces" "$D" "$R"
+}
+
+# Truncate a plain string to a max visible width with ellipsis.
+trunc() {
+  local s="$1" max="$2"
+  if [ "${#s}" -gt "$max" ]; then
+    printf "%s…" "${s:0:$((max-1))}"
+  else
+    printf "%s" "$s"
+  fi
+}
+
+TASK_T=$(trunc "$TASK" 44)
+PHASE_T=$(trunc "$PHASE" 44)
+
+# Compose value plains (for width math) and colored variants.
+GATES_PLAIN="tests:$( [ "$ST_TESTS" = 1 ] && echo PASS || { [ "$ST_TESTS" = 0 ] && echo FAIL || echo "$DASH"; }) lint:$( [ "$ST_LINT" = 1 ] && echo PASS || { [ "$ST_LINT" = 0 ] && echo FAIL || echo "$DASH"; }) $( [ "$ST_DIRTY" = 1 ] && echo 'dirty ●' || { [ "$ST_DIRTY" = 0 ] && echo 'clean ○' || echo "$DASH"; })"
+GATES_COLORED="${D}tests:${R}${TESTS_LBL} ${D}lint:${R}${LINT_LBL} ${DIRTY_LBL}"
+
+TOKENS_PLAIN="${SPENT} spent  (vs ~${EST_LBL} raw-CC est.)"
+TOKENS_COLORED="${C}${SPENT}${R} ${D}spent${R}  ${D}(vs ~${R}${W}${EST_LBL}${R} ${D}raw-CC est.)${R}"
+
+printf "\n"
+printf "%b┌%s┐%b\n" "$D" "$(hr "─")" "$R"
+title_row "superx · run summary"
+printf "%b├%s┤%b\n" "$D" "$(hr "─")" "$R"
+row "task " "$TASK_T" "${C}${TASK_T}${R}"
+row "phase" "$PHASE_T" "${C}${PHASE_T}${R}"
+row "waves" "$WAVES" "${G}${WAVES}${R}"
+row "commits" "$COMMITS" "${G}${COMMITS}${R}"
+printf "%b├%s┤%b\n" "$D" "$(hr "─")" "$R"
+row "gates" "$GATES_PLAIN" "$GATES_COLORED"
+row "tokens" "$TOKENS_PLAIN" "$TOKENS_COLORED"
+printf "%b└%s┘%b\n" "$D" "$(hr "─")" "$R"
+printf "\n"

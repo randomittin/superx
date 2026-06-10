@@ -7,7 +7,6 @@
 # Usage:
 #   superx "build a dashboard with auth"     Run a task end-to-end
 #   superx                                    Interactive mode
-#   superx --dashboard                        Start the pixel dashboard
 #   superx --update                           Pull latest version
 #   superx --setup                            Re-run plugin setup
 #
@@ -279,24 +278,6 @@ print_banner() {
 }
 
 # ── Command handlers ──
-
-# --dashboard: start the web UI server
-if [[ "${1:-}" == "--dashboard" ]]; then
-  ensure_node_path
-  ensure_claude
-  ensure_auth
-  first_run_setup
-  apply_superx_theme 2>/dev/null || true
-  print_banner 2>/dev/null || true
-  CONFIG_FILE="$PLUGIN_DIR/superx-github.json"
-  EXISTING_URL=""
-  if [ -f "$CONFIG_FILE" ]; then
-    EXISTING_URL=$(python3 -c "import json; print(json.load(open('$CONFIG_FILE')).get('url',''))" 2>/dev/null || true)
-  fi
-  python3 -c "import json; json.dump({'path':'$WORK_DIR','url':'$EXISTING_URL'}, open('$CONFIG_FILE','w'))"
-  printf "  ▸ Dashboard: \033[4mhttp://localhost:${SUPERX_PORT:-8080}\033[0m\n\n"
-  exec python3 "$PLUGIN_DIR/ui/server.py"
-fi
 
 # --update: pull latest via git
 if [[ "${1:-}" == "--update" ]]; then
@@ -624,7 +605,6 @@ if [[ "${1:-}" == "--help" || "${1:-}" == "-h" ]]; then
   echo "  superx \"build X\"       Run a task end-to-end in the current directory"
   echo "  superx                  Interactive Claude session with superx powers"
   echo "  superx --resume         Resume last session (conversation + .planning state)"
-  echo "  superx --dashboard      Start the pixel dashboard (http://localhost:8080)"
   echo "  superx --auto           Use auto-mode (safer alternative to skip-permissions)"
   echo "  superx --no-goal         Disable goal-driven execution for this run"
   echo "  superx --skip-checkpoint Start fresh, ignore last checkpoint/settings"

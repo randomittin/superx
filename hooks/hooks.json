@@ -74,7 +74,7 @@
         "hooks": [
           {
             "type": "command",
-            "command": "\"${CLAUDE_PLUGIN_ROOT:-/Users/rj/Downloads/superx}/bin/parallelism-tracker\" grade 2>&1 || true; \"${CLAUDE_PLUGIN_ROOT:-/Users/rj/Downloads/superx}/bin/verify-edits\" --quick 2>&1 || true; if [ -f .superx-no-autocommit ]; then exit 0; fi; if [ -d .git ] && [ -n \"$(git status --porcelain 2>/dev/null)\" ]; then count=$(git diff --name-only 2>/dev/null | wc -l | tr -d ' '); git add -A && git commit -m \"superx: session-end checkpoint (${count} files)\" --no-verify 2>/dev/null || true; fi"
+            "command": "\"${CLAUDE_PLUGIN_ROOT:-/Users/rj/Downloads/superx}/bin/parallelism-tracker\" grade 2>&1 || true; \"${CLAUDE_PLUGIN_ROOT:-/Users/rj/Downloads/superx}/bin/verify-edits\" --quick 2>&1 || true; \"${CLAUDE_PLUGIN_ROOT:-/Users/rj/Downloads/superx}/bin/summary-card\" . 2>/dev/null || true; if [ -f .superx-no-autocommit ]; then exit 0; fi; if [ -d .git ] && [ -n \"$(git status --porcelain 2>/dev/null)\" ]; then count=$(git diff --name-only 2>/dev/null | wc -l | tr -d ' '); git add -A && git commit -m \"superx: session-end checkpoint (${count} files)\" --no-verify 2>/dev/null || true; fi"
           }
         ]
       }
