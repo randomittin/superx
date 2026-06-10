@@ -1,0 +1,22 @@
+{
+  "id": "01-multifile-feature",
+  "title": "Multi-file feature: rate limiter middleware + store + tests",
+  "category": "multi-file feature",
+  "strength": "Parallel decomposition across multiple new files with a shared contract.",
+  "language": "node",
+  "prompt": "In this empty Node project, implement a token-bucket rate limiter as Express middleware. Create three files: src/store.js (an in-memory token-bucket store with `take(key, cost)` returning {allowed, remaining, resetMs}, configurable capacity and refillPerSec), src/middleware.js (Express middleware factory `rateLimit({capacity, refillPerSec, keyFn})` that uses the store, sets X-RateLimit-Remaining header, and returns HTTP 429 with a JSON body {error:'rate_limited'} when exhausted), and src/index.js (re-exports both). Use CommonJS modules. Write Jest tests in test/store.test.js and test/middleware.test.js covering: bucket starts full, take() decrements, exhaustion returns allowed=false, refill over time restores tokens, and the middleware sets headers + returns 429. Wire up package.json scripts `test` (jest) and `lint` (eslint src test). Add a minimal eslint flat config. Everything must pass.",
+  "setup": [
+    "npm init -y >/dev/null 2>&1",
+    "npm pkg set type=commonjs >/dev/null 2>&1",
+    "npm install --no-audit --no-fund jest eslint express supertest >/dev/null 2>&1"
+  ],
+  "verify": [
+    "test -f src/store.js",
+    "test -f src/middleware.js",
+    "test -f src/index.js",
+    "test -f test/store.test.js",
+    "test -f test/middleware.test.js",
+    "npx jest --silent",
+    "npx eslint src test"
+  ]
+}

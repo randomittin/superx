@@ -1,0 +1,25 @@
+{
+  "id": "03-lint-refactor-batch",
+  "title": "Lint/refactor batch: clean a messy module to zero ESLint warnings",
+  "category": "lint/refactor batch",
+  "strength": "Mechanical-but-broad cleanup across a file where many small edits must all land.",
+  "language": "node",
+  "prompt": "src/orders.js is functional but messy: it has unused variables, uses `var`, has loose equality (==), uses string concatenation instead of template literals, and a couple of functions that could be simplified. An ESLint flat config (eslint.config.js) is already present and reports multiple warnings/errors. Refactor src/orders.js so that `npx eslint src` reports ZERO problems, WITHOUT changing the observable behaviour: the existing tests in test/orders.test.js must still pass unchanged. Do not weaken the eslint config or add disable comments — fix the code itself.",
+  "setup": [
+    "npm init -y >/dev/null 2>&1",
+    "npm pkg set type=commonjs >/dev/null 2>&1",
+    "npm install --no-audit --no-fund jest eslint >/dev/null 2>&1",
+    "mkdir -p src test",
+    "__SEED__"
+  ],
+  "seed_files": {
+    "src/orders.js": "// Messy on purpose: var, ==, unused vars, string concat. Behaviour must be preserved.\nvar TAX = 0.1;\n\nfunction total(items) {\n  var sum = 0;\n  var unused = 'leftover';\n  for (var i = 0; i < items.length; i++) {\n    sum = sum + items[i].price * items[i].qty;\n  }\n  return sum;\n}\n\nfunction withTax(items) {\n  var t = total(items);\n  return t + t * TAX;\n}\n\nfunction label(order) {\n  if (order.status == 'paid') {\n    return 'Order ' + order.id + ' (' + order.status + ')';\n  }\n  return 'Order ' + order.id + ' (pending)';\n}\n\nfunction isEmpty(items) {\n  if (items.length == 0) {\n    return true;\n  } else {\n    return false;\n  }\n}\n\nmodule.exports = { TAX, total, withTax, label, isEmpty };\n",
+    "test/orders.test.js": "const { total, withTax, label, isEmpty } = require('../src/orders');\n\nconst cart = [\n  { price: 10, qty: 2 },\n  { price: 5, qty: 1 },\n];\n\ntest('total sums price*qty', () => {\n  expect(total(cart)).toBe(25);\n});\ntest('withTax adds 10%', () => {\n  expect(withTax(cart)).toBeCloseTo(27.5);\n});\ntest('label reflects paid status', () => {\n  expect(label({ id: 7, status: 'paid' })).toBe('Order 7 (paid)');\n});\ntest('label falls back to pending', () => {\n  expect(label({ id: 8, status: 'new' })).toBe('Order 8 (pending)');\n});\ntest('isEmpty true on empty cart', () => {\n  expect(isEmpty([])).toBe(true);\n  expect(isEmpty(cart)).toBe(false);\n});\n",
+    "eslint.config.js": "module.exports = [\n  {\n    files: ['src/**/*.js'],\n    languageOptions: { ecmaVersion: 2022, sourceType: 'commonjs' },\n    rules: {\n      'no-var': 'error',\n      'prefer-const': 'error',\n      'eqeqeq': 'error',\n      'no-unused-vars': 'error',\n      'prefer-template': 'error',\n      'no-else-return': 'error',\n    },\n  },\n];\n"
+  },
+  "verify": [
+    "test -f src/orders.js",
+    "npx eslint src",
+    "npx jest --silent"
+  ]
+}
