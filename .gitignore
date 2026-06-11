@@ -48,3 +48,4 @@ skills/designmatch/scripts/package-lock.json
 
 # Oracle-gate runtime artifacts: report.json is run.sh's typed OUTPUT, not source
 evals/oracles/*/report.json
+.planning/
