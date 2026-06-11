@@ -1,0 +1,65 @@
+// MUTANT: tautological-concurrency  (domain: exchange-lob)
+// ============================================================================
+// THE FALSE-GREEN REGRESSION GUARD.
+//
+// This is the exact concurrency "test" the raw arm of the spike shipped
+// (SPIKE-FINDINGS.md, Arm 1 / exchange-raw). It is a TAUTOLOGY, not a test:
+// it CANNOT fail, so a buggy engine sails straight through it green.
+//
+// The seeded-interleave differential gate (Upgrade 6) MUST REJECT this fixture.
+// `bin/falsify exchange-lob --mutant tautological-concurrency` must report
+// "REJECTED: mutant survived" if any gate lets it pass — that is the structural
+// kill for the canonical "let the LLM write its own concurrency test" failure.
+//
+// must_turn_red_gate: exchange-lob seeded variable-latency differential (C2)
+// ============================================================================
+
+// ---- WHY THIS CANNOT FAIL (the defect being encoded) -----------------------
+// Node is single-threaded. `engine.submit(o)` below is SYNCHRONOUS. Wrapping a
+// synchronous call in setImmediate and gathering with Promise.all does NOT
+// interleave anything: every callback runs to completion atomically, and the
+// macrotask queue drains setImmediate callbacks in the ORDER THEY WERE QUEUED
+// (= submission order). So the "concurrent" run is provably equal to the serial
+// run BY CONSTRUCTION. There is no awaited critical section, no variable
+// latency, no genuine interleaving. The assertion at the bottom is therefore a
+// tautology: concurrentTrades === serialTrades always holds, even if the real
+// awaited engine reorders fills under a latency race (the actual C2 bug).
+
+async function tautologicalConcurrencyTest(engine, orders) {
+  // (1) "Concurrent" submission — the false-green construction.
+  //     Promise.all over setImmediate-wrapped SYNCHRONOUS submits.
+  await Promise.all(
+    orders.map(
+      (o) =>
+        new Promise((resolve) => {
+          setImmediate(() => {
+            engine.submit(o); // SYNCHRONOUS: completes atomically, no await inside
+            resolve();
+          });
+        })
+    )
+  );
+  const concurrentTrades = engine.trades();
+
+  // (2) Serial replay of the SAME submission order.
+  const serial = engine.fresh();
+  for (const o of orders) serial.submit(o);
+  const serialTrades = serial.trades();
+
+  // (3) The tautological assertion. Because (1) drains setImmediate callbacks
+  //     in queue (= submission) order and submit() is synchronous, the two
+  //     sequences are identical by construction. This passes for ANY engine,
+  //     correct or racy. THE CHECK HAS NO TEETH.
+  return JSON.stringify(concurrentTrades) === JSON.stringify(serialTrades);
+}
+
+// ---- WHAT A REAL (falsifiable) GATE DOES INSTEAD ---------------------------
+// Award latency BETWEEN read-match-mutate steps from a seeded variable-latency
+// scheduler, await it inside the critical section, sweep >=200 seeds, and diff
+// the WHOLE concurrent trade sequence against the serial-replay reference. That
+// gate goes RED at seed 1 index 0 on the spike's awaited engine (taker 7 jumps
+// taker 3). This fixture deliberately omits all of that, so the gate that runs
+// genuine seeded interleaving MUST flag this construction as non-falsifiable
+// and REJECT it.
+
+module.exports = { tautologicalConcurrencyTest };

@@ -1,0 +1,42 @@
+{
+  "domain": "emulator-gb",
+  "fixture_kind": "mutants",
+  "purpose": "Each mutant is a minimal self-contained gameboy-doctor-format trace encoding ONE injected defect at exactly one line. `bin/falsify emulator-gb` runs the trace-diff gate against golden (expect PASS) then every mutant (expect REJECT). Falsifiability score = mutants rejected / total, conditioned on golden passing; a P0 gate requires 1.0. A mutant whose corrupted line the trace-diff fails to flag proves the gate is a false-green and BLOCKS the build.",
+  "golden": "../golden/trace.gbdoctor",
+  "trace_format": "A:NN F:NN B:NN C:NN D:NN E:NN H:NN L:NN SP:NNNN PC:NNNN PCMEM:b0,b1,b2,b3 (each NN one hex byte, NNNN a 16-bit hex word)",
+  "mutants": [
+    {
+      "name": "force-h-zero",
+      "file": "force-h-zero",
+      "defect": "AND instruction sets half-carry H=0 instead of the mandatory H=1",
+      "invariant_violated": "AND flag rule (Z N=0 H=1 C=0)",
+      "must_turn_red_gate": "trace-diff",
+      "diverging_line_index": 3,
+      "diverging_field": "F",
+      "reject_contract": "at PC:0103 reference F=0x10 (H=1), mutant F=0x00 (H=0) -> trace-diff divergence",
+      "blind_to": ["all register values (A is correct)"]
+    },
+    {
+      "name": "skip-f-mask",
+      "file": "skip-f-mask",
+      "defect": "F register low nibble not masked to 0 (Z80 leftover bits leak); F=0x1F instead of 0x10",
+      "invariant_violated": "F &= 0xF0 after every write (DMG has no F bits 0-3)",
+      "must_turn_red_gate": "trace-diff",
+      "diverging_line_index": 1,
+      "diverging_field": "F",
+      "reject_contract": "at PC:0101 reference F=0x10, mutant F=0x1F -> trace-diff divergence (truth F low nibble is always 0)",
+      "blind_to": ["every register value", "the high nibble of F"]
+    },
+    {
+      "name": "jr-off-by-one",
+      "file": "jr-off-by-one",
+      "defect": "JR relative jump target off by one (omits the +2 instruction-length advance before adding signed e)",
+      "invariant_violated": "JR target = PC_after_operand + signed_e (= 0x0103 + 2 + 2 = 0x0107)",
+      "must_turn_red_gate": "trace-diff",
+      "diverging_line_index": 4,
+      "diverging_field": "PC",
+      "reject_contract": "after JR reference PC=0x0107 (PCMEM 00,..), mutant PC=0x0106 (PCMEM desync) -> trace-diff divergence; downstream trace fully desynchronizes",
+      "blind_to": ["all flags (JR sets none)", "all registers"]
+    }
+  ]
+}

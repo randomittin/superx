@@ -1,0 +1,30 @@
+# MUTANT: jr-off-by-one  (domain: emulator-gb)
+# ============================================================================
+# DEFECT (one): the relative jump JR computes the target PC off by one — it adds
+# the signed displacement WITHOUT first advancing PC past the 2-byte JR opcode
+# (or double-counts). INVARIANTS/golden: JR e at 0x0103 with e=+2 -> target =
+# 0x0103 + 2 (instr length) + 2 (e) = 0x0107. The mutant lands at 0x0106 (forgot
+# to add the +2 instruction length, or counted from the opcode byte). PC is the
+# silent killer: a 1-byte JR target error desynchronizes the entire downstream
+# trace.
+#
+# must_turn_red_gate: emulator-gb trace-diff (PC field + downstream desync)
+# how_the_gate_rejects: the trace-diff compares PC line-for-line. After the JR,
+#   reference PC=0x0107, mutant PC=0x0106 -> divergence at that line, and the
+#   PCMEM bytes differ too (0x00,... at 0107 vs whatever sits at 0106). The diff
+#   pins it to the exact instruction. Flags are correct (JR sets none) so a
+#   flag-only check would MISS it — only the PC/trace diff catches the off-by-one.
+#
+# Same program as golden. The ONLY corrupted line is the post-JR state (L5):
+#   reference: A:01 F:10 ... PC:0107 PCMEM:00,00,00,00   (correct +2+2 target)
+#   mutant:    A:01 F:10 ... PC:0106 PCMEM:02,00,00,00   (off by one)  <-- DEFECT
+# (0x0106 is the byte AFTER the JR operand; PCMEM there starts with the 0x02 e-byte's
+#  neighbor / stray byte, NOT the 0x00 NOP at 0x0107 — the desync is visible in PCMEM too.)
+# ----------------------------------------------------------------------------
+A:01 F:B0 B:00 C:13 D:00 E:D8 H:01 L:4D SP:FFFE PC:0100 PCMEM:3C,3D,A7,18
+A:02 F:10 B:00 C:13 D:00 E:D8 H:01 L:4D SP:FFFE PC:0101 PCMEM:3D,A7,18,02
+A:01 F:50 B:00 C:13 D:00 E:D8 H:01 L:4D SP:FFFE PC:0102 PCMEM:A7,18,02,00
+A:01 F:10 B:00 C:13 D:00 E:D8 H:01 L:4D SP:FFFE PC:0103 PCMEM:18,02,00,00
+A:01 F:10 B:00 C:13 D:00 E:D8 H:01 L:4D SP:FFFE PC:0106 PCMEM:02,00,00,00
+# diverging_line_index: 4 (0-based) — PC: reference 0x0107 vs mutant 0x0106 (+ PCMEM desync)
+# invariant_violated: JR target = PC_after_operand + signed_e. blind_to: all flags (JR sets none), all registers.
