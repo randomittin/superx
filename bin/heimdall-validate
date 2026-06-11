@@ -1,0 +1,94 @@
+#!/usr/bin/env bash
+# heimdall-validate — typed-message validator (Token-Frugal Protocol v2, mech 1).
+#
+# Validates an inter-agent message against bin/protocol/message-schema.json. jq
+# has no built-in JSON-Schema engine and we don't assume ajv/python are present,
+# so the constraints are enforced by bin/protocol/validate.jq (kept in lockstep
+# with the schema). Single-message mode is the primitive; --on-receipt adds the
+# spec rule: malformed -> ONE retry -> escalate.
+#
+# Usage:
+#   heimdall-validate            validate one message read from stdin
+#   heimdall-validate --on-receipt   read messages from stdin (one per line);
+#                                    on a malformed/invalid message, accept the
+#                                    NEXT line as the single retry; a second
+#                                    failure escalates (logs + exits nonzero)
+#   -h, --help
+#
+# Exit: 0 valid (or retry succeeded); 1 invalid / escalated; 2 usage/IO error.
+set -euo pipefail
+
+SELF="$0"
+SOURCE_DIR="$(cd "$(dirname "$0")" && pwd)"
+# shellcheck source=lib/protocol.sh
+. "$SOURCE_DIR/lib/protocol.sh"
+proto_resolve_paths "$SELF"
+proto_require_jq
+proto_ensure_dirs
+
+VALIDATE_JQ="$SOURCE_DIR/protocol/validate.jq"
+[ -f "$VALIDATE_JQ" ] || { echo "error: validator program missing: $VALIDATE_JQ" >&2; exit 2; }
+
+usage() { sed -n '2,19p' "$SELF" | sed 's/^# \{0,1\}//'; }
+
+# Validate one message string. Echoes the {valid,errors} report. Returns 0 valid,
+# 1 invalid (parse failure or constraint violation).
+validate_one() {
+  local msg="$1" report
+  if ! printf '%s' "$msg" | jq -e . >/dev/null 2>&1; then
+    echo '{"valid":false,"errors":["unparseable JSON"]}'
+    return 1
+  fi
+  report="$(printf '%s' "$msg" | jq -c -f "$VALIDATE_JQ")"
+  echo "$report"
+  [ "$(printf '%s' "$report" | jq -r '.valid')" = "true" ]
+}
+
+ON_RECEIPT=0
+case "${1:-}" in
+  -h|--help) usage; exit 0 ;;
+  --on-receipt) ON_RECEIPT=1 ;;
+  "") ;; # single-message stdin mode
+  *) echo "error: unknown argument: $1" >&2; usage >&2; exit 2 ;;
+esac
+
+if [ "$ON_RECEIPT" -eq 0 ]; then
+  # Single-message mode: validate all of stdin as one message.
+  msg="$(cat)"
+  report="$(validate_one "$msg")" && rc=0 || rc=1
+  echo "$report"
+  if [ "$rc" -eq 0 ]; then
+    proto_log "validate" "accept" "$(printf '%s' "$msg" | jq -r '.msg_id // "?"' 2>/dev/null)"
+  else
+    proto_log "validate" "reject" "$(printf '%s' "$report" | jq -c '.errors')"
+  fi
+  exit "$rc"
+fi
+
+# --on-receipt: malformed -> one retry -> escalate.
+attempts=0
+while IFS= read -r line; do
+  [ -n "$line" ] || continue
+  attempts=$((attempts+1))
+  if report="$(validate_one "$line")"; then
+    if [ "$attempts" -gt 1 ]; then
+      echo "ACCEPTED on retry (attempt $attempts)"
+      proto_log "validate" "accept-retry" "attempt=$attempts"
+    else
+      echo "ACCEPTED"
+      proto_log "validate" "accept" "attempt=1"
+    fi
+    exit 0
+  fi
+  echo "INVALID (attempt $attempts): $(printf '%s' "$report" | jq -c '.errors')" >&2
+  if [ "$attempts" -ge 2 ]; then
+    echo "ESCALATE: $attempts malformed messages — exceeded one-retry budget" >&2
+    proto_log "validate" "escalate" "attempts=$attempts"
+    exit 1
+  fi
+  echo "retry: accepting next message as the single permitted retry" >&2
+done
+# Stream ended without an accepted message.
+echo "ESCALATE: no valid message received (attempts=$attempts)" >&2
+proto_log "validate" "escalate" "stream-end attempts=$attempts"
+exit 1

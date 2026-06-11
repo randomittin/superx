@@ -1,0 +1,85 @@
+#!/usr/bin/env bash
+# heimdall-brief — delta-brief builder (Token-Frugal Protocol v2, mechanism 4).
+#
+# A spawned agent's brief = task spec + symbol table (referenced entries only)
+# + referenced capsule IDs (hydrated to their dependency closure)
+# + invariants ref. NEVER the plan, NEVER prior conversation, NEVER restated
+# acceptance criteria. The brief is the on-the-wire context a delta-spawn gets.
+#
+# Compression by reference: the brief carries IDs and resolves the few symbols /
+# capsules the task actually needs — not the whole symbol table, not the plan.
+#
+# Usage:
+#   heimdall-brief build --task <id> --spec <text> [--symbols a,b] \
+#       [--capsules x,y] [--invariants <ref>]
+#   -h, --help
+#
+# Output: a human-readable brief on stdout. Exit 0 ok; 1 missing ref; 2 usage.
+set -euo pipefail
+
+SELF="$0"
+SOURCE_DIR="$(cd "$(dirname "$0")" && pwd)"
+# shellcheck source=lib/protocol.sh
+. "$SOURCE_DIR/lib/protocol.sh"
+proto_resolve_paths "$SELF"
+proto_require_jq
+proto_ensure_dirs
+
+usage() { sed -n '2,19p' "$SELF" | sed 's/^# \{0,1\}//'; }
+
+[ $# -ge 1 ] || { echo "error: 'build' subcommand required" >&2; usage >&2; exit 2; }
+case "$1" in -h|--help) usage; exit 0 ;; build) shift ;; *) echo "error: unknown subcommand: $1" >&2; exit 2 ;; esac
+
+task=""; spec=""; symbols=""; capsules=""; invariants=""
+while [ $# -gt 0 ]; do
+  case "$1" in
+    --task)       task="${2:?--task needs a value}"; shift 2 ;;
+    --spec)       spec="${2:?--spec needs a value}"; shift 2 ;;
+    --symbols)    symbols="${2:?--symbols needs a value}"; shift 2 ;;
+    --capsules)   capsules="${2:?--capsules needs a value}"; shift 2 ;;
+    --invariants) invariants="${2:?--invariants needs a value}"; shift 2 ;;
+    *) echo "error: unknown flag: $1" >&2; usage >&2; exit 2 ;;
+  esac
+done
+[ -n "$task" ] || { echo "error: --task is required" >&2; exit 2; }
+[ -n "$spec" ] || { echo "error: --spec is required" >&2; exit 2; }
+
+echo "=== DELTA BRIEF — task $task ==="
+echo "# Refs only. Not the plan, not prior conversation, not restated criteria."
+echo
+echo "TASK SPEC:"
+echo "  $spec"
+echo
+
+if [ -n "$symbols" ]; then
+  echo "SYMBOLS (referenced only):"
+  IFS=',' read -r -a syms <<< "$symbols"
+  for s in "${syms[@]}"; do
+    s="$(printf '%s' "$s" | tr -d ' ')"
+    [ -n "$s" ] || continue
+    v="$(jq -r --arg id "$s" '.symbols[$id] // empty' "$SYMBOLS_FILE")"
+    if [ -n "$v" ]; then echo "  $s = $v"; else echo "  $s = <UNRESOLVED>"; fi
+  done
+  echo
+fi
+
+if [ -n "$capsules" ]; then
+  echo "CONTEXT CAPSULES (dependency closure of referenced ids ONLY):"
+  IFS=',' read -r -a caps <<< "$capsules"
+  cap_args=()
+  for c in "${caps[@]}"; do
+    c="$(printf '%s' "$c" | tr -d ' ')"
+    [ -n "$c" ] && cap_args+=("$c")
+  done
+  if [ "${#cap_args[@]}" -gt 0 ]; then
+    "$SOURCE_DIR/heimdall-capsule" hydrate "${cap_args[@]}" | sed 's/^/  /'
+  fi
+  echo
+fi
+
+if [ -n "$invariants" ]; then
+  echo "INVARIANTS REF: $invariants"
+  echo
+fi
+
+proto_log "brief" "build" "task=$task symbols=$symbols capsules=$capsules"

@@ -1,0 +1,123 @@
+#!/usr/bin/env bash
+# heimdall-ledger — token ledger (Token-Frugal Protocol v2, mechanism 6).
+#
+# Every message and spawn logs its token cost by role to ledger.jsonl. The
+# per-run breakdown feeds the summary card (`orchestration: 41k -> 12k vs v1
+# baseline`). The savings claim becomes a MEASURED, screenshotable number,
+# reported separately from caveman's 75% (this is the protocol's own delta).
+#
+# Ledger line (one JSON object per line, append-only, human-readable):
+#   {"ts":..,"role":"orchestration","kind":"brief","tokens":12000,"msg_id":..}
+# Baselines (the v1 numbers to beat) live in symbols-sibling baselines.json.
+#
+# Usage:
+#   heimdall-ledger log --role R --kind K --tokens N [--msg-id M]
+#   heimdall-ledger report                  per-role totals for the current run
+#   heimdall-ledger baseline --role R --tokens N   record a v1 baseline for R
+#   heimdall-ledger delta [--role R]        baseline vs measured, per role
+#   -h, --help
+#
+# Exit: 0 ok; 2 usage/IO error.
+set -euo pipefail
+
+SELF="$0"
+SOURCE_DIR="$(cd "$(dirname "$0")" && pwd)"
+# shellcheck source=lib/protocol.sh
+. "$SOURCE_DIR/lib/protocol.sh"
+proto_resolve_paths "$SELF"
+proto_require_jq
+proto_ensure_dirs
+
+BASELINE_FILE="$PROTO_DIR/baselines.json"
+[ -f "$BASELINE_FILE" ] || printf '{"version":"2.0.0","baselines":{}}\n' > "$BASELINE_FILE"
+
+usage() { sed -n '2,21p' "$SELF" | sed 's/^# \{0,1\}//'; }
+
+# Sum measured tokens for a role from the ledger.
+measured_for_role() {
+  local role="$1"
+  jq -s --arg r "$role" '[.[] | select(.role==$r) | .tokens] | add // 0' "$LEDGER_FILE"
+}
+
+[ $# -ge 1 ] || { echo "error: a subcommand is required" >&2; usage >&2; exit 2; }
+cmd="$1"; shift || true
+case "$cmd" in
+  -h|--help) usage; exit 0 ;;
+  log)
+    role=""; kind=""; tokens=""; msgid=""
+    while [ $# -gt 0 ]; do
+      case "$1" in
+        --role)   role="${2:?--role needs a value}"; shift 2 ;;
+        --kind)   kind="${2:?--kind needs a value}"; shift 2 ;;
+        --tokens) tokens="${2:?--tokens needs a value}"; shift 2 ;;
+        --msg-id) msgid="${2:?--msg-id needs a value}"; shift 2 ;;
+        *) echo "error: unknown flag: $1" >&2; exit 2 ;;
+      esac
+    done
+    [ -n "$role" ] && [ -n "$kind" ] && [ -n "$tokens" ] \
+      || { echo "error: log needs --role --kind --tokens" >&2; exit 2; }
+    case "$tokens" in (*[!0-9]*|'') echo "error: --tokens must be a non-negative integer" >&2; exit 2 ;; esac
+    jq -cn --arg ts "$(proto_ts)" --arg role "$role" --arg kind "$kind" \
+       --argjson tokens "$tokens" --arg msgid "$msgid" \
+       '{ts:$ts,role:$role,kind:$kind,tokens:$tokens}
+        | if $msgid != "" then . + {msg_id:$msgid} else . end' \
+       >> "$LEDGER_FILE"
+    proto_log "ledger" "log" "$role/$kind=$tokens"
+    echo "logged $role/$kind=$tokens"
+    ;;
+  report)
+    echo "token ledger — per-role totals (this run)"
+    jq -s -r '
+      group_by(.role)[]
+      | "  \(.[0].role): \([.[].tokens]|add) tokens (\(length) msgs)"
+    ' "$LEDGER_FILE"
+    total="$(jq -s '[.[].tokens]|add // 0' "$LEDGER_FILE")"
+    echo "  TOTAL: $total tokens"
+    ;;
+  baseline)
+    role=""; tokens=""
+    while [ $# -gt 0 ]; do
+      case "$1" in
+        --role)   role="${2:?--role needs a value}"; shift 2 ;;
+        --tokens) tokens="${2:?--tokens needs a value}"; shift 2 ;;
+        *) echo "error: unknown flag: $1" >&2; exit 2 ;;
+      esac
+    done
+    [ -n "$role" ] && [ -n "$tokens" ] || { echo "error: baseline needs --role --tokens" >&2; exit 2; }
+    case "$tokens" in (*[!0-9]*|'') echo "error: --tokens must be a non-negative integer" >&2; exit 2 ;; esac
+    tmp="$(mktemp)"
+    jq --arg r "$role" --argjson t "$tokens" '.baselines[$r]=$t' "$BASELINE_FILE" > "$tmp"
+    mv "$tmp" "$BASELINE_FILE"
+    proto_log "ledger" "baseline" "$role=$tokens"
+    echo "baseline $role = $tokens (v1)"
+    ;;
+  delta)
+    role=""
+    while [ $# -gt 0 ]; do
+      case "$1" in
+        --role) role="${2:?--role needs a value}"; shift 2 ;;
+        *) echo "error: unknown flag: $1" >&2; exit 2 ;;
+      esac
+    done
+    print_one() {
+      local r="$1" base meas pct
+      base="$(jq -r --arg r "$r" '.baselines[$r] // "n/a"' "$BASELINE_FILE")"
+      meas="$(measured_for_role "$r")"
+      if [ "$base" != "n/a" ] && [ "$base" -gt 0 ] 2>/dev/null; then
+        pct="$(awk -v b="$base" -v m="$meas" 'BEGIN{printf "%.0f", 100*(b-m)/b}')"
+        echo "  $r: $base -> $meas tokens (v1 baseline -> measured; -${pct}%)"
+      else
+        echo "  $r: baseline n/a -> $meas tokens (no v1 baseline recorded)"
+      fi
+    }
+    echo "token ledger — measured delta vs v1 baseline"
+    if [ -n "$role" ]; then
+      print_one "$role"
+    else
+      jq -r '.baselines | keys[]' "$BASELINE_FILE" | while IFS= read -r r; do
+        [ -n "$r" ] && print_one "$r"
+      done
+    fi
+    ;;
+  *) echo "error: unknown subcommand: $cmd" >&2; usage >&2; exit 2 ;;
+esac

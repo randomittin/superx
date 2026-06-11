@@ -1,0 +1,122 @@
+{
+  "$schema": "http://json-schema.org/draft-07/schema#",
+  "$id": "https://superx/heimdall/protocol/message-schema-2.0.0.json",
+  "title": "Heimdall Token-Frugal Protocol v2 — typed inter-agent message",
+  "description": "Every main<->spawn message is one of these typed shapes. Messages reference artifacts by ID (symbols, capsules, criteria, commits) — they NEVER restate the artifact body. Schema-validated on receipt: malformed -> one retry -> escalate. Human-readable always; no opaque codes.",
+  "type": "object",
+  "required": ["type", "from", "msg_id"],
+  "properties": {
+    "type": {
+      "type": "string",
+      "enum": ["task_claim", "task_result", "gate_report", "escalation", "question", "checkpoint"],
+      "description": "Discriminator selecting which of the six typed shapes this message is."
+    },
+    "from": {
+      "type": "string",
+      "minLength": 1,
+      "description": "Sender role/haid, e.g. 'orchestrator', 'coder/F12', 'sentinel-bloat'."
+    },
+    "msg_id": {
+      "type": "string",
+      "minLength": 1,
+      "description": "Unique id of this message for the audit trail and reply-to references."
+    },
+    "reply_to": {
+      "type": "string",
+      "description": "msg_id this message answers (a question's answer, a retry of a malformed message)."
+    },
+    "ts": {
+      "type": "string",
+      "description": "UTC ISO-8601 emit time. Stamped by the validator/ledger if absent."
+    }
+  },
+  "allOf": [
+    {
+      "if": { "properties": { "type": { "const": "task_claim" } } },
+      "then": {
+        "required": ["task"],
+        "properties": {
+          "task": { "type": "string", "description": "Task id being claimed, e.g. '3.2'." },
+          "symbols": {
+            "type": "array",
+            "items": { "type": "string" },
+            "description": "Symbol-table IDs (F12, C3...) the task touches. Refs, never restated paths."
+          },
+          "capsules": {
+            "type": "array",
+            "items": { "type": "string" },
+            "description": "Capsule IDs the claimant will hydrate as context."
+          }
+        }
+      }
+    },
+    {
+      "if": { "properties": { "type": { "const": "task_result" } } },
+      "then": {
+        "required": ["task", "status"],
+        "properties": {
+          "task": { "type": "string" },
+          "status": { "type": "string", "enum": ["pass", "fail", "partial"] },
+          "criteria": {
+            "type": "array",
+            "items": { "type": "integer" },
+            "description": "Acceptance-criterion symbol IDs satisfied — integers referencing C-table, not restated text."
+          },
+          "commit": { "type": "string", "description": "Commit SHA the result landed in." },
+          "capsule": { "type": "string", "description": "Capsule ID this result compacted to." }
+        }
+      }
+    },
+    {
+      "if": { "properties": { "type": { "const": "gate_report" } } },
+      "then": {
+        "required": ["gate_id", "status"],
+        "properties": {
+          "gate_id": { "type": "string", "description": "Echoes the gate's report.json gate_id." },
+          "status": { "type": "string", "enum": ["pass", "fail"] },
+          "report_ref": {
+            "type": "string",
+            "description": "Path/ID of the report.json this references. The body is NOT inlined — the contract-consuming adapter resolves it on demand."
+          },
+          "wave": { "type": ["string", "null"] }
+        }
+      }
+    },
+    {
+      "if": { "properties": { "type": { "const": "escalation" } } },
+      "then": {
+        "required": ["reason", "severity"],
+        "properties": {
+          "reason": { "type": "string", "minLength": 1 },
+          "severity": { "type": "string", "enum": ["blocker", "warning", "info"] },
+          "refs": {
+            "type": "array",
+            "items": { "type": "string" },
+            "description": "Symbol/capsule/report IDs giving the escalation context."
+          }
+        }
+      }
+    },
+    {
+      "if": { "properties": { "type": { "const": "question" } } },
+      "then": {
+        "required": ["question"],
+        "properties": {
+          "question": { "type": "string", "minLength": 1 },
+          "refs": { "type": "array", "items": { "type": "string" } }
+        }
+      }
+    },
+    {
+      "if": { "properties": { "type": { "const": "checkpoint" } } },
+      "then": {
+        "required": ["wave", "state"],
+        "properties": {
+          "wave": { "type": "string" },
+          "state": { "type": "string", "enum": ["started", "in_progress", "complete", "blocked"] },
+          "capsules": { "type": "array", "items": { "type": "string" } }
+        }
+      }
+    }
+  ]
+}

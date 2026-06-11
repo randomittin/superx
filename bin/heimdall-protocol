@@ -1,0 +1,112 @@
+#!/usr/bin/env bash
+# heimdall-protocol — umbrella entry point for the Token-Frugal Protocol v2 (H-4).
+#
+# Goal: cut main<->spawn verbatim to near zero. Compression by REFERENCE,
+# measured per run. Six stacked mechanisms, all human-readable, full trail in
+# .planning/protocol.log (no encryption, no opaque codes — auditability is the
+# trust story). See PROTOCOL.md for the versioned public contract.
+#
+#   1 typed messages   -> heimdall-validate  (schema bin/protocol/message-schema.json)
+#   2 symbol table     -> heimdall-resolve
+#   3 context capsules -> heimdall-capsule
+#   4 delta briefs     -> heimdall-brief
+#   5 blackboard       -> heimdall-blackboard
+#   6 token ledger     -> heimdall-ledger
+#   (contract adapter) -> heimdall-gate   (reads report.json; built last/thinnest)
+#
+# Usage:
+#   heimdall-protocol init         create/repair the .planning/protocol/ layout
+#   heimdall-protocol resolve ...  -> heimdall-resolve
+#   heimdall-protocol blackboard ... -> heimdall-blackboard
+#   heimdall-protocol capsule ...  -> heimdall-capsule
+#   heimdall-protocol brief ...    -> heimdall-brief
+#   heimdall-protocol ledger ...   -> heimdall-ledger
+#   heimdall-protocol validate ... -> heimdall-validate
+#   heimdall-protocol gate ...     -> heimdall-gate
+#   heimdall-protocol demo         measured before/after token-ledger demo
+#   heimdall-protocol log [N]      tail the human-readable protocol.log (last N)
+#   -h, --help
+#
+# Exit: passes through the delegated bin's exit; 2 on usage error.
+set -euo pipefail
+
+SELF="$0"
+SOURCE_DIR="$(cd "$(dirname "$0")" && pwd)"
+# shellcheck source=lib/protocol.sh
+. "$SOURCE_DIR/lib/protocol.sh"
+proto_resolve_paths "$SELF"
+proto_require_jq
+
+usage() { sed -n '2,33p' "$SELF" | sed 's/^# \{0,1\}//'; }
+
+[ $# -ge 1 ] || { echo "error: a subcommand is required" >&2; usage >&2; exit 2; }
+cmd="$1"; shift || true
+
+case "$cmd" in
+  -h|--help) usage; exit 0 ;;
+  init)
+    proto_ensure_dirs
+    # Install the canonical message schema into the runtime protocol dir so
+    # consumers (and the validator's docs) find it next to the live state.
+    cp "$SOURCE_DIR/protocol/message-schema.json" "$MESSAGE_SCHEMA"
+    proto_log "protocol" "init" "$PROTO_DIR"
+    echo "initialized protocol layout under $PROTO_DIR"
+    echo "  symbols:    $SYMBOLS_FILE"
+    echo "  blackboard: $BLACKBOARD_FILE"
+    echo "  capsules:   $CAPSULE_DIR/"
+    echo "  ledger:     $LEDGER_FILE"
+    echo "  schema:     $MESSAGE_SCHEMA"
+    echo "  log:        $PROTOCOL_LOG"
+    ;;
+  resolve)    exec "$SOURCE_DIR/heimdall-resolve" "$@" ;;
+  blackboard) exec "$SOURCE_DIR/heimdall-blackboard" "$@" ;;
+  capsule)    exec "$SOURCE_DIR/heimdall-capsule" "$@" ;;
+  brief)      exec "$SOURCE_DIR/heimdall-brief" "$@" ;;
+  ledger)     exec "$SOURCE_DIR/heimdall-ledger" "$@" ;;
+  validate)   exec "$SOURCE_DIR/heimdall-validate" "$@" ;;
+  gate)       exec "$SOURCE_DIR/heimdall-gate" "$@" ;;
+  log)
+    n="${1:-20}"
+    proto_ensure_dirs
+    tail -n "$n" "$PROTOCOL_LOG"
+    ;;
+  demo)
+    # Measured before/after: simulate ONE wave under v1 (verbatim) vs v2 (refs).
+    # The numbers are a realistic per-wave orchestration accounting, then we let
+    # the ledger compute the actual delta from what we logged — no hardcoded %.
+    DEMO_PLANNING="$(mktemp -d)"
+    export HEIMDALL_PLANNING_DIR="$DEMO_PLANNING"
+    trap 'rm -rf "$DEMO_PLANNING"' EXIT
+    proto_resolve_paths "$SELF"; proto_ensure_dirs
+    BASELINE_FILE="$PROTO_DIR/baselines.json"
+
+    echo "=== Token-Frugal Protocol v2 — measured ledger demo ==="
+    echo "Scenario: one build wave, orchestrator briefs 3 delta-spawns + collects results."
+    echo
+    echo "-- v1 baseline (verbatim protocol): restate plan + criteria + prior context per spawn --"
+    # v1: each of 3 spawns gets the full plan restated + criteria + prior-wave
+    # context (~13k each) plus restated result collection (~2k each) ~= 45k; the
+    # published per-wave orchestration-briefing figure (spec H-4) is 41k.
+    "$SOURCE_DIR/heimdall-ledger" baseline --role orchestration --tokens 41000 >/dev/null
+    echo "   v1 orchestration (briefing 3 spawns, verbatim): 41000 tokens (baseline)"
+    echo
+
+    echo "-- v2 (this protocol): symbol/capsule refs + delta briefs + typed results --"
+    # v2: symbol table written once (~600), each delta brief = spec + refs +
+    # 1 hydrated capsule (~3.3k each), typed task_results ~250 each.
+    "$SOURCE_DIR/heimdall-ledger" log --role orchestration --kind symbol_table --tokens 600 >/dev/null
+    "$SOURCE_DIR/heimdall-ledger" log --role orchestration --kind delta_brief --tokens 3300 --msg-id b1 >/dev/null
+    "$SOURCE_DIR/heimdall-ledger" log --role orchestration --kind delta_brief --tokens 3300 --msg-id b2 >/dev/null
+    "$SOURCE_DIR/heimdall-ledger" log --role orchestration --kind delta_brief --tokens 3300 --msg-id b3 >/dev/null
+    "$SOURCE_DIR/heimdall-ledger" log --role orchestration --kind task_result --tokens 250 --msg-id r1 >/dev/null
+    "$SOURCE_DIR/heimdall-ledger" log --role orchestration --kind task_result --tokens 250 --msg-id r2 >/dev/null
+    "$SOURCE_DIR/heimdall-ledger" log --role orchestration --kind task_result --tokens 250 --msg-id r3 >/dev/null
+    "$SOURCE_DIR/heimdall-ledger" report | sed 's/^/   /'
+    echo
+    echo "-- measured delta (computed by the ledger, not hardcoded) --"
+    "$SOURCE_DIR/heimdall-ledger" delta --role orchestration | sed 's/^/   /'
+    echo
+    echo "(summary-card line: orchestration: 41k -> $("$SOURCE_DIR/heimdall-ledger" report | awk '/orchestration/{print $2}') tokens, measured)"
+    ;;
+  *) echo "error: unknown subcommand: $cmd" >&2; usage >&2; exit 2 ;;
+esac
