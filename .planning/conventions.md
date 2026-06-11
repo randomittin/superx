@@ -80,3 +80,8 @@ Spawned coders auto-isolate into git worktrees; uncommitted files are destroyed 
 ## R7 — cap spawned-task size; checkpoint commits mid-task
 **Why:** three agents in one session (H-3, R-3.2, wave-2b) exhausted their budget (~140-165k tokens) on multi-part tasks and died BEFORE committing/reporting — work survived only because worktrees were inspected by hand before cleanup.
 **How to apply:** a spawned task covers at most ~3 remediation-items or 2 domains; anything larger is split into sequenced spawns. Agents commit a checkpoint after each completed sub-item, not only at the end. The spawn framework's per-spawn token budget + partial-report flag exists for exactly this — use it once wired.
+
+## Corpus diversification — v0.3 floor (RJ rule)
+By corpus v0.3, a minimum share (target ≥1/3) of cases must originate from NEW tasks — third-domain oracles (mini-git), the popular-surface 10, field capture — not mutants of the founding two fixtures. Deepening only on founding fixtures = memorizing, not generalizing.
+
+> **Launch-3 evidence tags:** R1 (parallel-agent output-dir collision — the `claimed_surfaces` failure class demonstrated on our own build) and R7 (budget-exhausted agents dying uncommitted — the spawn-budget/partial-report failure class) are both first-party incidents the team-lane ledger + spawn framework exist to prevent. Cite both in the Launch-3 write-up: "the days our own agents collided and died silently, and what we built so yours don't."
