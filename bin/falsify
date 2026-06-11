@@ -15,10 +15,19 @@
 # Falsifiability score = mutants killed / total, conditioned on golden passing.
 # A P0 gate requires score 1.0.
 #
-# The gate comparison is fixture-resident: each mutant carries BOTH its `correct`
-# reference output AND its `corrupted` output, so falsify applies the gate's diff
-# (exchange: whole-output trade-sequence diff, first divergence; emulator-gb:
-# per-instruction trace diff, first divergence) WITHOUT any implementation.
+# THE STRUCTURED SEAM (spec 2A):
+#   falsify is a PURE ORCHESTRATOR over the typed gate contract. It does NOT
+#   diff anything itself. For every check it invokes the domain's structured
+#   entry point — `evals/oracles/<domain>/run.sh --input <fixture> --report
+#   <tmp>` — and reads the TYPED report.json that run.sh writes. run.sh is the
+#   SINGLE source of diff-truth (whole-output trade-sequence + book-state diff for
+#   exchange-lob; per-instruction trace diff for emulator-gb). falsify reads
+#   report.json.status and report.json.first_divergence from the structured
+#   fields — it NEVER scrapes run.sh stdout. See evals/oracles/REPORT-CONTRACT.md.
+#
+#     golden -> run.sh --input <golden>  -> report.status MUST be "pass"  (false-RED check)
+#     mutant -> run.sh --input <mutant>  -> report.status "fail" => KILLED (gate went red)
+#                                           report.status "pass" => SURVIVED (false-green)
 #
 # THE FALSE-GREEN REGRESSION GUARD (tautological-concurrency):
 #   Some mutants are not defect-INPUTS but tautological GATE constructions that
@@ -55,7 +64,7 @@ ORACLES_DIR="$PLUGIN_DIR/evals/oracles"
 
 command -v jq >/dev/null 2>&1 || { echo "error: jq is required" >&2; exit 2; }
 
-usage() { sed -n '2,47p' "$SELF"; }
+usage() { sed -n '2,56p' "$SELF"; }
 
 # ── Args ──
 DOMAIN=""
@@ -78,11 +87,13 @@ done
 [ -n "$DOMAIN" ] || { echo "error: <domain> is required" >&2; usage >&2; exit 2; }
 
 DOMAIN_DIR="$ORACLES_DIR/$DOMAIN"
+RUN_SH="$DOMAIN_DIR/run.sh"
 MANIFEST="$DOMAIN_DIR/fixtures/mutants/manifest.json"
 GOLDEN_DIR="$DOMAIN_DIR/fixtures/golden"
 MUTANTS_DIR="$DOMAIN_DIR/fixtures/mutants"
 
 [ -d "$DOMAIN_DIR" ]  || { echo "error: unknown domain: $DOMAIN (no $DOMAIN_DIR)" >&2; exit 2; }
+[ -f "$RUN_SH" ]      || { echo "error: structured entry point missing: $RUN_SH" >&2; exit 2; }
 [ -f "$MANIFEST" ]    || { echo "error: manifest missing: $MANIFEST" >&2; exit 2; }
 [ -d "$GOLDEN_DIR" ]  || { echo "error: golden dir missing: $GOLDEN_DIR" >&2; exit 2; }
 [ -d "$MUTANTS_DIR" ] || { echo "error: mutants dir missing: $MUTANTS_DIR" >&2; exit 2; }
@@ -94,116 +105,74 @@ fi
 
 GUARD_REJECT_LINE="REJECTED: mutant survived"
 
+# Per-domain golden fixture path (the input run.sh grades for the false-RED check).
+case "$DOMAIN" in
+  exchange-lob) GOLDEN_INPUT="$GOLDEN_DIR/order-stream.json" ;;
+  emulator-gb)  GOLDEN_INPUT="$GOLDEN_DIR/trace.gbdoctor" ;;
+  *) echo "error: no golden fixture wired for domain '$DOMAIN'" >&2; exit 2 ;;
+esac
+
 # ═══════════════════════════════════════════════════════════════════════════
-#  Gate comparison primitives (the diff each gate type performs).
-#  Each returns 0 when the two outputs are IDENTICAL (gate GREEN) and 1 when
-#  they diverge (gate RED), printing the FIRST-divergence report on divergence.
+#  The structured seam: invoke run.sh, read the typed report.json.
+#  run.sh is the SINGLE source of diff-truth. falsify reads only the typed
+#  fields (status, first_divergence) — never run.sh stdout.
 # ═══════════════════════════════════════════════════════════════════════════
 
-# Whole-output trade-sequence differential (exchange-lob differential.md).
-# Args: <reference-trades-json> <subject-trades-json> <label>
-# Compares the ordered fill SEQUENCE tuple-by-tuple AND the sequence length;
-# reports the FIRST index at which they differ (or where one runs out).
-diff_trade_sequence() {
-  local ref="$1" subj="$2" label="$3"
-  local ref_len subj_len max i a b
-  ref_len="$(jq 'length' <<<"$ref")"
-  subj_len="$(jq 'length' <<<"$subj")"
-  max=$(( ref_len > subj_len ? ref_len : subj_len ))
-  for (( i = 0; i < max; i++ )); do
-    a="$(jq -cS ".[$i] // null" <<<"$ref")"
-    b="$(jq -cS ".[$i] // null" <<<"$subj")"
-    if [ "$a" != "$b" ]; then
-      printf '  DIVERGENCE [%s] at trade index %d\n' "$label" "$i"
-      printf '    expected (reference): %s\n' "$a"
-      printf '    actual   (subject):   %s\n' "$b"
-      printf '    reference len=%d  subject len=%d\n' "$ref_len" "$subj_len"
-      return 1
-    fi
-  done
-  if [ "$ref_len" != "$subj_len" ]; then
-    printf '  DIVERGENCE [%s] sequence length: reference=%d subject=%d\n' \
-      "$label" "$ref_len" "$subj_len"
-    return 1
-  fi
-  return 0
+# Invoke the domain's run.sh against an input, capture report.json in a temp
+# file, and echo the temp path. run.sh exits nonzero on a fail status (by
+# contract) — that is EXPECTED for mutants, so we do not let it abort falsify.
+# A run.sh usage/IO error (exit 2) produces no usable report -> caller detects
+# the missing/invalid status and treats it as an error.
+run_gate() {
+  local input="$1" report
+  report="$(mktemp)"
+  # run.sh exit: 0=pass, 1=fail (both write a valid report), 2=IO/usage error.
+  bash "$RUN_SH" --input "$input" --report "$report" >/dev/null 2>&1 || true
+  echo "$report"
 }
 
-# Post-stream book-state differential (exchange-lob, for O1/O4 defects).
-# Args: <reference-book-json> <subject-book-json> <label>
-diff_book_state() {
-  local ref="$1" subj="$2" label="$3" a b
-  a="$(jq -cS '.' <<<"$ref")"
-  b="$(jq -cS '.' <<<"$subj")"
-  if [ "$a" != "$b" ]; then
-    printf '  DIVERGENCE [%s] post-stream book state\n' "$label"
-    printf '    expected (reference): %s\n' "$a"
-    printf '    actual   (subject):   %s\n' "$b"
-    return 1
-  fi
-  return 0
+# Read the typed `status` field from a report.json. Echoes pass|fail, or empty
+# if the report is missing/unreadable/has no status (a contract violation).
+report_status() {
+  local report="$1"
+  [ -s "$report" ] || { echo ""; return 0; }
+  jq -r '.status // empty' "$report" 2>/dev/null || echo ""
 }
 
-# Per-instruction trace differential (emulator-gb trace-diff.md).
-# Streams two gameboy-doctor traces line-by-line (comment/blank lines stripped),
-# reports the FIRST line at which they differ; length mismatch is a divergence.
-# Args: <reference-trace-file> <subject-trace-file> <label>
-diff_trace() {
-  local ref_file="$1" subj_file="$2" label="$3"
-  local -a ref_lines=() subj_lines=()
-  local line
-  while IFS= read -r line || [ -n "$line" ]; do
-    case "$line" in ''|\#*) continue ;; esac
-    ref_lines+=("$line")
-  done <"$ref_file"
-  while IFS= read -r line || [ -n "$line" ]; do
-    case "$line" in ''|\#*) continue ;; esac
-    subj_lines+=("$line")
-  done <"$subj_file"
-
-  local ref_len="${#ref_lines[@]}" subj_len="${#subj_lines[@]}" max i r s
-  max=$(( ref_len > subj_len ? ref_len : subj_len ))
-  for (( i = 0; i < max; i++ )); do
-    r="${ref_lines[i]:-<truth stream ended>}"
-    s="${subj_lines[i]:-<trace stream ended>}"
-    if [ "$r" != "$s" ]; then
-      printf '  DIVERGENCE [%s] FIRST at instruction %d (line index %d)\n' \
-        "$label" $(( i + 1 )) "$i"
-      printf '    expected (truth): %s\n' "$r"
-      printf '    actual   (mine):  %s\n' "$s"
-      return 1
-    fi
-  done
-  return 0
+# Read the typed `first_divergence` field (the kill pinpoint) from report.json.
+report_first_divergence() {
+  local report="$1"
+  jq -r '.first_divergence // "(no first_divergence in report)"' "$report" 2>/dev/null \
+    || echo "(unreadable report)"
 }
 
 # ═══════════════════════════════════════════════════════════════════════════
-#  Per-domain golden check + per-mutant kill check.
-#  Each "kill" function returns:
+#  Golden check + per-mutant kill check, both driven through run.sh + report.json.
+#  kill_mutant returns:
 #    0  -> mutant KILLED (gate correctly went RED, or false-green guard correctly
 #          rejected as non-falsifiable)
 #    1  -> mutant SURVIVED (gate stayed GREEN when it must have gone RED)
 # ═══════════════════════════════════════════════════════════════════════════
 
-# ── exchange-lob ────────────────────────────────────────────────────────────
-
-golden_check_exchange() {
-  # The golden's authoritative whole-output is its own expected_trades + book.
-  # Running the gate against golden = diffing that output against itself: it MUST
-  # be GREEN. A divergence here means the gate is over-strict (false-RED).
-  local golden="$GOLDEN_DIR/order-stream.json"
-  [ -f "$golden" ] || { echo "  golden missing: $golden" >&2; return 1; }
-  local trades book
-  trades="$(jq '.expected_trades' "$golden")"
-  book="$(jq '.expected_book' "$golden")"
-  echo "  golden: exchange-lob/fixtures/golden/order-stream.json"
-  diff_trade_sequence "$trades" "$trades" "golden trade-sequence" || return 1
-  diff_book_state "$book" "$book" "golden book-state" || return 1
-  echo "  golden GREEN: trade-sequence + book-state self-consistent (gate not over-strict)"
-  return 0
+golden_check() {
+  # Run the domain's gate against its own golden fixture via run.sh and read the
+  # typed status: it MUST be "pass". A "fail" means the gate is over-strict
+  # (false-RED) and is itself broken.
+  [ -f "$GOLDEN_INPUT" ] || { echo "  golden missing: $GOLDEN_INPUT" >&2; return 1; }
+  echo "  golden: ${GOLDEN_INPUT#"$PLUGIN_DIR"/}"
+  local report status
+  report="$(run_gate "$GOLDEN_INPUT")"
+  status="$(report_status "$report")"
+  rm -f "$report"
+  if [ "$status" = "pass" ]; then
+    echo "  golden GREEN: run.sh report.json status=pass (gate not over-strict)"
+    return 0
+  fi
+  echo "  golden report.json status='${status:-<none>}' (expected pass) — gate is over-strict (false-RED)" >&2
+  return 1
 }
 
-kill_mutant_exchange() {
+kill_mutant() {
   local name="$1"
   local file is_guard
   file="$(jq -r --arg n "$name" '.mutants[] | select(.name==$n) | .file' "$MANIFEST")"
@@ -217,92 +186,40 @@ kill_mutant_exchange() {
     # FALSE-GREEN REGRESSION GUARD: a tautological gate construction (cannot fail
     # by design). Used AS the gate it lets a real defect SURVIVE -> the gate is
     # non-falsifiable. falsify flags exactly that. The rejection IS the correct
-    # handling, so this counts as KILLED for scoring.
+    # handling, so this counts as KILLED for scoring. (run.sh likewise rejects
+    # the construction; falsify owns the build-blocking REJECTED line.)
     echo "  mutant '$name' is a false-green regression guard (tautological gate construction)"
     echo "  gate stayed GREEN on an injected defect -> non-falsifiable gate"
     echo "  $GUARD_REJECT_LINE"
     return 0
   fi
 
-  # Real defect mutant: apply the differential gate to corrupted vs correct.
-  local correct corrupted gate_green=1
-  if jq -e 'has("corrupted_trades")' "$fixture" >/dev/null; then
-    correct="$(jq '.correct_trades' "$fixture")"
-    corrupted="$(jq '.corrupted_trades' "$fixture")"
-    diff_trade_sequence "$correct" "$corrupted" "$name" && gate_green=0 || gate_green=1
-  elif jq -e 'has("corrupted_book")' "$fixture" >/dev/null; then
-    correct="$(jq '.correct_book' "$fixture")"
-    corrupted="$(jq '.corrupted_book' "$fixture")"
-    diff_book_state "$correct" "$corrupted" "$name" && gate_green=0 || gate_green=1
-  else
-    echo "  mutant '$name' carries no corrupted_trades/corrupted_book to diff" >&2
+  # Real defect mutant: feed the mutant fixture to run.sh and read the typed
+  # status. run.sh performs the differential and classifies the fixture itself.
+  local report status
+  report="$(run_gate "$fixture")"
+  status="$(report_status "$report")"
+
+  if [ "$status" = "fail" ]; then
+    # Gate went RED on the injected defect -> mutant KILLED. Report the kill from
+    # the structured first_divergence field (NOT scraped stdout).
+    echo "  mutant '$name' KILLED: gate went RED (report.json status=fail)"
+    echo "    first_divergence: $(report_first_divergence "$report")"
+    rm -f "$report"
+    return 0
+  fi
+
+  if [ "$status" = "pass" ]; then
+    # Gate stayed GREEN on the injected defect -> mutant SURVIVED -> false-green.
+    rm -f "$report"
+    echo "  $GUARD_REJECT_LINE"
     return 1
   fi
 
-  if [ "$gate_green" -eq 1 ]; then
-    echo "  mutant '$name' KILLED: differential gate went RED (corrupted != correct)"
-    return 0
-  fi
-  echo "  $GUARD_REJECT_LINE"
+  # No usable status: run.sh produced no valid report (IO/usage error).
+  rm -f "$report"
+  echo "  mutant '$name' ERROR: run.sh produced no valid report.json status (got '${status:-<none>}')" >&2
   return 1
-}
-
-# ── emulator-gb ──────────────────────────────────────────────────────────────
-
-golden_check_emulator() {
-  # Running the trace-diff against golden = diffing golden against itself: GREEN.
-  local golden="$GOLDEN_DIR/trace.gbdoctor"
-  [ -f "$golden" ] || { echo "  golden missing: $golden" >&2; return 1; }
-  echo "  golden: emulator-gb/fixtures/golden/trace.gbdoctor"
-  diff_trace "$golden" "$golden" "golden trace" || return 1
-  echo "  golden GREEN: trace self-consistent (gate not over-strict)"
-  return 0
-}
-
-kill_mutant_emulator() {
-  local name="$1"
-  local file is_guard
-  file="$(jq -r --arg n "$name" '.mutants[] | select(.name==$n) | .file' "$MANIFEST")"
-  is_guard="$(jq -r --arg n "$name" \
-    '.mutants[] | select(.name==$n) | (.is_false_green_regression_guard // false)' "$MANIFEST")"
-  [ -n "$file" ] || { echo "  unknown mutant: $name" >&2; return 1; }
-  local fixture="$MUTANTS_DIR/$file"
-  [ -f "$fixture" ] || { echo "  mutant fixture missing: $fixture" >&2; return 1; }
-
-  if [ "$is_guard" = "true" ]; then
-    echo "  mutant '$name' is a false-green regression guard (non-falsifiable gate)"
-    echo "  $GUARD_REJECT_LINE"
-    return 0
-  fi
-
-  # Real defect mutant: the corrupted trace IS the fixture; the correct
-  # reference is the golden. Apply the per-instruction trace diff.
-  local golden="$GOLDEN_DIR/trace.gbdoctor"
-  if diff_trace "$golden" "$fixture" "$name"; then
-    # identical -> gate GREEN -> SURVIVED
-    echo "  $GUARD_REJECT_LINE"
-    return 1
-  fi
-  echo "  mutant '$name' KILLED: trace-diff went RED (corrupted line diverges from truth)"
-  return 0
-}
-
-# ── Domain dispatch ───────────────────────────────────────────────────────────
-
-golden_check() {
-  case "$DOMAIN" in
-    exchange-lob) golden_check_exchange ;;
-    emulator-gb)  golden_check_emulator ;;
-    *) echo "error: no golden check wired for domain '$DOMAIN'" >&2; return 2 ;;
-  esac
-}
-
-kill_mutant() {
-  case "$DOMAIN" in
-    exchange-lob) kill_mutant_exchange "$1" ;;
-    emulator-gb)  kill_mutant_emulator "$1" ;;
-    *) echo "error: no mutant runner wired for domain '$DOMAIN'" >&2; return 2 ;;
-  esac
 }
 
 # All mutant names from the manifest, in declaration order.
@@ -332,6 +249,7 @@ fi
 # ── full sweep (default + --assert-score) ──
 echo "falsify $DOMAIN — falsifiability sweep"
 echo "manifest: ${MANIFEST#"$PLUGIN_DIR"/}"
+echo "gate:     ${RUN_SH#"$PLUGIN_DIR"/} (structured report.json seam)"
 echo ""
 echo "[1] golden (gate MUST pass — false-RED check)"
 golden_rc=0
