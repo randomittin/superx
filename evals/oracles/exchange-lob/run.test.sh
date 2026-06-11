@@ -45,7 +45,7 @@ mut_report="$TMP/mutant.report.json"
 if "$RUN" --input "$FIX/mutants/queue-jump" --report "$mut_report" >/dev/null 2>&1; then
   mut_rc=0; else mut_rc=$?; fi
 if [ "$mut_rc" -ne 0 ]; then ok "mutant run exit nonzero ($mut_rc)"; else bad "mutant run exit 0 (expected nonzero)"; fi
-if jq -e '.status=="fail" and (.first_divergence|type=="string") and (.first_divergence|length>0) and .gate_id=="exchange-lob" and (.metrics|type=="object") and (.fix_hint|type=="string")' "$mut_report" >/dev/null 2>&1; then
+if jq -e '.status=="fail" and (.first_divergence|type=="object") and .first_divergence.file and .first_divergence.step and (.first_divergence|has("expected")) and (.first_divergence|has("actual")) and .gate_id=="exchange-lob" and (.metrics|type=="object") and (.fix_hint|type=="string")' "$mut_report" >/dev/null 2>&1; then
   ok "mutant report.json: status=fail, non-null first_divergence pinpoint, schema valid"
 else
   bad "mutant report.json invalid"; cat "$mut_report" 2>/dev/null || true
@@ -55,7 +55,7 @@ echo "[5] book-state mutant drop-resting-remainder -> status=fail with book pinp
 book_report="$TMP/book.report.json"
 if "$RUN" --input "$FIX/mutants/drop-resting-remainder" --report "$book_report" >/dev/null 2>&1; then
   book_rc=0; else book_rc=$?; fi
-if [ "$book_rc" -ne 0 ] && jq -e '.status=="fail" and (.first_divergence|type=="string")' "$book_report" >/dev/null 2>&1; then
+if [ "$book_rc" -ne 0 ] && jq -e '.status=="fail" and (.first_divergence|type=="object") and .first_divergence.file and .first_divergence.step and (.first_divergence|has("expected")) and (.first_divergence|has("actual"))' "$book_report" >/dev/null 2>&1; then
   ok "book-state mutant fails with non-null first_divergence"
 else
   bad "book-state mutant not rejected correctly (rc=$book_rc)"; cat "$book_report" 2>/dev/null || true
@@ -65,7 +65,7 @@ echo "[6] tautological-concurrency guard -> status=fail (non-falsifiable constru
 taut_report="$TMP/taut.report.json"
 if "$RUN" --input "$FIX/mutants/tautological-concurrency" --report "$taut_report" >/dev/null 2>&1; then
   taut_rc=0; else taut_rc=$?; fi
-if [ "$taut_rc" -ne 0 ] && jq -e '.status=="fail" and (.first_divergence|type=="string")' "$taut_report" >/dev/null 2>&1; then
+if [ "$taut_rc" -ne 0 ] && jq -e '.status=="fail" and (.first_divergence|type=="object") and .first_divergence.file and .first_divergence.step and (.first_divergence|has("expected")) and (.first_divergence|has("actual"))' "$taut_report" >/dev/null 2>&1; then
   ok "tautological-concurrency guard rejected as fail"
 else
   bad "tautological-concurrency guard not rejected (rc=$taut_rc)"; cat "$taut_report" 2>/dev/null || true
