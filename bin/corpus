@@ -1,0 +1,384 @@
+#!/usr/bin/env bash
+# corpus — H-8 case-corpus runner + version catch-rate time-series scorer.
+#
+# The corpus is the data flywheel that makes the oracle gates defensible: the
+# gate machinery is copyable, the accumulated SCORED FAILURE DATA is not. This
+# runner replays every corpus case through the gate(s) it is meant to catch and
+# scores whether each gate actually goes RED where it must — then publishes the
+# per-Heimdall-version catch-rate as a TIME SERIES (a plotted line, not an
+# adjective).
+#
+# THE STRUCTURED SEAM (spec 2A — same contract bin/falsify consumes):
+#   For each case, for each gate in its `gates_under_test`, invoke that gate's
+#   structured entry point:
+#       evals/oracles/<gate>/run.sh --input <case-repro> --report <tmp>
+#   and read the TYPED report.json the gate writes — report.json.status and
+#   report.json.first_divergence. This runner NEVER scrapes run.sh stdout.
+#   run.sh is the single source of diff-truth; corpus is a pure scorer over it.
+#   See evals/oracles/REPORT-CONTRACT.md.
+#
+# THE CORPUS CONTRACT (the schema this consumes):
+#   evals/corpus/INDEX.json:
+#     { "version": "v0.1",
+#       "cases": [ {id, source, gates_under_test[], difficulty}, ... ] }
+#   evals/corpus/<id>/case.json:
+#     { id, source: mutation|field|user, gates_under_test[], difficulty,
+#       added_in_version, seed,
+#       repro: <relpath to the deterministic repro input fed to run.sh>
+#              (default: repro.json),
+#       expected: { status: "fail"|"pass", first_divergence: <string|null> }
+#              (or a sibling expected.json with the same shape) }
+#   Determinism law: every case ships a seeded repro. Non-reproducible != a case.
+#
+# SCORING (per the spec):
+#   per-case CATCH / MISS:
+#     CATCH  the case's gate(s) went `fail` exactly as the case expects (and, when
+#            the case pins a first_divergence, the gate's first_divergence matches
+#            it — substring match, since divergence strings are human-readable
+#            locators). A case asserting an expected `pass` is a CATCH when the
+#            gate stays green (a known-good case must NOT be a false-RED).
+#     MISS   the gate passed when the case says it must fail (a false-GREEN), or
+#            it failed at the WRONG divergence (caught the wrong defect), or the
+#            gate produced no usable report.json (run.sh IO/usage error).
+#   per-gate catch-rate:  caught-cases-touching-gate / cases-touching-gate.
+#   corpus catch-rate for the CURRENT Heimdall version: caught / total.
+#
+# EXIT: 0 iff corpus catch-rate == 100% (every case caught) so CI-inversion can
+#       gate on it; nonzero otherwise.
+#
+# Usage:
+#   corpus run       run every case, score, write/append CORPUS-STATUS.md, print
+#   corpus status    print the scorecard for the current state (re-runs scoring)
+#   -h, --help       show help
+#
+# Env overrides (for testing against a fixture corpus / oracle tree):
+#   CORPUS_DIR    path to the corpus dir (default: <plugin>/evals/corpus)
+#   ORACLES_DIR   path to the oracles dir (default: <plugin>/evals/oracles)
+set -euo pipefail
+
+# ── Resolve paths (mirror bin/falsify, bin/benchmark) ──
+SELF="$0"
+if command -v readlink >/dev/null 2>&1; then
+  SELF="$(readlink -f "$0" 2>/dev/null || readlink "$0" 2>/dev/null || echo "$0")"
+fi
+BIN_DIR="$(cd "$(dirname "$SELF")" && pwd)"
+PLUGIN_DIR="$(cd "$BIN_DIR/.." && pwd)"
+CORPUS_DIR="${CORPUS_DIR:-$PLUGIN_DIR/evals/corpus}"
+ORACLES_DIR="${ORACLES_DIR:-$PLUGIN_DIR/evals/oracles}"
+INDEX="$CORPUS_DIR/INDEX.json"
+STATUS_MD="$CORPUS_DIR/CORPUS-STATUS.md"
+
+command -v jq >/dev/null 2>&1 || { echo "error: jq is required" >&2; exit 2; }
+
+usage() { sed -n '2,55p' "$SELF" | sed 's/^# \{0,1\}//'; }
+
+# ── Args ──
+CMD="${1:-run}"
+case "$CMD" in
+  run|status) ;;
+  -h|--help)  usage; exit 0 ;;
+  *) echo "error: unknown command: $CMD" >&2; usage >&2; exit 2 ;;
+esac
+
+[ -f "$INDEX" ] || { echo "error: corpus index missing: $INDEX" >&2; exit 2; }
+
+# ── Resolve the current Heimdall version (INDEX.json wins; VERSION file fallback) ──
+corpus_version() {
+  local v
+  v="$(jq -r '.version // empty' "$INDEX" 2>/dev/null)"
+  if [ -z "$v" ]; then
+    [ -f "$CORPUS_DIR/VERSION" ] && v="$(tr -d '[:space:]' < "$CORPUS_DIR/VERSION")"
+  fi
+  [ -z "$v" ] && [ -f "$PLUGIN_DIR/VERSION" ] && v="$(tr -d '[:space:]' < "$PLUGIN_DIR/VERSION")"
+  echo "${v:-v0.0}"
+}
+
+# ── Resolve a gate id to its structured run.sh entry point. ──
+gate_run_sh() {
+  local gate="$1"
+  echo "$ORACLES_DIR/$gate/run.sh"
+}
+
+# ── Invoke a gate's run.sh against an input; echo the temp report.json path. ──
+# run.sh exit: 0=pass, 1=fail (both write a valid report), 2=IO/usage error.
+# A fail exit is EXPECTED for corpus cases, so we never let it abort the runner.
+run_gate() {
+  local run_sh="$1" input="$2" report
+  report="$(mktemp)"
+  bash "$run_sh" --input "$input" --report "$report" >/dev/null 2>&1 || true
+  echo "$report"
+}
+
+# Read the typed `status` field. Echoes pass|fail, or empty on missing/invalid.
+report_status() {
+  local report="$1"
+  [ -s "$report" ] || { echo ""; return 0; }
+  jq -r '.status // empty' "$report" 2>/dev/null || echo ""
+}
+
+# Read the typed `first_divergence` field (echo empty if null/absent).
+report_first_divergence() {
+  local report="$1"
+  jq -r '.first_divergence // empty' "$report" 2>/dev/null || echo ""
+}
+
+# ── Resolve a case's expected {status, first_divergence}. ──
+# Precedence: case.json.expected object, else sibling expected.json.
+# Echoes "status\tfirst_divergence" (tab-separated; divergence may be empty).
+case_expected() {
+  local case_dir="$1" cj="$1/case.json" status div
+  status="$(jq -r '.expected.status // empty' "$cj" 2>/dev/null)"
+  div="$(jq -r '.expected.first_divergence // empty' "$cj" 2>/dev/null)"
+  if [ -z "$status" ] && [ -f "$case_dir/expected.json" ]; then
+    status="$(jq -r '.status // empty' "$case_dir/expected.json" 2>/dev/null)"
+    div="$(jq -r '.first_divergence // empty' "$case_dir/expected.json" 2>/dev/null)"
+  fi
+  # Default expectation for a corpus case is "the gate must go fail".
+  [ -z "$status" ] && status="fail"
+  printf '%s\t%s\n' "$status" "$div"
+}
+
+# ── Resolve a case's repro input path (default: repro.json in the case dir). ──
+case_repro() {
+  local case_dir="$1" cj="$1/case.json" rel
+  rel="$(jq -r '.repro // empty' "$cj" 2>/dev/null)"
+  [ -z "$rel" ] && rel="repro.json"
+  echo "$case_dir/$rel"
+}
+
+# ═══════════════════════════════════════════════════════════════════════════
+#  Per-gate accumulators kept as "gate<TAB>count" records in temp files so they
+#  survive the case loop without associative-array bashisms (macOS bash 3.2).
+# ═══════════════════════════════════════════════════════════════════════════
+GATE_TOTAL_FILE=""
+GATE_CATCH_FILE=""
+
+gate_tally_add() {  # file gate delta
+  local file="$1" gate="$2" delta="$3" cur
+  cur="$(grep -E "^${gate}	" "$file" 2>/dev/null | head -1 | cut -f2 || true)"
+  [ -z "$cur" ] && cur=0
+  cur=$(( cur + delta ))
+  grep -vE "^${gate}	" "$file" 2>/dev/null > "$file.tmp" || true
+  printf '%s\t%s\n' "$gate" "$cur" >> "$file.tmp"
+  mv "$file.tmp" "$file"
+}
+
+gate_tally_get() {  # file gate
+  local file="$1" gate="$2" v
+  v="$(grep -E "^${gate}	" "$file" 2>/dev/null | head -1 | cut -f2 || true)"
+  echo "${v:-0}"
+}
+
+# ═══════════════════════════════════════════════════════════════════════════
+#  Score one case against ALL its gates_under_test.
+#  A case is CAUGHT iff EVERY gate under test handled it as expected:
+#    expected fail -> gate status fail AND (no pinned divergence OR actual
+#                     first_divergence contains the pinned locator)
+#    expected pass -> gate status pass (a golden/known-good case is a false-RED
+#                     guard: it must NOT be rejected)
+#  Otherwise the case is a MISS. Per-gate tallies are accumulated via globals.
+#  Sets CASE_RESULT=catch|miss and CASE_DETAIL.
+# ═══════════════════════════════════════════════════════════════════════════
+score_case() {
+  local cid="$1" case_dir="$CORPUS_DIR/$cid"
+  CASE_RESULT="miss"; CASE_DETAIL=""
+
+  if [ ! -f "$case_dir/case.json" ]; then
+    CASE_DETAIL="no case.json at ${case_dir#"$CORPUS_DIR"/}"
+    return 0
+  fi
+
+  # gates_under_test: prefer case.json, fall back to the INDEX entry.
+  local gates
+  gates="$(jq -r '.gates_under_test[]?' "$case_dir/case.json" 2>/dev/null)"
+  if [ -z "$gates" ]; then
+    gates="$(jq -r --arg id "$cid" '.cases[] | select(.id==$id) | .gates_under_test[]?' "$INDEX" 2>/dev/null)"
+  fi
+  if [ -z "$gates" ]; then
+    CASE_DETAIL="case '$cid' declares no gates_under_test"
+    return 0
+  fi
+
+  local repro; repro="$(case_repro "$case_dir")"
+  if [ ! -f "$repro" ]; then
+    CASE_DETAIL="repro missing: ${repro#"$CORPUS_DIR"/}"
+    return 0
+  fi
+
+  local exp exp_status exp_div
+  exp="$(case_expected "$case_dir")"
+  exp_status="$(printf '%s' "$exp" | cut -f1)"
+  exp_div="$(printf '%s' "$exp" | cut -f2-)"
+
+  local all_caught=1 detail=""
+  local gate run_sh report status div gate_caught
+  while IFS= read -r gate; do
+    [ -n "$gate" ] || continue
+    run_sh="$(gate_run_sh "$gate")"
+    gate_tally_add "$GATE_TOTAL_FILE" "$gate" 1
+    gate_caught=0
+
+    if [ ! -f "$run_sh" ]; then
+      detail="${detail}[$gate: run.sh missing] "
+      all_caught=0
+    else
+      report="$(run_gate "$run_sh" "$repro")"
+      status="$(report_status "$report")"
+      div="$(report_first_divergence "$report")"
+      rm -f "$report"
+
+      if [ "$exp_status" = "fail" ]; then
+        if [ "$status" = "fail" ]; then
+          if [ -z "$exp_div" ] || case "$div" in *"$exp_div"*) true ;; *) false ;; esac; then
+            gate_caught=1
+            detail="${detail}[$gate: CATCH fail @ '${div:-<unpinned>}'] "
+          else
+            detail="${detail}[$gate: MISS wrong-divergence: got '${div}' want '${exp_div}'] "
+            all_caught=0
+          fi
+        elif [ "$status" = "pass" ]; then
+          detail="${detail}[$gate: MISS false-green (gate passed; case must fail)] "
+          all_caught=0
+        else
+          detail="${detail}[$gate: MISS no usable report.json (run.sh error)] "
+          all_caught=0
+        fi
+      else
+        # expected pass: known-good case must not be a false-RED.
+        if [ "$status" = "pass" ]; then
+          gate_caught=1
+          detail="${detail}[$gate: CATCH pass (no false-RED)] "
+        elif [ "$status" = "fail" ]; then
+          detail="${detail}[$gate: MISS false-RED (gate failed a known-good case)] "
+          all_caught=0
+        else
+          detail="${detail}[$gate: MISS no usable report.json (run.sh error)] "
+          all_caught=0
+        fi
+      fi
+    fi
+    [ "$gate_caught" -eq 1 ] && gate_tally_add "$GATE_CATCH_FILE" "$gate" 1
+  done <<< "$gates"
+
+  if [ "$all_caught" -eq 1 ]; then CASE_RESULT="catch"; else CASE_RESULT="miss"; fi
+  CASE_DETAIL="$detail"
+}
+
+# ═══════════════════════════════════════════════════════════════════════════
+#  Score the whole corpus. Sets globals:
+#    SC_VERSION SC_TOTAL SC_CAUGHT SC_RATE_PCT
+#    SC_CASE_LINES (newline-joined per-case lines)
+#    SC_GATE_LINES (newline-joined per-gate catch-rate lines)
+# ═══════════════════════════════════════════════════════════════════════════
+score_corpus() {
+  SC_VERSION="$(corpus_version)"
+  GATE_TOTAL_FILE="$(mktemp)"; GATE_CATCH_FILE="$(mktemp)"
+  : > "$GATE_TOTAL_FILE"; : > "$GATE_CATCH_FILE"
+
+  local ids
+  ids="$(jq -r '.cases[].id' "$INDEX" 2>/dev/null)"
+  [ -n "$ids" ] || { echo "error: INDEX.json declares no cases" >&2; rm -f "$GATE_TOTAL_FILE" "$GATE_CATCH_FILE"; exit 2; }
+
+  SC_TOTAL=0; SC_CAUGHT=0; SC_CASE_LINES=""
+  local cid
+  while IFS= read -r cid; do
+    [ -n "$cid" ] || continue
+    SC_TOTAL=$(( SC_TOTAL + 1 ))
+    score_case "$cid"
+    if [ "$CASE_RESULT" = "catch" ]; then
+      SC_CAUGHT=$(( SC_CAUGHT + 1 ))
+      SC_CASE_LINES="${SC_CASE_LINES}  CATCH  ${cid}  ${CASE_DETAIL}"$'\n'
+    else
+      SC_CASE_LINES="${SC_CASE_LINES}  MISS   ${cid}  ${CASE_DETAIL}"$'\n'
+    fi
+  done <<< "$ids"
+
+  # Per-gate catch-rate lines.
+  SC_GATE_LINES=""
+  local gate gt gc grate
+  while IFS=$'\t' read -r gate gt; do
+    [ -n "$gate" ] || continue
+    gc="$(gate_tally_get "$GATE_CATCH_FILE" "$gate")"
+    grate="$(awk -v c="$gc" -v t="$gt" 'BEGIN{ if(t==0){print "0.0"}else{printf "%.1f", 100*c/t} }')"
+    SC_GATE_LINES="${SC_GATE_LINES}  ${gate}: ${gc}/${gt} caught (${grate}%)"$'\n'
+  done < "$GATE_TOTAL_FILE"
+
+  rm -f "$GATE_TOTAL_FILE" "$GATE_CATCH_FILE"
+
+  SC_RATE_PCT="$(awk -v c="$SC_CAUGHT" -v t="$SC_TOTAL" 'BEGIN{ if(t==0){print "0"}else{printf "%.0f", 100*c/t} }')"
+}
+
+# ═══════════════════════════════════════════════════════════════════════════
+#  Print the scorecard.
+# ═══════════════════════════════════════════════════════════════════════════
+print_scorecard() {
+  echo "corpus scorecard — Heimdall ${SC_VERSION}"
+  echo "index: ${INDEX#"$PLUGIN_DIR"/}"
+  echo "gate seam: evals/oracles/<gate>/run.sh -> report.json (status + first_divergence; never stdout)"
+  echo
+  echo "[per-case]"
+  printf '%s' "$SC_CASE_LINES"
+  echo
+  echo "[per-gate catch-rate]"
+  printf '%s' "$SC_GATE_LINES"
+  echo
+  echo "[corpus catch-rate — ${SC_VERSION}]"
+  echo "  ${SC_CAUGHT}/${SC_TOTAL} caught = ${SC_RATE_PCT}%"
+}
+
+# ═══════════════════════════════════════════════════════════════════════════
+#  Append/update the published TIME SERIES table (the marketing artifact).
+#  One row per version: `v0.1 | 9 cases | N/9 caught | XX%`. Re-running the same
+#  version UPDATES that version's row in place (idempotent); a new version
+#  appends a new row, growing the plotted line.
+# ═══════════════════════════════════════════════════════════════════════════
+HEADER_LINE="| Version | Cases | Caught | Catch-rate |"
+SEP_LINE="| --- | ---: | ---: | ---: |"
+
+update_status_md() {
+  local row="| ${SC_VERSION} | ${SC_TOTAL} cases | ${SC_CAUGHT}/${SC_TOTAL} caught | ${SC_RATE_PCT}% |"
+
+  # Collect existing data rows (lines starting with "| v"), excluding this version.
+  local existing=""
+  if [ -f "$STATUS_MD" ]; then
+    existing="$(grep -E '^\| v' "$STATUS_MD" 2>/dev/null | grep -vE "^\| ${SC_VERSION} " || true)"
+  fi
+
+  {
+    echo "# Corpus Catch-Rate — Time Series"
+    echo
+    echo "Published catch-rate of the Heimdall case corpus, per version. This is a"
+    echo "plotted line, not an adjective: each row is the fraction of accumulated"
+    echo "scored failure cases the gates actually caught at that version. Generated"
+    echo "by \`bin/corpus run\` — every number is a real gate run over real cases."
+    echo
+    echo "$HEADER_LINE"
+    echo "$SEP_LINE"
+    [ -n "$existing" ] && printf '%s\n' "$existing"
+    echo "$row"
+  } > "$STATUS_MD"
+}
+
+# ═══════════════════════════════════════════════════════════════════════════
+#  Commands
+# ═══════════════════════════════════════════════════════════════════════════
+score_corpus
+
+case "$CMD" in
+  run)
+    print_scorecard
+    update_status_md
+    echo
+    echo "wrote ${STATUS_MD#"$PLUGIN_DIR"/}"
+    echo "  row: | ${SC_VERSION} | ${SC_TOTAL} cases | ${SC_CAUGHT}/${SC_TOTAL} caught | ${SC_RATE_PCT}% |"
+    ;;
+  status)
+    print_scorecard
+    ;;
+esac
+
+# Exit 0 iff every case caught (corpus catch-rate == 100%), nonzero otherwise.
+if [ "$SC_TOTAL" -gt 0 ] && [ "$SC_CAUGHT" -eq "$SC_TOTAL" ]; then
+  exit 0
+fi
+exit 1
