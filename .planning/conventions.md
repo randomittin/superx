@@ -55,3 +55,24 @@ pins were replayed — that dip is what makes the recovered 100% trustworthy.
 
 See [[R5]] for the complementary rule that the reference itself must be
 externally anchored.
+
+## R1 — parallel agents never share an output directory
+Two agents writing the same dir (e.g. `evals/corpus/`) collide: add/add merges, one set silently wins.
+**Why:** H-8 build — two parallel agents both seeded `evals/corpus/`, runner scored 0/9 on the schema mismatch.
+**How to apply:** planner assigns each parallel agent a DISJOINT sub-path (or, once the ledger lands, each claims its surfaces). Same-dir work is sequenced, never parallelized. This is the `claimed_surfaces` failure class, dogfooded before the ledger existed.
+
+## R2 — never delete a worktree branch before its merge lands
+**Why:** a fix branch was deleted mid-merge-conflict; the commit went dangling, recovered only via reflog sha.
+**How to apply:** confirm the merge commit is reachable from main (no conflict in progress) BEFORE `git worktree remove` / `git branch -D`. Resolve conflicts first; never clean up mid-conflict.
+
+## R3 — worktree agents must commit in-worktree
+Spawned coders auto-isolate into git worktrees; uncommitted files are destroyed on cleanup.
+**How to apply:** every spawned agent commits in its worktree; the orchestrator integrates by merging the branch — never by expecting files on main.
+
+## R4 — schema/reference changes propagate in one commit and must show the dip
+**Why:** a contract change with untouched expectations that stays green = the change didn't really happen (tautology).
+**How to apply:** update every consumer (gates, falsify, corpus, expected fixtures, docs) in the SAME commit; run the corpus between reference-fix and re-pin to capture the RED dip; record it in CORPUS-STATUS.md dip-log. (R6 generalizes this.)
+
+## Corpus calibration — 100% over a static corpus is just a badge
+**Why:** a corpus at 9/9 forever has stopped teaching. Value = cases that FAIL when gates regress + intake of genuinely hard field/community cases.
+**How to apply:** as field-capture starts, a catch-rate dip that gets fixed is the curve working — never an embarrassment to hide. The impressive artifact is a high rate over a GROWING, hardening corpus. Never game the number by keeping the corpus easy.
