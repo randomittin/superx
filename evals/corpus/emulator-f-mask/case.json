@@ -1,0 +1,11 @@
+{
+  "id": "emulator-f-mask",
+  "source": "mutation",
+  "gates_under_test": ["emulator-gb"],
+  "difficulty": "hard",
+  "added_in_version": "0.1",
+  "seed": "skip-f-mask",
+  "repro": { "input": "input.gbdoctor", "expected": "expected.json", "truth": "../../oracles/emulator-gb/fixtures/golden/trace.gbdoctor" },
+  "defect": "F register low nibble not masked (F &= 0xF0 skipped); leftover ALU bits leak so F=0x1F instead of 0x10 at PC:0101. Every register value is correct.",
+  "invariants": ["F &= 0xF0 after every write (DMG has no F bits 0-3)"]
+}

@@ -1,0 +1,25 @@
+{
+  "fixture": "mutant",
+  "mutant": "drop-resting-remainder",
+  "domain": "exchange-lob",
+  "defect": "O1 limit-rest + O4 self-conservation violated: a partially-filled LIMIT order's unmatched remainder is DROPPED instead of resting on the book (the engine treats a limit like a market for its leftover). Quantity is destroyed.",
+  "must_turn_red_gate": "exchange-lob differential (post-stream book-state diff + O4 conservation assertion)",
+  "how_the_gate_rejects": "id1 buys limit 100 x10; id2 sells 100 x4 -> 4 fill, id1 has 6 remaining that MUST rest at 100. The corrupted fixture shows an EMPTY book (remainder dropped). The differential gate diffs `expected_book` against the reference's resting state and REJECTS (reference shows id1 x6 resting). The O4 check independently REJECTS: qty in (14) != filled (8) + resting (claimed 0) + discarded (0) -> 14 != 8.",
+  "orders": [
+    { "kind": "limit", "id": 1, "account": "A", "side": "buy",  "price": 100, "qty": 10 },
+    { "kind": "limit", "id": 2, "account": "B", "side": "sell", "price": 100, "qty": 4  }
+  ],
+  "correct_trades": [
+    { "takerId": 2, "makerId": 1, "price": 100, "qty": 4 }
+  ],
+  "correct_book": {
+    "bids": [ { "id": 1, "account": "A", "price": 100, "qty": 6 } ],
+    "asks": []
+  },
+  "corrupted_book": {
+    "bids": [],
+    "asks": []
+  },
+  "first_divergence": "book.bids: reference=[id1@100x6], corrupted=[] (resting remainder destroyed)",
+  "why_per_trade_checks_miss_it": "The single fill (id2/id1 @100 x4) is perfectly valid under I1/I2/I3/C1 — the defect is in the POST-stream book state, not in any trade. Only a book-state differential or the O4 conservation count exposes the lost 6 units."
+}

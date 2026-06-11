@@ -1,0 +1,24 @@
+{
+  "fixture": "mutant",
+  "mutant": "lifo-tiebreak",
+  "domain": "exchange-lob",
+  "defect": "D3 fifo-tiebreak violated: at a single price level the matcher fills the MOST-RECENTLY-rested order first (LIFO) instead of the earliest (FIFO). Differs from queue-jump in that the violation is in the MAKER (resting) ordering, not the taker arrival ordering.",
+  "must_turn_red_gate": "exchange-lob differential (D2 whole-output vs FIFO reference)",
+  "how_the_gate_rejects": "Two sells rest at 99: id1 (earlier) then id2 (later). An aggressor buy for 4 must consume id1's 3 first (FIFO), then 1 from id2. The corrupted fixture consumes id2 first (LIFO). The differential gate diffs makerId per trade and REJECTS: correct first maker is id1, corrupted first maker is id2.",
+  "orders": [
+    { "kind": "limit", "id": 1, "account": "A", "side": "sell", "price": 99, "qty": 3 },
+    { "kind": "limit", "id": 2, "account": "B", "side": "sell", "price": 99, "qty": 3 },
+    { "kind": "limit", "id": 3, "account": "C", "side": "buy",  "price": 99, "qty": 4 }
+  ],
+  "correct_trades": [
+    { "takerId": 3, "makerId": 1, "price": 99, "qty": 3 },
+    { "takerId": 3, "makerId": 2, "price": 99, "qty": 1 }
+  ],
+  "corrupted_trades": [
+    { "takerId": 3, "makerId": 2, "price": 99, "qty": 3 },
+    { "takerId": 3, "makerId": 1, "price": 99, "qty": 1 }
+  ],
+  "first_divergence_index": 0,
+  "diverging_field": "makerId",
+  "why_per_trade_checks_miss_it": "Both makers rest at the same price 99, so I1 (trade-at-resting-price) is satisfied either way; I2/I3/C1 hold. Only the FIFO-ordering of equal-price makers (D3) distinguishes correct from LIFO — a whole-sequence property invisible to per-trade validity."
+}

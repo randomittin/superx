@@ -1,0 +1,11 @@
+{
+  "id": "emulator-half-carry",
+  "source": "mutation",
+  "gates_under_test": ["emulator-gb"],
+  "difficulty": "hard",
+  "added_in_version": "0.1",
+  "seed": "force-h-zero",
+  "repro": { "input": "input.gbdoctor", "expected": "expected.json", "truth": "../../oracles/emulator-gb/fixtures/golden/trace.gbdoctor" },
+  "defect": "AND instruction sets half-carry H=0 instead of the mandatory H=1 (treats AND like OR/XOR). Single flipped flag bit at PC:0103; A is correct.",
+  "invariants": ["AND flag rule (Z N=0 H=1 C=0)"]
+}

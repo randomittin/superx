@@ -1,0 +1,6 @@
+{
+  "status": "fail",
+  "first_divergence": "trade index 0: expected {\"makerId\":1,\"price\":99,\"qty\":3,\"takerId\":2} actual {\"makerId\":1,\"price\":99,\"qty\":4,\"takerId\":3} (reference len=2 actual len=2)",
+  "first_divergence_summary": "trade index 0: expected takerId 2 actual takerId 3",
+  "gate": "exchange-lob"
+}

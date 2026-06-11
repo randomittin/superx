@@ -1,0 +1,11 @@
+{
+  "id": "emulator-jr-off-by-one",
+  "source": "mutation",
+  "gates_under_test": ["emulator-gb"],
+  "difficulty": "moderate",
+  "added_in_version": "0.1",
+  "seed": "jr-off-by-one",
+  "repro": { "input": "input.gbdoctor", "expected": "expected.json", "truth": "../../oracles/emulator-gb/fixtures/golden/trace.gbdoctor" },
+  "defect": "JR relative jump target off by one (omits the +2 instruction-length advance before adding signed e): lands PC:0106 instead of PC:0107. Flags/registers sane -> pure control-flow drift, PCMEM desync.",
+  "invariants": ["JR target = PC_after_operand + signed_e"]
+}

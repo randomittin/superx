@@ -1,0 +1,11 @@
+{
+  "id": "exchange-queue-jump",
+  "source": "mutation",
+  "gates_under_test": ["exchange-lob"],
+  "difficulty": "hard",
+  "added_in_version": "0.1",
+  "seed": "queue-jump",
+  "repro": { "input": "input.json", "expected": "expected.json" },
+  "defect": "I4/D3 price-time priority violated: a later same-price taker (id3) fills before an earlier resting taker (id2). Static analogue of the C2 concurrency race.",
+  "invariants": ["I4", "D3"]
+}

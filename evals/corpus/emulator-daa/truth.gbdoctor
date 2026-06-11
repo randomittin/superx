@@ -1,0 +1,22 @@
+# TRUTH trace — emulator-daa case (DMG LR35902), self-contained reference.
+# ============================================================================
+# This case exercises DAA, which the resident golden program does not. It ships
+# its own correct truth trace so the case is fully self-contained: the runner
+# passes this file as --truth and input.gbdoctor as --input.
+#
+# Program under trace (loaded at 0x0100):
+#   0100  C6 0A     ADD A,0x0A   ; A 01+0A=0B  (H: (1&F)+(A&F)=B<=F -> H=0, C=0)   F=00
+#   0102  3C        INC A        ; A 0B->0C    (C preserved=0, low nibble C!=0 -> H=0) F=00
+#   0103  87        ADD A,A      ; A 0C+0C=18  (low-nibble C+C>F -> H=1, no byte carry) F=20
+#   0104  27        DAA          ; BCD adjust of 0x18 with H=1 -> +06 -> 0x1E          F=00
+#   0105  18 02     JR +2        ; next PC = 0105 + 2 + (+2) = 0109  (JR sets no flags)
+#   0109  00        NOP          ; end of program
+#
+# Post-boot register init: A=01 F=B0 B=00 C=13 D=00 E=D8 H=01 L=4D SP=FFFE PC=0100
+# ----------------------------------------------------------------------------
+A:01 F:B0 B:00 C:13 D:00 E:D8 H:01 L:4D SP:FFFE PC:0100 PCMEM:C6,0A,3C,87
+A:0B F:00 B:00 C:13 D:00 E:D8 H:01 L:4D SP:FFFE PC:0102 PCMEM:3C,87,27,18
+A:0C F:00 B:00 C:13 D:00 E:D8 H:01 L:4D SP:FFFE PC:0103 PCMEM:87,27,18,02
+A:18 F:20 B:00 C:13 D:00 E:D8 H:01 L:4D SP:FFFE PC:0104 PCMEM:27,18,02,00
+A:1E F:00 B:00 C:13 D:00 E:D8 H:01 L:4D SP:FFFE PC:0105 PCMEM:18,02,00,00
+A:1E F:00 B:00 C:13 D:00 E:D8 H:01 L:4D SP:FFFE PC:0109 PCMEM:00,00,00,00
