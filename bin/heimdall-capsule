@@ -1,0 +1,145 @@
+#!/usr/bin/env bash
+# heimdall-capsule — context capsules (Token-Frugal Protocol v2, mechanism 3).
+#
+# Every completed task/wave compacts to a <=10-line capsule:
+#   capsules/{id}.md  — what changed, where, decisions, gotchas, depends.
+# Spawns and later waves hydrate ONLY the capsules their task references; the
+# orchestrator computes the dependency set (transitive `depends` closure) and
+# emits only those. This is the context-decay fix and the token fix in one.
+#
+# Capsule format (machine-parseable front matter line + body, all human-readable):
+#   line 1: ---
+#   line 2: id: <id>
+#   line 3: depends: <csv of capsule ids>   (empty if none)
+#   line 4: ts: <iso>
+#   line 5: ---
+#   line 6: WHAT: ...
+#   line 7: WHERE: ...
+#   line 8: DECISION: ...
+#   line 9: GOTCHA: ...
+#   (<= 10 lines total)
+#
+# Usage:
+#   heimdall-capsule write <id> --what T [--where W] [--decision D] [--gotcha G] [--depends a,b]
+#   heimdall-capsule show <id>            print one capsule verbatim
+#   heimdall-capsule deps <id>            print the transitive dependency closure (ids)
+#   heimdall-capsule hydrate <id> [<id>...]  emit ONLY the dependency-closure capsules
+#   heimdall-capsule list                 list all capsule ids
+#   -h, --help                            usage
+#
+# Exit: 0 ok; 1 capsule not found; 2 usage/IO error.
+set -euo pipefail
+
+SELF="$0"
+SOURCE_DIR="$(cd "$(dirname "$0")" && pwd)"
+# shellcheck source=lib/protocol.sh
+. "$SOURCE_DIR/lib/protocol.sh"
+proto_resolve_paths "$SELF"
+proto_require_jq
+proto_ensure_dirs
+
+usage() { sed -n '2,33p' "$SELF" | sed 's/^# \{0,1\}//'; }
+
+# Parse `depends:` line of a capsule file -> space-separated ids.
+capsule_depends() {
+  local id="$1" f="$CAPSULE_DIR/$1.md"
+  [ -f "$f" ] || return 0
+  awk -F': *' '/^depends:/ {print $2; exit}' "$f" | tr ',' ' '
+}
+
+# Transitive dependency closure of one id (includes the id itself). BFS with a
+# seen-list file (bash 3.2: no associative arrays). Echoes ids newest-first
+# topological-ish order: a capsule appears after the capsules it depends on.
+capsule_closure() {
+  local seen queue id deps d
+  seen="$(mktemp)"; queue="$(mktemp)"
+  printf '%s\n' "$@" > "$queue"
+  : > "$seen"
+  while [ -s "$queue" ]; do
+    id="$(head -1 "$queue")"
+    tail -n +2 "$queue" > "$queue.tmp"; mv "$queue.tmp" "$queue"
+    grep -qxF "$id" "$seen" && continue
+    echo "$id" >> "$seen"
+    for d in $(capsule_depends "$id"); do
+      [ -n "$d" ] || continue
+      grep -qxF "$d" "$seen" || echo "$d" >> "$queue"
+    done
+  done
+  # Emit dependencies before dependents: reverse the discovery order so a
+  # capsule's prerequisites are hydrated first.
+  tac "$seen" 2>/dev/null || tail -r "$seen"
+  rm -f "$seen" "$queue"
+}
+
+[ $# -ge 1 ] || { echo "error: a subcommand is required" >&2; usage >&2; exit 2; }
+
+cmd="$1"; shift || true
+case "$cmd" in
+  -h|--help) usage; exit 0 ;;
+  write)
+    [ $# -ge 1 ] || { echo "error: write needs <id>" >&2; exit 2; }
+    id="$1"; shift
+    what=""; where=""; decision=""; gotcha=""; depends=""
+    while [ $# -gt 0 ]; do
+      case "$1" in
+        --what)     what="${2:?--what needs a value}"; shift 2 ;;
+        --where)    where="${2:?--where needs a value}"; shift 2 ;;
+        --decision) decision="${2:?--decision needs a value}"; shift 2 ;;
+        --gotcha)   gotcha="${2:?--gotcha needs a value}"; shift 2 ;;
+        --depends)  depends="${2:?--depends needs a value}"; shift 2 ;;
+        *) echo "error: unknown flag: $1" >&2; exit 2 ;;
+      esac
+    done
+    [ -n "$what" ] || { echo "error: --what is required (a capsule must say what changed)" >&2; exit 2; }
+    f="$CAPSULE_DIR/$id.md"
+    {
+      echo "---"
+      echo "id: $id"
+      echo "depends: $depends"
+      echo "ts: $(proto_ts)"
+      echo "---"
+      echo "WHAT: $what"
+      [ -n "$where" ]    && echo "WHERE: $where"
+      [ -n "$decision" ] && echo "DECISION: $decision"
+      [ -n "$gotcha" ]   && echo "GOTCHA: $gotcha"
+    } > "$f"
+    # Enforce the <=10-line cap (spec H-4): a capsule that grows is a bug.
+    lines="$(wc -l < "$f" | tr -d ' ')"
+    if [ "$lines" -gt 10 ]; then
+      rm -f "$f"
+      echo "error: capsule $id would be $lines lines (>10); compact harder" >&2
+      exit 2
+    fi
+    proto_log "capsule" "write" "$id depends=$depends lines=$lines"
+    echo "wrote $f ($lines lines)"
+    ;;
+  show)
+    [ $# -eq 1 ] || { echo "error: show needs <id>" >&2; exit 2; }
+    f="$CAPSULE_DIR/$1.md"
+    [ -f "$f" ] || { echo "error: no capsule: $1" >&2; exit 1; }
+    cat "$f"
+    ;;
+  deps)
+    [ $# -eq 1 ] || { echo "error: deps needs <id>" >&2; exit 2; }
+    [ -f "$CAPSULE_DIR/$1.md" ] || { echo "error: no capsule: $1" >&2; exit 1; }
+    capsule_closure "$1"
+    ;;
+  hydrate)
+    [ $# -ge 1 ] || { echo "error: hydrate needs >=1 <id>" >&2; exit 2; }
+    for a in "$@"; do
+      [ -f "$CAPSULE_DIR/$a.md" ] || { echo "error: no capsule: $a" >&2; exit 1; }
+    done
+    proto_log "capsule" "hydrate" "$*"
+    first=1
+    while IFS= read -r cid; do
+      [ -n "$cid" ] || continue
+      [ "$first" -eq 1 ] || echo
+      first=0
+      cat "$CAPSULE_DIR/$cid.md"
+    done < <(capsule_closure "$@")
+    ;;
+  list)
+    ls -1 "$CAPSULE_DIR" 2>/dev/null | sed 's/\.md$//'
+    ;;
+  *) echo "error: unknown subcommand: $cmd" >&2; usage >&2; exit 2 ;;
+esac

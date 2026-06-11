@@ -1,0 +1,71 @@
+#!/usr/bin/env bash
+# heimdall-gate — the contract-consuming adapter (Token-Frugal Protocol v2).
+#
+# THIS IS THE ONLY PROTOCOL COMPONENT THAT READS report.json. It is built LAST
+# and kept THINNEST on purpose (spec named risk): everything else in the protocol
+# (symbols, capsules, blackboard, ledger, brief, validator) is contract-
+# independent. If a review finds a flaw in the report.json contract
+# (evals/oracles/REPORT-CONTRACT.md), the rework is contained to this one file.
+#
+# It reads ONLY the gate-agnostic H-1 contract fields it is allowed to depend on:
+#   gate_id, status, wave   (NOT metrics — those are domain-specific, open-keyed)
+# and turns them into a `gate_report` typed message that REFERENCES the report by
+# path (report_ref) rather than inlining its body — compression by reference.
+#
+# Usage:
+#   heimdall-gate to-message --report <report.json> --from <role> --msg-id <id> [--wave <w>]
+#   -h, --help
+#
+# Output: a schema-valid gate_report message on stdout (validate it with
+# heimdall-validate). Exit 0 ok; 1 unreadable/invalid report; 2 usage error.
+set -euo pipefail
+
+SELF="$0"
+SOURCE_DIR="$(cd "$(dirname "$0")" && pwd)"
+# shellcheck source=lib/protocol.sh
+. "$SOURCE_DIR/lib/protocol.sh"
+proto_resolve_paths "$SELF"
+proto_require_jq
+proto_ensure_dirs
+
+usage() { sed -n '2,22p' "$SELF" | sed 's/^# \{0,1\}//'; }
+
+[ $# -ge 1 ] || { echo "error: 'to-message' subcommand required" >&2; usage >&2; exit 2; }
+case "$1" in -h|--help) usage; exit 0 ;; to-message) shift ;; *) echo "error: unknown subcommand: $1" >&2; exit 2 ;; esac
+
+report=""; from=""; msgid=""; wave=""
+while [ $# -gt 0 ]; do
+  case "$1" in
+    --report)  report="${2:?--report needs a path}"; shift 2 ;;
+    --from)    from="${2:?--from needs a value}"; shift 2 ;;
+    --msg-id)  msgid="${2:?--msg-id needs a value}"; shift 2 ;;
+    --wave)    wave="${2:?--wave needs a value}"; shift 2 ;;
+    *) echo "error: unknown flag: $1" >&2; usage >&2; exit 2 ;;
+  esac
+done
+[ -n "$report" ] && [ -n "$from" ] && [ -n "$msgid" ] \
+  || { echo "error: to-message needs --report --from --msg-id" >&2; exit 2; }
+[ -f "$report" ] || { echo "error: report not found: $report" >&2; exit 1; }
+
+# Read ONLY the contract fields. A report missing gate_id/status is not a usable
+# report per REPORT-CONTRACT.md §5 — treat as an error, not a pass/fail.
+gate_id="$(jq -r '.gate_id // empty' "$report" 2>/dev/null || true)"
+status="$(jq -r '.status // empty' "$report" 2>/dev/null || true)"
+rep_wave="$(jq -r '.wave // empty' "$report" 2>/dev/null || true)"
+[ -n "$gate_id" ] || { echo "error: report has no gate_id (contract violation)" >&2; exit 1; }
+case "$status" in pass|fail) ;; *) echo "error: report status not pass|fail: '${status}'" >&2; exit 1 ;; esac
+[ -n "$wave" ] || wave="$rep_wave"
+
+# Build the gate_report message: references the report by path, does NOT inline
+# its body (metrics/first_divergence stay in report.json; consumers resolve on
+# demand). Absolute path so a delta-spawn can resolve it.
+abs_report="$(cd "$(dirname "$report")" && printf '%s/%s' "$(pwd)" "$(basename "$report")")"
+jq -cn \
+  --arg from "$from" --arg msgid "$msgid" --arg ts "$(proto_ts)" \
+  --arg gate_id "$gate_id" --arg status "$status" \
+  --arg report_ref "$abs_report" --arg wave "$wave" \
+  '{type:"gate_report",from:$from,msg_id:$msgid,ts:$ts,
+    gate_id:$gate_id,status:$status,report_ref:$report_ref}
+   | if $wave != "" then . + {wave:$wave} else . end'
+
+proto_log "gate" "to-message" "$gate_id/$status ref=$abs_report"

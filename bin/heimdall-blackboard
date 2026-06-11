@@ -1,0 +1,65 @@
+#!/usr/bin/env bash
+# heimdall-blackboard — shared key-value facts (Token-Frugal Protocol v2, mech 5).
+#
+# .planning/blackboard.json holds facts discovered once and read by key: port
+# numbers, env quirks, chosen library versions. Whoever discovers a fact writes
+# it; every later agent reads by key instead of rediscovering it. Kills the
+# "every agent rediscovers the dev-server port" tax.
+#
+# Usage:
+#   heimdall-blackboard set <key> <value>   record a fact (last writer wins)
+#   heimdall-blackboard get <key>           print the fact for <key>
+#   heimdall-blackboard list                print all facts, key<TAB>value
+#   heimdall-blackboard del <key>           remove a fact
+#   -h, --help                              usage
+#
+# Exit: 0 ok; 1 key not found; 2 usage/IO error.
+set -euo pipefail
+
+SELF="$0"
+SOURCE_DIR="$(cd "$(dirname "$0")" && pwd)"
+# shellcheck source=lib/protocol.sh
+. "$SOURCE_DIR/lib/protocol.sh"
+proto_resolve_paths "$SELF"
+proto_require_jq
+proto_ensure_dirs
+
+usage() { sed -n '2,19p' "$SELF" | sed 's/^# \{0,1\}//'; }
+
+[ $# -ge 1 ] || { echo "error: a subcommand is required" >&2; usage >&2; exit 2; }
+
+case "$1" in
+  -h|--help) usage; exit 0 ;;
+  set)
+    [ $# -eq 3 ] || { echo "error: set needs <key> <value>" >&2; exit 2; }
+    key="$2"; value="$3"
+    tmp="$(mktemp)"
+    jq --arg k "$key" --arg v "$value" '.facts[$k] = $v' "$BLACKBOARD_FILE" > "$tmp" \
+      || { rm -f "$tmp"; echo "error: failed to write fact" >&2; exit 2; }
+    mv "$tmp" "$BLACKBOARD_FILE"
+    proto_log "blackboard" "set" "$key=$value"
+    echo "$key = $value"
+    ;;
+  get)
+    [ $# -eq 2 ] || { echo "error: get needs <key>" >&2; exit 2; }
+    key="$2"
+    value="$(jq -r --arg k "$key" '.facts[$k] // empty' "$BLACKBOARD_FILE")"
+    [ -n "$value" ] || { echo "error: no fact for key: $key" >&2; exit 1; }
+    proto_log "blackboard" "get" "$key"
+    echo "$value"
+    ;;
+  list)
+    jq -r '.facts | to_entries[] | "\(.key)\t\(.value)"' "$BLACKBOARD_FILE"
+    ;;
+  del)
+    [ $# -eq 2 ] || { echo "error: del needs <key>" >&2; exit 2; }
+    key="$2"
+    tmp="$(mktemp)"
+    jq --arg k "$key" 'del(.facts[$k])' "$BLACKBOARD_FILE" > "$tmp" \
+      || { rm -f "$tmp"; echo "error: failed to delete fact" >&2; exit 2; }
+    mv "$tmp" "$BLACKBOARD_FILE"
+    proto_log "blackboard" "del" "$key"
+    echo "deleted $key"
+    ;;
+  *) echo "error: unknown subcommand: $1" >&2; usage >&2; exit 2 ;;
+esac

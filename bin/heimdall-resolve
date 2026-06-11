@@ -1,0 +1,66 @@
+#!/usr/bin/env bash
+# heimdall-resolve — symbol-table resolver (Token-Frugal Protocol v2, mechanism 2).
+#
+# Plan-time symbols.json assigns short IDs to recurring artifacts (file paths,
+# acceptance criteria, invariants, conventions). All inter-agent traffic uses the
+# IDs; this resolver is the human-readable lookup both directions.
+#
+#   F12 = src/matching/engine.ts
+#   C3  = "balances sum to zero"
+#
+# Written once at plan time, referenced thousands of times -> the table itself is
+# the compression. Human-readable: `heimdall resolve C3` prints the full text.
+#
+# Usage:
+#   heimdall-resolve <id>                 print the value for <id> (forward)
+#   heimdall-resolve --reverse <value>    print the id whose value == <value>
+#   heimdall-resolve set <id> <value>     assign <id> -> <value> (plan-time)
+#   heimdall-resolve list                 print the whole table, id<TAB>value
+#   -h, --help                            usage
+#
+# Exit: 0 ok; 1 id/value not found; 2 usage/IO error.
+set -euo pipefail
+
+SELF="$0"
+SOURCE_DIR="$(cd "$(dirname "$0")" && pwd)"
+# shellcheck source=lib/protocol.sh
+. "$SOURCE_DIR/lib/protocol.sh"
+proto_resolve_paths "$SELF"
+proto_require_jq
+proto_ensure_dirs
+
+usage() { sed -n '2,22p' "$SELF" | sed 's/^# \{0,1\}//'; }
+
+[ $# -ge 1 ] || { echo "error: an id, value, or subcommand is required" >&2; usage >&2; exit 2; }
+
+case "$1" in
+  -h|--help) usage; exit 0 ;;
+  set)
+    [ $# -eq 3 ] || { echo "error: set needs <id> <value>" >&2; exit 2; }
+    id="$2"; value="$3"
+    tmp="$(mktemp)"
+    jq --arg id "$id" --arg v "$value" '.symbols[$id] = $v' "$SYMBOLS_FILE" > "$tmp" \
+      || { rm -f "$tmp"; echo "error: failed to write symbol" >&2; exit 2; }
+    mv "$tmp" "$SYMBOLS_FILE"
+    proto_log "resolve" "set" "$id=$value"
+    echo "$id = $value"
+    ;;
+  list)
+    jq -r '.symbols | to_entries[] | "\(.key)\t\(.value)"' "$SYMBOLS_FILE"
+    ;;
+  --reverse)
+    [ $# -eq 2 ] || { echo "error: --reverse needs <value>" >&2; exit 2; }
+    value="$2"
+    id="$(jq -r --arg v "$value" '.symbols | to_entries[] | select(.value==$v) | .key' "$SYMBOLS_FILE" | head -1)"
+    [ -n "$id" ] || { echo "error: no symbol resolves to value: $value" >&2; exit 1; }
+    proto_log "resolve" "reverse" "$value->$id"
+    echo "$id"
+    ;;
+  *)
+    id="$1"
+    value="$(jq -r --arg id "$id" '.symbols[$id] // empty' "$SYMBOLS_FILE")"
+    [ -n "$value" ] || { echo "error: unknown symbol id: $id" >&2; exit 1; }
+    proto_log "resolve" "lookup" "$id"
+    echo "$value"
+    ;;
+esac
