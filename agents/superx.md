@@ -305,7 +305,16 @@ This is the core hybrid planning+execution flow:
 
 #### Phase 3: Plan
 - Run `decompose "<task>" --output json` to get the initial task decomposition
-- Feed the decompose output to the **planner agent** (architect) to create `.planning/PLAN-{phase}.md`
+- **Auto-wire the oracle gate.** Immediately after `decompose`, resolve the detected domain against the canonical oracle registry and wire its oracle as the gate of the final correctness wave — never let the impl agent invent its own success check:
+  ```bash
+  # decompose emits the domain; fall back to task-description signals if absent.
+  # resolve the domain to its canonical external oracle: gate command + gate type.
+  bin/oracle-select <domain>     # prints the gate command + gate type, exit 0 on a registry match
+  ```
+  - The registry lives at `evals/oracles/registry.json`; `bin/oracle-select <domain>` resolves a domain to its `gate_command` and `gate_type` (`differential | trace-diff | verdict | property | example`).
+  - If `bin/oracle-select` matches a domain, that canonical oracle becomes a **mandatory wave gate** on the final correctness wave of the emitted plan. Pass the resolved gate command + gate type to the planner as a required field on that wave's task — the orchestrator wires the external oracle so the impl agent cannot substitute a self-authored check.
+  - If no registry entry matches, the planner falls back to task-specific acceptance criteria — but a stateful or sequence-producing target left without a `differential`/`trace-diff` oracle is flagged for the gate-type enforcement in Phase 4.
+- Feed the decompose output (and the wired oracle, if any) to the **planner agent** (architect) to create `.planning/PLAN-{phase}.md`
 - The plan MUST contain:
   - **Waves**: groups of tasks that can run in parallel (wave 1 has no deps, wave 2 depends on wave 1, etc.)
   - **Tasks per wave**: specific, scoped units of work with clear file boundaries
@@ -322,6 +331,15 @@ Before executing, check the plan:
 - No overlapping file scopes between parallel tasks in the same wave
 - Token budget is realistic for the plan scope
 
+**Oracle-gate enforcement (mandatory — reject the plan if any of these fail):**
+- **Falsifiability.** Any plan whose final correctness wave uses a wired oracle gate MUST ship that gate's golden + mutant fixtures and prove a falsifiability score of `1.0` (golden passes AND every mutant is rejected). Verify with:
+  ```bash
+  bin/falsify <domain> --assert-score 1.0   # exit non-zero if golden fails OR any mutant survives
+  ```
+  A gate with no golden+mutant fixtures, or a falsifiability score < 1.0, **fails plan verification** — a green suite over a non-falsifiable gate is a false-green and is rejected. This is the structural kill for the tautological "test that cannot fail."
+- **Gate-type ranking.** The planner applies, strongest first: `differential` (whole-output vs an independent reference) > `trace-diff` (per-step state vs a truth log) > `verdict` (external pass/fail signal) > `property` (local invariants) > `example` (hand-written cases). For any **stateful or sequence-producing target**, the final correctness wave MUST include a `differential` or `trace-diff` gate. A plan that gates such a target with only `property`/`example` checks **fails plan verification** — local per-element invariants are necessary but never sufficient (they pass the no-local-signal bug class: ordering races and whole-sequence invariants).
+- **Concurrency targets.** Any target whose spec mentions concurrency/async/parallel MUST get a deterministic seeded-interleaving gate (forced variance across seeds), not a fixed-yield / `Promise.all`-over-synchronous dispatch that resolves in arrival order by construction. A plan lacking the seeded-interleaving gate for such a target **fails plan verification**.
+
 At autonomy level 1 (Guided): present plan and wait for approval.
 At autonomy level 2 (Checkpoint): present plan and proceed unless user intervenes.
 At autonomy level 3 (Full Auto): proceed immediately.
@@ -333,6 +351,12 @@ For each wave, in order:
 3. **Wait for wave completion**: all tasks in wave N must finish before wave N+1 starts
 4. **Per-task verification**: after each task completes, run its acceptance criteria immediately
 5. **Failure handling**: if a task fails, retry once with narrower scope. If still failing, pause the pipeline and escalate.
+
+**Oracle independence — spawn the reference in a SEPARATE wave/agent (mandatory).** When a `differential` oracle is wired, the reference half MUST be authored independently of the implementation — by a different agent, in a separate wave, with disjoint context and file scope. A shared author means a shared spec misconception passes undetected in both halves and the diff falsely reports PASS. Enforcement:
+- Spawn the **independent reference** as its OWN agent in a SEPARATE wave from the impl task — never the same agent or prompt that wrote the impl, and never with the impl's spec visible beyond the shared INVARIANTS ledger.
+- Disjoint file scope: the reference lives in `evals/oracles/<domain>/reference/`, the impl in its own dir — enforced by the same-wave-file-disjointness rule.
+- For external-dataset oracles (e.g. gameboy-doctor truth logs), independence is inherent — the dataset is the reference and no reference-authoring agent is needed.
+- The reference must NOT import the implementation; structural no-impl-coupling is part of plan verification (Phase 4).
 
 Agent spawn instructions for each task include:
 - Specific scope and file boundaries
@@ -576,12 +600,12 @@ After the planner creates a plan with acceptance criteria (Phase 3), synthesize 
    - "all tests pass"
    - "lint clean"
    - "build succeeds"
-   - "no TODO/stub/placeholder code in changed files"
+   - "no unfinished, skeleton, or dummy code in changed files"
 5. Add domain-specific criteria from the plan
 
 **Goal condition template:**
 ```
-/goal <plan-specific criteria>, all tests pass, lint clean, build succeeds, no TODO/stub/placeholder in changed files
+/goal <plan-specific criteria>, all tests pass, lint clean, build succeeds, no unfinished or skeleton code in changed files
 ```
 
 **Example:**
