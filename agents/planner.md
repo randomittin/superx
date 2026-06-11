@@ -92,6 +92,33 @@ Assign each task a model tier AND effort level:
 
 If a task fails verification, the orchestrator will retry with the next model tier up (haiku->sonnet->opus). Plan for this by marking the initial tier in each task specification.
 
+## Oracle Gate on the Correctness Wave
+
+The final correctness wave is gated by a canonical *external* oracle, never by a success check the implementation agent invents for itself. When you assign the correctness wave, wire the oracle and make the gate falsifiable. The failure mode this prevents is the **false-green oracle** — a tautological test that passes even when the code is wrong (the canonical example: a `Promise.all`-over-synchronous-`submit` concurrency test that resolves in arrival order by construction and therefore *cannot* fail).
+
+**When assigning the correctness wave:**
+
+1. **Select the oracle from the registry.** Match the target against `domain_signals` in `evals/oracles/registry.json`, then resolve the gate command:
+   ```bash
+   jq -r '.oracles | keys[]' evals/oracles/registry.json   # known domains
+   bin/oracle-select exchange-lob                           # resolved gate command
+   ```
+   The resolved `gate_command` becomes the `Verify:` command of the correctness task. Record the matched domain, its `gate_type`, and the command in the task spec. If no domain matches, wire an independently-authored falsifiable gate and flag that no registry oracle exists for this domain.
+
+2. **Apply the gate-type ranking** (strongest first): `differential > trace-diff > verdict > property > example`. Wire the strongest type the oracle supports. For any **stateful or sequence-producing target**, the correctness wave MUST gate on `differential` or `trace-diff` — `property`/`example` checks may accompany but never replace it, because per-element invariants pass a whole-sequence race.
+
+3. **Make the gate falsifiable.** Before a gate is trusted green it must be proven able to go RED — golden fixture passes AND every injected-defect mutant is rejected (score 1.0). Note this on the task so the verifier confirms it:
+   ```bash
+   bin/falsify exchange-lob --assert-score 1.0
+   ```
+   A tautological gate (passes by construction regardless of correctness) is not falsifiable and must not be assigned.
+
+4. **Keep the reference independent.** For a `differential` gate, place the implementation and the reference matcher in **separate waves / separate agents with disjoint file scope** (`evals/oracles/<domain>/reference/` vs the impl dir). A reference authored by the impl agent shares its spec misconceptions, and the diff says PASS while both are wrong. Impl-author ≠ reference-author.
+
+5. **Force variance for concurrency.** Any target whose spec mentions concurrency / async / parallel must gate on a deterministic seeded variable-latency interleaving harness swept over many seeds, NOT a fixed-yield dispatch.
+
+Record the oracle domain, gate type, gate command, falsifiability assertion, and reference independence as fields on the correctness task. A correctness wave assigned with only `property` gates for a stateful target, a non-falsifiable gate, or an impl-authored reference is rejected at verification.
+
 ## Verification Loop
 
 After creating the plan, self-verify:
@@ -100,6 +127,7 @@ After creating the plan, self-verify:
 2. Every task has runnable acceptance criteria (not prose)
 3. Dependencies form a DAG (no cycles)
 4. Wave assignments valid (no task depends on same-wave task)
+5. The correctness wave wires a registry oracle (or a flagged independently-authored gate), gates on `differential`/`trace-diff` for any stateful target, asserts falsifiability (score 1.0), and keeps the reference independent of the impl. A property-only gate for a stateful target, a non-falsifiable gate, or an impl-authored reference fails this check.
 
 Verification fails? Revise. Max 3 iterations.
 
