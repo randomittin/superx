@@ -16,7 +16,7 @@
         "hooks": [
           {
             "type": "command",
-            "command": "INPUT=$(cat); CMD=$(echo \"$INPUT\" | jq -r '.tool_input.command // empty'); if echo \"$CMD\" | grep -qE '^git\\s+push'; then superx-state check-quality-gates; fi; \"${CLAUDE_PLUGIN_ROOT:-/Users/rj/Downloads/superx}/bin/parallelism-tracker\" check Bash 2>&1 || true"
+            "command": "INPUT=$(cat); CMD=$(echo \"$INPUT\" | jq -r '.tool_input.command // empty'); if echo \"$CMD\" | grep -qE '^git\\s+push'; then superx-state check-quality-gates; PLUGIN=\"${CLAUDE_PLUGIN_ROOT:-/Users/rj/Downloads/superx}\"; FALSIFY=\"$PLUGIN/bin/falsify\"; ORACLES=\"$PLUGIN/evals/oracles\"; if [ -x \"$FALSIFY\" ] && [ -d \"$ORACLES\" ]; then for D in \"$ORACLES\"/*/; do DOM=$(basename \"$D\"); if [ -d \"$D/fixtures/mutants\" ]; then APPLIES=0; if [ -f .planning/detected-stack.json ] && grep -q \"$DOM\" .planning/detected-stack.json 2>/dev/null; then APPLIES=1; fi; if [ -d \"evals/oracles/$DOM\" ]; then APPLIES=1; fi; if [ \"$APPLIES\" = 1 ]; then if ! \"$FALSIFY\" \"$DOM\" --assert-score 1.0 >&2; then printf '{\"error\": \"BLOCKED: oracle gate %s is not falsifiable (score < 1.0). A green test suite over a non-falsifiable gate must not pass push. Harden the gate until bin/falsify reports 1.0.\"}' \"$DOM\"; exit 2; fi; fi; fi; done; fi; fi; \"${CLAUDE_PLUGIN_ROOT:-/Users/rj/Downloads/superx}/bin/parallelism-tracker\" check Bash 2>&1 || true"
           }
         ]
       },
