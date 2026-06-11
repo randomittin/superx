@@ -1,4 +1,10 @@
-current_phase: idle (milestone checkpoint — about to start oracle-gate build)
+current_phase: oracle-gate build COMPLETE (11/11 verified) — idle, ready for next
+
+## Oracle-gate build — DONE 2026-06-11
+5 waves merged to main, 11/11 whole-system ACs PASS (.planning/VERIFY-oracle-gate.md).
+Keystone bin/falsify proven: exchange 5/5 mutants killed, emulator 3/3, false-green guard rejects.
+bin/oracle-select + bin/falsify live; wired into architect/planner/superx/verifier + push-gate hook.
+Next candidates: live benchmark run (needs --model + API spend), flagship impl demos, README wedge rewrite.
 
 # State — 2026-06-11
 
