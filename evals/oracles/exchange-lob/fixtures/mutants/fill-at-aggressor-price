@@ -1,0 +1,21 @@
+{
+  "fixture": "mutant",
+  "mutant": "fill-at-aggressor-price",
+  "domain": "exchange-lob",
+  "defect": "I1 no-cross-trade violated: the trade executes at the AGGRESSOR (taker) limit price instead of the RESTING (maker) price. Classic maker-price/taker-price swap.",
+  "must_turn_red_gate": "exchange-lob differential (and the I1 per-trade price assertion in COVERAGE.md)",
+  "how_the_gate_rejects": "Resting ask is 99; aggressor buys with limit 105. Correct fill price is 99 (resting). The corrupted fixture prices the trade at 105 (aggressor). The differential gate diffs trade.price field-for-field and REJECTS at index 0; the I1 assertion (trade price == resting order price) independently REJECTS.",
+  "orders": [
+    { "kind": "limit", "id": 1, "account": "A", "side": "sell", "price": 99,  "qty": 5 },
+    { "kind": "limit", "id": 2, "account": "B", "side": "buy",  "price": 105, "qty": 5 }
+  ],
+  "correct_trades": [
+    { "takerId": 2, "makerId": 1, "price": 99, "qty": 5 }
+  ],
+  "corrupted_trades": [
+    { "takerId": 2, "makerId": 1, "price": 105, "qty": 5 }
+  ],
+  "first_divergence_index": 0,
+  "diverging_field": "price",
+  "why_per_trade_checks_miss_it": "qty-balance (I2), net-zero (I3) and no-double-fill (C1) ALL hold for the corrupted trade — only a price=RESTING assertion or the whole-output diff catches the maker/taker price swap."
+}

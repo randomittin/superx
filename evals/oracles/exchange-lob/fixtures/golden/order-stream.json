@@ -1,0 +1,42 @@
+{
+  "fixture": "golden",
+  "domain": "exchange-lob",
+  "what": "Minimal CORRECT order stream + the trade sequence a price-time-priority matcher MUST produce. The exchange-lob differential gate replays `orders` through the implementation and the independent reference; both MUST emit exactly `expected_trades` (same order, same fields) and leave exactly `expected_book` resting. If the gate rejects this golden it is over-strict (false-red) and is itself broken.",
+  "invariants_exercised": ["I1", "I2", "I3", "I4", "O1", "O2", "O3", "O4", "D1", "D2", "D3", "C1", "C2"],
+  "orders": [
+    { "kind": "limit",  "id": 1, "account": "A", "side": "sell", "price": 105, "qty": 10 },
+    { "kind": "limit",  "id": 2, "account": "D", "side": "sell", "price": 99,  "qty": 10 },
+    { "kind": "limit",  "id": 3, "account": "C", "side": "buy",  "price": 99,  "qty": 3  },
+    { "kind": "market", "id": 4, "account": "C", "side": "buy",                "qty": 4  },
+    { "kind": "limit",  "id": 5, "account": "B", "side": "buy",  "price": 95,  "qty": 5  },
+    { "kind": "limit",  "id": 6, "account": "D", "side": "buy",  "price": 97,  "qty": 7  },
+    { "kind": "limit",  "id": 7, "account": "D", "side": "buy",  "price": 102, "qty": 5  }
+  ],
+  "expected_trades": [
+    { "takerId": 3, "makerId": 2, "price": 99, "qty": 3 },
+    { "takerId": 4, "makerId": 2, "price": 99, "qty": 4 },
+    { "takerId": 7, "makerId": 2, "price": 99, "qty": 3 }
+  ],
+  "expected_book": {
+    "bids": [
+      { "id": 7, "account": "D", "price": 102, "qty": 2 },
+      { "id": 6, "account": "D", "price": 97,  "qty": 7 },
+      { "id": 5, "account": "B", "price": 95,  "qty": 5 }
+    ],
+    "asks": [
+      { "id": 1, "account": "A", "price": 105, "qty": 10 }
+    ]
+  },
+  "derivation": [
+    "id1 sell105x10 rests (book empty, no buy to cross). asks={105:[id1x10]}.",
+    "id2 sell99x10 rests; best ask now 99(id2) then 105(id1). asks={99:[id2x10],105:[id1x10]}.",
+    "id3 buy99x3: limit 99 >= best ask 99 -> cross. Trade taker3/maker2 @99 (I1 RESTING price) x3. id2 -> 7 remaining.",
+    "id4 market buy x4: hits best ask id2@99. Trade taker4/maker2 @99 x4 (O2 market never rests; fully filled here). id2 -> 3 remaining.",
+    "id5 buy95x5: 95 < best ask 99 -> no cross; rests. bids={95:[id5x5]}.",
+    "id6 buy97x7: 97 < 99 -> no cross; rests. bids={97:[id6x7],95:[id5x5]}.",
+    "id7 buy102x5: limit 102 >= best ask 99 -> cross id2's last 3. Trade taker7/maker2 @99 x3. id2 fully consumed; next ask id1@105. 102 < 105 -> NO further cross (I1). id7 remainder 5-3=2 rests @102. bids={102:[id7x2],97:[id6x7],95:[id5x5]}.",
+    "final: id1 untouched (105x10) is the only ask; three resting bids 102/97/95.",
+    "conservation (O4): qty in = 10+10+3+4+5+7+5 = 44. filled = 2*(3+4+3) = 20 (each trade counts buy+sell). resting = id1(10)+id7(2)+id6(7)+id5(5)=24. discarded = 0 (market id4 fully filled). 44 = 20/2-side... per-side: sell-in 20, buy-in 24; sells filled 10(=3+4+3), sells resting 10(id1); buys filled 10, buys resting 14(2+7+5) -> 20=10+10, 24=10+14. balanced."
+  ],
+  "note": "expected_trades + expected_book are the authoritative whole-output. The differential gate asserts the implementation reproduces this trade SEQUENCE exactly (D2/I4 price-time priority + D3 FIFO), not merely that each trade is locally valid. Per-trade invariants I1/I2/I3/C1 hold for every line here yet are blind to a reordering — that is the C2 lesson the tautological-concurrency mutant guards against."
+}
