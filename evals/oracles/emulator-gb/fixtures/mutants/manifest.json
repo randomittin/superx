@@ -13,7 +13,7 @@
       "must_turn_red_gate": "trace-diff",
       "diverging_line_index": 3,
       "diverging_field": "F",
-      "reject_contract": "at PC:0103 reference F=0x10 (H=1), mutant F=0x00 (H=0) -> trace-diff divergence",
+      "reject_contract": "at PC:0103 reference F=0x20 (H=1, bit 5), mutant F=0x00 (H=0) -> trace-diff divergence",
       "blind_to": ["all register values (A is correct)"]
     },
     {

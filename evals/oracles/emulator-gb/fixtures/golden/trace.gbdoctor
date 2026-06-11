@@ -14,7 +14,7 @@
 # Program traced (loaded at 0x0100), exercising flag-sensitive ops the mutants attack:
 #   0100  3C        INC A         ; A 01->02, Z=0 N=0 H=0, C preserved (=1 from boot F=B0)
 #   0101  3D        DEC A         ; A 02->01, Z=0 N=1 H=0, C preserved (=1)
-#   0102  A7        AND A         ; A&A=01, Z=0 N=0 H=1 C=0  (AND forces H=1,C=0)
+#   0102  A7        AND A         ; A&A=01, Z=0 N=0 H=1 C=0  (AND forces H=1,C=0 -> F=0x20)
 #   0103  18 02     JR  +2        ; signed e=+2; next PC = 0103+2(len)+2 = 0107
 #   0107  00        NOP
 # ----------------------------------------------------------------------------
@@ -22,8 +22,8 @@
 A:01 F:B0 B:00 C:13 D:00 E:D8 H:01 L:4D SP:FFFE PC:0100 PCMEM:3C,3D,A7,18
 A:02 F:10 B:00 C:13 D:00 E:D8 H:01 L:4D SP:FFFE PC:0101 PCMEM:3D,A7,18,02
 A:01 F:50 B:00 C:13 D:00 E:D8 H:01 L:4D SP:FFFE PC:0102 PCMEM:A7,18,02,00
-A:01 F:10 B:00 C:13 D:00 E:D8 H:01 L:4D SP:FFFE PC:0103 PCMEM:18,02,00,00
-A:01 F:10 B:00 C:13 D:00 E:D8 H:01 L:4D SP:FFFE PC:0107 PCMEM:00,00,00,00
+A:01 F:20 B:00 C:13 D:00 E:D8 H:01 L:4D SP:FFFE PC:0103 PCMEM:18,02,00,00
+A:01 F:20 B:00 C:13 D:00 E:D8 H:01 L:4D SP:FFFE PC:0107 PCMEM:00,00,00,00
 # ----------------------------------------------------------------------------
 # Line-by-line flag derivation (the gate diffs each field; these are the truths):
 #  L1 PC=0100 INC A : entry A=01 F=B0(Z1 N0 H1 C1). next line shows the RESULT state.
@@ -31,7 +31,11 @@ A:01 F:10 B:00 C:13 D:00 E:D8 H:01 L:4D SP:FFFE PC:0107 PCMEM:00,00,00,00
 #             C PRESERVED =1 (INVARIANTS: INC r leaves C). F = Z0 N0 H0 C1 = 0x10.
 #  L3 PC=0102 (after DEC A): A=01. Z=0, N=1, H=0 (low nibble 2->1, was not 0 so H=0),
 #             C PRESERVED =1. F = Z0 N1 H0 C1 = 0x50.
-#  L4 PC=0103 (after AND A): A=01&01=01. AND rule: Z=0 N=0 H=1 C=0. F = 0x10.
-#  L5 PC=0107 (after JR +2): JR affects NO flags -> F stays 0x10. PC = 0103 + 2 + (+2) = 0107.
+#  L4 PC=0103 (after AND A): A=01&01=01. AND rule: Z=0 N=0 H=1 C=0.
+#             H is bit 5 = 0x20, C is bit 4 = 0x10 (INVARIANTS F bit map). AND SETS H
+#             and CLEARS C, so the H bit is on and the C bit is off: F = 0x20 (NOT 0x10,
+#             which would be C=1 H=0 — the inverse). Cross-check: the daa case truth
+#             (post ADD A,A, low-nibble carry, no byte carry) is F:20 by the same H=0x20 rule.
+#  L5 PC=0107 (after JR +2): JR affects NO flags -> F stays 0x20. PC = 0103 + 2 + (+2) = 0107.
 # Every F value has low nibble 0 (masked). This is the falsifiability surface the
 # mutants force-h-zero, skip-f-mask, and jr-off-by-one each break in exactly one place.
