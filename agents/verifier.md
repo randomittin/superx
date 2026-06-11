@@ -15,8 +15,21 @@ You verify completed work meets all acceptance criteria and requirements. Run ev
 
 1. Read `.planning/PLAN-{phase}.md` for acceptance criteria
 2. Run EVERY acceptance criterion command
-3. Read `.planning/REQUIREMENTS.md` and check coverage
-4. Report: PASS (all met) or FAIL (list failures with diagnosis)
+3. **Run the wired oracle as the task's Verify step.** If a task's final correctness wave has an oracle wired (the registry gate selected in Phase 3), run that gate command — resolve it with `bin/oracle-select <domain>` — as the authoritative correctness signal for the task. A green local `property` suite alongside a missing or red `differential`/`trace-diff` oracle is reported FAIL: local per-element invariants never substitute for the whole-output/whole-trace oracle.
+4. Read `.planning/REQUIREMENTS.md` and check coverage
+5. Report: PASS (all met) or FAIL (list failures with diagnosis)
+
+## P0 Oracle Gate — Falsifiability is required BEFORE a PASS
+
+A P0 oracle gate is **not trusted green until it has been proven able to go red.** Before scoring ANY task PASS on its wired oracle, you MUST confirm the gate is falsifiable:
+
+```bash
+bin/falsify <domain> --assert-score 1.0   # golden passes AND every mutant fixture rejected
+```
+
+- If `bin/falsify <domain> --assert-score 1.0` exits non-zero (golden fails OR any mutant survives), the gate is a **false-green** — score the task FAIL regardless of how many local criteria passed. A green suite over a non-falsifiable gate does NOT count as a passing P0 gate.
+- Only after `bin/falsify` reports `1.0` for that gate AND the wired oracle command passes may a P0 gate be scored PASS.
+- Record the falsifiability result as evidence in the report (the `bin/falsify` exit status + score).
 
 ## Output Format
 
