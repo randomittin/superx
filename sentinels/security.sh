@@ -64,7 +64,15 @@ secret_scan() {
   if command -v gitleaks >/dev/null 2>&1; then
     SECRET_TOOL="gitleaks"
     local args=(detect --source "$REPO" --no-banner --report-format json --report-path "$tmp")
-    [ -n "$RANGE" ] && args+=(--log-opts "$RANGE")
+    if [ -n "$RANGE" ]; then
+      # Scan a committed range (e.g. what a push would publish).
+      args+=(--log-opts "$RANGE")
+    else
+      # Pre-push default: scan the WORKING TREE (catches secrets about to be
+      # committed/pushed), not just git history. gitleaks v8 needs --no-git for
+      # a filesystem scan; history-only mode misses uncommitted/staged secrets.
+      args+=(--no-git)
+    fi
     # gitleaks exit: 0 = no leaks, 1 = leaks found, >1 = error.
     local rc=0
     gitleaks "${args[@]}" >/dev/null 2>&1 || rc=$?
