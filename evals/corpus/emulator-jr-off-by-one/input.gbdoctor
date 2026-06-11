@@ -16,15 +16,15 @@
 #   flag-only check would MISS it — only the PC/trace diff catches the off-by-one.
 #
 # Same program as golden. The ONLY corrupted line is the post-JR state (L5):
-#   reference: A:01 F:10 ... PC:0107 PCMEM:00,00,00,00   (correct +2+2 target)
-#   mutant:    A:01 F:10 ... PC:0106 PCMEM:02,00,00,00   (off by one)  <-- DEFECT
+#   reference: A:01 F:20 ... PC:0107 PCMEM:00,00,00,00   (correct +2+2 target)
+#   mutant:    A:01 F:20 ... PC:0106 PCMEM:02,00,00,00   (off by one)  <-- DEFECT
 # (0x0106 is the byte AFTER the JR operand; PCMEM there starts with the 0x02 e-byte's
 #  neighbor / stray byte, NOT the 0x00 NOP at 0x0107 — the desync is visible in PCMEM too.)
 # ----------------------------------------------------------------------------
 A:01 F:B0 B:00 C:13 D:00 E:D8 H:01 L:4D SP:FFFE PC:0100 PCMEM:3C,3D,A7,18
 A:02 F:10 B:00 C:13 D:00 E:D8 H:01 L:4D SP:FFFE PC:0101 PCMEM:3D,A7,18,02
 A:01 F:50 B:00 C:13 D:00 E:D8 H:01 L:4D SP:FFFE PC:0102 PCMEM:A7,18,02,00
-A:01 F:10 B:00 C:13 D:00 E:D8 H:01 L:4D SP:FFFE PC:0103 PCMEM:18,02,00,00
-A:01 F:10 B:00 C:13 D:00 E:D8 H:01 L:4D SP:FFFE PC:0106 PCMEM:02,00,00,00
+A:01 F:20 B:00 C:13 D:00 E:D8 H:01 L:4D SP:FFFE PC:0103 PCMEM:18,02,00,00
+A:01 F:20 B:00 C:13 D:00 E:D8 H:01 L:4D SP:FFFE PC:0106 PCMEM:02,00,00,00
 # diverging_line_index: 4 (0-based) — PC: reference 0x0107 vs mutant 0x0106 (+ PCMEM desync)
 # invariant_violated: JR target = PC_after_operand + signed_e. blind_to: all flags (JR sets none), all registers.

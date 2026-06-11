@@ -419,13 +419,27 @@ print_scorecard() {
 HEADER_LINE="| Version | Cases | Caught | Catch-rate |"
 SEP_LINE="| --- | ---: | ---: | ---: |"
 
+DIP_LOG_MARKER="<!-- DIP-LOG: append-only incident record; preserved across runs -->"
+
 update_status_md() {
   local row="| ${SC_VERSION} | ${SC_TOTAL} cases | ${SC_CAUGHT}/${SC_TOTAL} caught | ${SC_RATE_PCT}% |"
 
-  # Collect existing data rows (lines starting with "| v"), excluding this version.
+  # Collect existing catch-rate data rows, excluding this version. A catch-rate row
+  # is a table row whose cells carry "<N> cases ... caught" — we match on " caught "
+  # so dip-log incident rows (date-keyed, no "caught" cell) are NOT hoisted into the
+  # version time-series. The version token may be "vX.Y" or a bare "X.Y".
   local existing=""
   if [ -f "$STATUS_MD" ]; then
-    existing="$(grep -E '^\| v' "$STATUS_MD" 2>/dev/null | grep -vE "^\| ${SC_VERSION} " || true)"
+    existing="$(grep -E '^\| (v?[0-9]).* caught ' "$STATUS_MD" 2>/dev/null | grep -vE "^\| ${SC_VERSION} " || true)"
+  fi
+
+  # Preserve the append-only DIP-LOG section verbatim (everything from the marker
+  # to EOF). The dip-log is a public incident record (a corpus that went RED during
+  # a reference fix, then recovered) and MUST survive every regeneration of this
+  # file — it is the launch-0 falsifiability story, not a transient run artifact.
+  local diplog=""
+  if [ -f "$STATUS_MD" ] && grep -qF "$DIP_LOG_MARKER" "$STATUS_MD" 2>/dev/null; then
+    diplog="$(sed -n "/$(printf '%s' "$DIP_LOG_MARKER" | sed 's/[.[\*^$/]/\\&/g')/,\$p" "$STATUS_MD")"
   fi
 
   {
@@ -440,6 +454,10 @@ update_status_md() {
     echo "$SEP_LINE"
     [ -n "$existing" ] && printf '%s\n' "$existing"
     echo "$row"
+    if [ -n "$diplog" ]; then
+      echo
+      printf '%s\n' "$diplog"
+    fi
   } > "$STATUS_MD"
 }
 
