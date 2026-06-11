@@ -73,3 +73,29 @@ C1 no-double-fill, C2 serial-replay-equivalence.
 
 - `README.md` — this file: what the reference is, why it is independent, how the gate uses it.
 - `spec.md` — the brute-force O(n²) matcher specification derived purely from the ledger.
+- `matcher.mjs` — the runnable reference matcher (plain JS, zero deps, `node`-runnable).
+
+## Provenance (R-3.1 — independent reference matcher build)
+
+- **Build date**: 2026-06-12
+- **Agent context**: clean-context — `INVARIANTS.md` + `spec.md` only.
+- **HAID**: `haid:local/r3-reference`
+- **Files read during this build**: exactly two —
+  `evals/oracles/exchange-lob/INVARIANTS.md` and
+  `evals/oracles/exchange-lob/reference/spec.md`.
+- **Explicitly NOT read**: no engine/impl code, no `differential.md`,
+  `interleave.md`, `gate.sh`, `run.sh`, `fixtures/`, corpus cases, mutation/smoke
+  proofs, or `/tmp` artifacts. The matcher's value is that it shares NO lineage
+  with the things it judges; this provenance records that independence.
+
+`matcher.mjs` is plain JavaScript (`.mjs`) on purpose: it runs under bare `node`
+with zero extra dependencies (no `tsc`/`ts-node` toolchain), which keeps the
+truth source maximally simple to audit. It pulls in nothing from the production
+side — the structural-independence grep over this directory (for any production
+import) stays green by construction.
+
+### Self-test (hand-derived against the ledger)
+
+`node matcher.mjs --selftest` runs an inline 6-order stream whose expected output
+was derived BY HAND from the ledger rules (the full derivation is in the file's
+`SELFTEST` comment block) and asserts byte-equality with the matcher's output.
