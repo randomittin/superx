@@ -76,3 +76,7 @@ Spawned coders auto-isolate into git worktrees; uncommitted files are destroyed 
 ## Corpus calibration — 100% over a static corpus is just a badge
 **Why:** a corpus at 9/9 forever has stopped teaching. Value = cases that FAIL when gates regress + intake of genuinely hard field/community cases.
 **How to apply:** as field-capture starts, a catch-rate dip that gets fixed is the curve working — never an embarrassment to hide. The impressive artifact is a high rate over a GROWING, hardening corpus. Never game the number by keeping the corpus easy.
+
+## R7 — cap spawned-task size; checkpoint commits mid-task
+**Why:** three agents in one session (H-3, R-3.2, wave-2b) exhausted their budget (~140-165k tokens) on multi-part tasks and died BEFORE committing/reporting — work survived only because worktrees were inspected by hand before cleanup.
+**How to apply:** a spawned task covers at most ~3 remediation-items or 2 domains; anything larger is split into sequenced spawns. Agents commit a checkpoint after each completed sub-item, not only at the end. The spawn framework's per-spawn token budget + partial-report flag exists for exactly this — use it once wired.
