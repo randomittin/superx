@@ -108,8 +108,14 @@ run_check_file() {
 }
 
 # Criteria first (acceptance), then invariants — both against the ORIGINAL refs.
+# errexit DISABLED here: a failing criterion/invariant command (its non-zero exit
+# IS the signal recorded into FAIL_ID), and the `[ -n ... ] && run_check_file`
+# short-circuit when a path is empty, must NOT abort the script before the report
+# is written. The verdict is carried in FAIL_ID/checks_*, never in exit codes.
+set +e
 [ -n "$CRITERIA" ]   && run_check_file "$CRITERIA" "criterion"
 [ -n "$INVARIANTS" ] && run_check_file "$INVARIANTS" "invariant"
+set -e
 
 if [ "$checks_run" -eq 0 ]; then
   metrics="$(jq -nc '{checks_run:0,reason:"files-present-but-no-check-lines"}')"

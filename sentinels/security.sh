@@ -146,8 +146,14 @@ dep_audit() {
   rm -f "$tmp"
 }
 
+# errexit DISABLED around both arms. The scanners/auditors and their parsing
+# pipelines (gitleaks rc=1 on a hit, `grep -c` returning 1 on zero matches, jq
+# probes) must NOT abort the script before report.json is written — each arm's
+# outcome is captured in its *_STATUS globals, never in a raw command exit code.
+set +e
 secret_scan
 dep_audit
+set -e
 
 # Worst-arm aggregation: fail dominates; a real pass beats all-skipped.
 overall="skipped"
