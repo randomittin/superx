@@ -34,13 +34,19 @@
 #   cannot fail by design (the raw-arm `Promise.all`-over-synchronous-`submit`
 #   test). The manifest marks these `is_false_green_regression_guard: true`.
 #   When such a construction is used AS the gate, a real defect SURVIVES — the
-#   gate stays green when it must go red. falsify detects this and emits the
-#   literal line `REJECTED: mutant survived`, exiting nonzero. For scoring, the
-#   guard is "killed" by being correctly REJECTED-as-non-falsifiable: the
-#   build-blocking rejection IS the correct handling, so it contributes to a 1.0
-#   score exactly as a defect-mutant killed by the diff does. This reconciles the
-#   two acceptance contracts: `--assert-score 1.0` passes (all mutants correctly
-#   handled) AND `--mutant tautological-concurrency` prints the exact reject line.
+#   gate stays green when it must go red. THE GATE ITSELF (run.sh) must detect
+#   the tautological construction and emit a `fail` report; falsify is a pure
+#   orchestrator and NEVER short-circuits a guard. Guards are GATE-INVOKED exactly
+#   like defect mutants: falsify runs `run.sh --input <guard-fixture>` and reads
+#   report.json.status. status=="fail" => the gate correctly rejected the non-
+#   falsifiable construction => the guard is KILLED, and falsify emits the literal
+#   line `REJECTED: mutant survived` (the build-blocking reject contract). The
+#   manifest flag only selects that contract WORDING — it does NOT decide the
+#   verdict; run.sh does. If run.sh ever returns status=="pass" for a guard, the
+#   gate failed to detect the tautology -> the guard SURVIVED -> score < 1.0,
+#   nonzero exit. This reconciles the two acceptance contracts: `--assert-score
+#   1.0` passes only when the gate actually detected every mutant (incl. the
+#   guard) AND `--mutant tautological-concurrency` prints the exact reject line.
 #
 # Usage:
 #   falsify <domain>                       run golden + all mutants, report score
@@ -190,36 +196,43 @@ kill_mutant() {
   local fixture="$MUTANTS_DIR/$file"
   [ -f "$fixture" ] || { echo "  mutant fixture missing: $fixture" >&2; return 1; }
 
-  if [ "$is_guard" = "true" ]; then
-    # FALSE-GREEN REGRESSION GUARD: a tautological gate construction (cannot fail
-    # by design). Used AS the gate it lets a real defect SURVIVE -> the gate is
-    # non-falsifiable. falsify flags exactly that. The rejection IS the correct
-    # handling, so this counts as KILLED for scoring. (run.sh likewise rejects
-    # the construction; falsify owns the build-blocking REJECTED line.)
-    echo "  mutant '$name' is a false-green regression guard (tautological gate construction)"
-    echo "  gate stayed GREEN on an injected defect -> non-falsifiable gate"
-    echo "  $GUARD_REJECT_LINE"
-    return 0
-  fi
-
-  # Real defect mutant: feed the mutant fixture to run.sh and read the typed
-  # status. run.sh performs the differential and classifies the fixture itself.
+  # GATE-INVOKED for EVERY mutant, defect-input or false-green guard alike. There
+  # is NO short-circuit: falsify feeds the fixture to run.sh and reads the typed
+  # status. run.sh is the single source of diff-truth — for a guard it must detect
+  # the non-falsifiable construction itself and emit a `fail` report. The manifest
+  # `is_guard` flag selects only the OUTPUT WORDING (the build-blocking reject
+  # contract line vs the defect-kill pinpoint); it never decides the verdict.
   local report status
   report="$(run_gate "$fixture")"
   status="$(report_status "$report")"
 
   if [ "$status" = "fail" ]; then
-    # Gate went RED on the injected defect -> mutant KILLED. Report the kill from
-    # the structured first_divergence field (NOT scraped stdout).
-    echo "  mutant '$name' KILLED: gate went RED (report.json status=fail)"
-    echo "    first_divergence: $(report_first_divergence "$report")"
+    # Gate went RED on this mutant -> KILLED. The gate (run.sh) made this call.
+    if [ "$is_guard" = "true" ]; then
+      # False-green regression guard: the gate correctly detected the tautological
+      # construction and rejected it as non-falsifiable. The build-blocking reject
+      # contract line IS the kill for a guard.
+      echo "  mutant '$name' is a false-green regression guard (tautological gate construction)"
+      echo "  gate detected the non-falsifiable construction (report.json status=fail) and rejected it"
+      echo "    first_divergence: $(report_first_divergence "$report")"
+      echo "  $GUARD_REJECT_LINE"
+    else
+      # Real defect mutant: report the kill from the structured first_divergence
+      # field (NOT scraped stdout).
+      echo "  mutant '$name' KILLED: gate went RED (report.json status=fail)"
+      echo "    first_divergence: $(report_first_divergence "$report")"
+    fi
     rm -f "$report"
     return 0
   fi
 
   if [ "$status" = "pass" ]; then
-    # Gate stayed GREEN on the injected defect -> mutant SURVIVED -> false-green.
+    # Gate stayed GREEN on this mutant -> SURVIVED -> false-green. For a guard this
+    # means run.sh failed to detect the tautological construction.
     rm -f "$report"
+    if [ "$is_guard" = "true" ]; then
+      echo "  mutant '$name' SURVIVED: gate did NOT detect the tautological construction (report.json status=pass) — the guard-detection is dead"
+    fi
     echo "  $GUARD_REJECT_LINE"
     return 1
   fi
@@ -232,6 +245,13 @@ kill_mutant() {
 
 # All mutant names from the manifest, in declaration order.
 all_mutants() { jq -r '.mutants[].name' "$MANIFEST"; }
+
+# Count of false-green regression guards declared in the manifest. Guards are
+# gate-invoked exactly like defect mutants; this is only for the score-line
+# annotation that records they were NOT short-circuited.
+guard_count() {
+  jq -r '[.mutants[] | select(.is_false_green_regression_guard == true)] | length' "$MANIFEST"
+}
 
 # ═══════════════════════════════════════════════════════════════════════════
 #  Modes
@@ -294,7 +314,14 @@ fi
 
 # Score = killed / total, conditioned on golden passing.
 score="$(awk -v k="$killed" -v t="$total" 'BEGIN { printf "%.4f", k / t }')"
-echo "SCORE: $killed/$total = $score (golden passing)"
+# Annotate guards: they were gate-invoked (run.sh decided the verdict), not
+# short-circuited by a manifest flag.
+guards="$(guard_count)"
+if [ "$guards" -gt 0 ]; then
+  echo "SCORE: $killed/$total = $score (golden passing) (incl. $guards guard, gate-invoked)"
+else
+  echo "SCORE: $killed/$total = $score (golden passing)"
+fi
 if [ "${#survived_names[@]}" -gt 0 ]; then
   echo "SURVIVED: ${survived_names[*]}"
 fi
