@@ -1,0 +1,25 @@
+# MUTANT: daa  (domain: emulator-gb)
+# ============================================================================
+# DEFECT (one): DAA BCD mis-adjust — the decimal adjust adds +0x05 instead of
+# the correct +0x06 to 0x18 (H=1 from the preceding ADD A,A). The correct DAA
+# result is 0x1E; the mutant emits 0x1D. A single wrong arithmetic constant on
+# one instruction, every other field correct.
+#
+# must_turn_red_gate: emulator-gb trace-diff (per-instruction A field)
+# how_the_gate_rejects: the trace-diff compares A line-for-line against the
+#   truth. At the line AFTER DAA the truth A=0x1E, this mutant emits A=0x1D ->
+#   divergence at instruction 5 -> REJECT. Flags and PC are correct, so only the
+#   A-register diff catches the BCD mis-adjust.
+#
+# Same program as truth.gbdoctor. The ONLY corrupted line is the post-DAA state:
+#   truth:  A:1E F:00 ... PC:0105   (DAA +0x06 -> 0x1E)
+#   mutant: A:1D F:00 ... PC:0105   (DAA +0x05 -> 0x1D)  <-- INJECTED DEFECT
+# ----------------------------------------------------------------------------
+A:01 F:B0 B:00 C:13 D:00 E:D8 H:01 L:4D SP:FFFE PC:0100 PCMEM:C6,0A,3C,87
+A:0B F:00 B:00 C:13 D:00 E:D8 H:01 L:4D SP:FFFE PC:0102 PCMEM:3C,87,27,18
+A:0C F:00 B:00 C:13 D:00 E:D8 H:01 L:4D SP:FFFE PC:0103 PCMEM:87,27,18,02
+A:18 F:20 B:00 C:13 D:00 E:D8 H:01 L:4D SP:FFFE PC:0104 PCMEM:27,18,02,00
+A:1D F:00 B:00 C:13 D:00 E:D8 H:01 L:4D SP:FFFE PC:0105 PCMEM:18,02,00,00
+A:1D F:00 B:00 C:13 D:00 E:D8 H:01 L:4D SP:FFFE PC:0109 PCMEM:00,00,00,00
+# diverging_line_index: 4 (0-based) — PC:0105, field A: truth 0x1E vs mutant 0x1D
+# invariant_violated: DAA BCD adjust (+0x06 on H=1). blind_to: all flags + PC + other registers.

@@ -1,0 +1,25 @@
+# MUTANT: force-h-zero  (domain: emulator-gb)
+# ============================================================================
+# DEFECT (one): the half-carry flag H is computed as 0 for an AND instruction
+# instead of the mandatory H=1. INVARIANTS: "AND: r=a&b; Z N=0 H=1 C=0".
+# A great many engines get this wrong by treating AND/OR/XOR uniformly. Here AND
+# is forced H=0 (the OR/XOR rule) — a single flipped flag bit.
+#
+# must_turn_red_gate: emulator-gb trace-diff (per-instruction F field)
+# how_the_gate_rejects: the trace-diff compares F line-for-line against the
+#   golden/reference. At the line AFTER `AND A` the reference F=0x10 (H=1), this
+#   mutant emits F=0x00 (H=0). The diff pinpoints the divergence to that exact PC
+#   and REJECTS. A gate that only checked A-register values would MISS it (A is
+#   correct); only the flag-field diff catches the wrong H.
+#
+# Same program as golden. The ONLY corrupted line is the post-AND state (L4):
+#   reference: A:01 F:10 ... PC:0103   (AND -> H=1, F=0x10)
+#   mutant:    A:01 F:00 ... PC:0103   (AND -> H=0, F=0x00)  <-- INJECTED DEFECT
+# ----------------------------------------------------------------------------
+A:01 F:B0 B:00 C:13 D:00 E:D8 H:01 L:4D SP:FFFE PC:0100 PCMEM:3C,3D,A7,18
+A:02 F:10 B:00 C:13 D:00 E:D8 H:01 L:4D SP:FFFE PC:0101 PCMEM:3D,A7,18,02
+A:01 F:50 B:00 C:13 D:00 E:D8 H:01 L:4D SP:FFFE PC:0102 PCMEM:A7,18,02,00
+A:01 F:00 B:00 C:13 D:00 E:D8 H:01 L:4D SP:FFFE PC:0103 PCMEM:18,02,00,00
+A:01 F:00 B:00 C:13 D:00 E:D8 H:01 L:4D SP:FFFE PC:0107 PCMEM:00,00,00,00
+# diverging_line_index: 3 (0-based) — PC:0103, field F: reference 0x10 vs mutant 0x00
+# invariant_violated: AND flag rule (H must be 1). blind_to: A/B/C/D/E/H/L/SP/PC all correct.

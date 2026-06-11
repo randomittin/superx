@@ -1,0 +1,6 @@
+{
+  "status": "fail",
+  "first_divergence": "instruction 4: expected A:01 F:10 B:00 C:13 D:00 E:D8 H:01 L:4D SP:FFFE PC:0103 PCMEM:18,02,00,00 actual A:01 F:00 B:00 C:13 D:00 E:D8 H:01 L:4D SP:FFFE PC:0103 PCMEM:18,02,00,00",
+  "first_divergence_summary": "instruction 4: F:10 (H=1) vs F:00 (H=0); A/PC identical",
+  "gate": "emulator-gb"
+}

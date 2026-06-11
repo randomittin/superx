@@ -1,0 +1,11 @@
+{
+  "id": "exchange-lifo-tiebreak",
+  "source": "mutation",
+  "gates_under_test": ["exchange-lob"],
+  "difficulty": "hard",
+  "added_in_version": "0.1",
+  "seed": "lifo-tiebreak",
+  "repro": { "input": "input.json", "expected": "expected.json" },
+  "defect": "D3 FIFO-tiebreak violated: equal-price makers filled most-recent-first (LIFO id2) instead of earliest-first (FIFO id1). Maker-ordering flip, distinct from queue-jump's taker-ordering flip.",
+  "invariants": ["D3", "I4"]
+}

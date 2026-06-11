@@ -1,0 +1,6 @@
+{
+  "status": "fail",
+  "first_divergence": "instruction 5: expected A:01 F:10 B:00 C:13 D:00 E:D8 H:01 L:4D SP:FFFE PC:0107 PCMEM:00,00,00,00 actual A:01 F:10 B:00 C:13 D:00 E:D8 H:01 L:4D SP:FFFE PC:0106 PCMEM:02,00,00,00",
+  "first_divergence_summary": "instruction 5: PC:0107 vs PC:0106 (control-flow drift, registers sane)",
+  "gate": "emulator-gb"
+}

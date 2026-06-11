@@ -1,0 +1,11 @@
+{
+  "id": "exchange-crossed-trade",
+  "source": "mutation",
+  "gates_under_test": ["exchange-lob"],
+  "difficulty": "moderate",
+  "added_in_version": "0.1",
+  "seed": "fill-at-aggressor-price",
+  "repro": { "input": "input.json", "expected": "expected.json" },
+  "defect": "I1 no-cross violated: trade executes at aggressor (taker) limit price 105 instead of resting (maker) price 99. Maker/taker price swap.",
+  "invariants": ["I1"]
+}

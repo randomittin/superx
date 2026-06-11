@@ -1,0 +1,25 @@
+# MUTANT: skip-f-mask  (domain: emulator-gb)
+# ============================================================================
+# DEFECT (one): the F register's low nibble is NOT masked to 0. INVARIANTS:
+# "Z80 leftover bits 0-3 do NOT exist on DMG. Mask F &= 0xF0 after every write."
+# An engine that carries Z80 leftover low bits leaves garbage in F[0:3]. Here a
+# write that should land F=0x10 instead leaves F=0x1F (low nibble unmasked).
+#
+# must_turn_red_gate: emulator-gb trace-diff (per-instruction F field)
+# how_the_gate_rejects: gameboy-doctor truth ALWAYS has F low nibble 0. The
+#   trace-diff compares F exactly; reference F=0x10, mutant F=0x1F -> divergence
+#   at that PC -> REJECT. This bug is invisible to any check that masks before
+#   comparing or that ignores low bits; the line-for-line trace-diff against
+#   truth (which is always masked) is what forces it red.
+#
+# Same program as golden. The ONLY corrupted line is the post-INC state (L2):
+#   reference: A:02 F:10 ... PC:0101   (F low nibble masked to 0)
+#   mutant:    A:02 F:1F ... PC:0101   (low nibble 0xF leaked)  <-- INJECTED DEFECT
+# ----------------------------------------------------------------------------
+A:01 F:B0 B:00 C:13 D:00 E:D8 H:01 L:4D SP:FFFE PC:0100 PCMEM:3C,3D,A7,18
+A:02 F:1F B:00 C:13 D:00 E:D8 H:01 L:4D SP:FFFE PC:0101 PCMEM:3D,A7,18,02
+A:01 F:50 B:00 C:13 D:00 E:D8 H:01 L:4D SP:FFFE PC:0102 PCMEM:A7,18,02,00
+A:01 F:10 B:00 C:13 D:00 E:D8 H:01 L:4D SP:FFFE PC:0103 PCMEM:18,02,00,00
+A:01 F:10 B:00 C:13 D:00 E:D8 H:01 L:4D SP:FFFE PC:0107 PCMEM:00,00,00,00
+# diverging_line_index: 1 (0-based) — PC:0101, field F: reference 0x10 vs mutant 0x1F
+# invariant_violated: F &= 0xF0 mask. blind_to: every register value + the high nibble of F.

@@ -1,0 +1,11 @@
+{
+  "id": "emulator-daa",
+  "source": "mutation",
+  "gates_under_test": ["emulator-gb"],
+  "difficulty": "hard",
+  "added_in_version": "0.1",
+  "seed": "daa",
+  "repro": { "input": "input.gbdoctor", "expected": "expected.json", "truth": "truth.gbdoctor" },
+  "defect": "DAA BCD mis-adjust: adds +0x05 instead of +0x06 to 0x18 with H=1, landing A:1D instead of A:1E at PC:0105. Self-contained — ships its own truth trace (ADD/INC/ADD/DAA/JR program, distinct from the resident golden).",
+  "invariants": ["DAA BCD adjust (H=1 -> +0x06)"]
+}

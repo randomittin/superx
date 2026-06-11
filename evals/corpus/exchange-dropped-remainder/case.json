@@ -1,0 +1,11 @@
+{
+  "id": "exchange-dropped-remainder",
+  "source": "mutation",
+  "gates_under_test": ["exchange-lob"],
+  "difficulty": "moderate",
+  "added_in_version": "0.1",
+  "seed": "drop-resting-remainder",
+  "repro": { "input": "input.json", "expected": "expected.json" },
+  "defect": "O1/O4 violated: a partially-filled LIMIT order's unmatched remainder (id1 x6) is DROPPED instead of resting on the book. Defect lives in the post-stream book state, not in any trade.",
+  "invariants": ["O1", "O4"]
+}

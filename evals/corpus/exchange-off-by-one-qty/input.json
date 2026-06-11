@@ -1,0 +1,22 @@
+{
+  "fixture": "mutant",
+  "mutant": "off-by-one-qty",
+  "domain": "exchange-lob",
+  "defect": "Off-by-one fill quantity: a single full fill of qty 5 is corrupted to qty 4. The aggressor's remaining 1 unit then re-matches the same resting maker, so the bugged sequence is LENGTH 2 where the correct sequence is LENGTH 1. First-divergence reporting points at the root corruption (the shaved qty at index 0), not the spurious cascade fill it spawns.",
+  "must_turn_red_gate": "exchange-lob differential (whole-output sequence diff, qty field + length)",
+  "how_the_gate_rejects": "Resting ask id1 sells 99 x5; aggressor id2 buys 99 x5 -> one full fill taker2/maker1 @99 x5. The corrupted output shaves that fill to qty 4, leaving 1 aggressor unit that re-matches id1's remaining 1 -> a spurious second fill. The differential gate diffs the fill SEQUENCE tuple-by-tuple and pins the FIRST divergence at index 0 on the qty field (expected 5, actual 4), and additionally surfaces the length divergence (reference len 1, actual len 2).",
+  "orders": [
+    { "kind": "limit", "id": 1, "account": "A", "side": "sell", "price": 99, "qty": 5 },
+    { "kind": "limit", "id": 2, "account": "B", "side": "buy",  "price": 99, "qty": 5 }
+  ],
+  "correct_trades": [
+    { "takerId": 2, "makerId": 1, "price": 99, "qty": 5 }
+  ],
+  "corrupted_trades": [
+    { "takerId": 2, "makerId": 1, "price": 99, "qty": 4 },
+    { "takerId": 2, "makerId": 1, "price": 99, "qty": 1 }
+  ],
+  "first_divergence_index": 0,
+  "diverging_field": "qty",
+  "why_per_trade_checks_miss_it": "Each corrupted trade is individually price-valid (99 = resting), net-zero, and never over-fills the resting order across the pair (4+1=5). Only the whole-output diff against the correct single-fill reference catches the shaved qty at index 0 and the resulting length divergence (1 vs 2)."
+}

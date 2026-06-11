@@ -1,0 +1,23 @@
+{
+  "fixture": "mutant",
+  "mutant": "queue-jump",
+  "domain": "exchange-lob",
+  "defect": "Price-time priority (I4/D3) violated: a later-arriving order at the same price level jumps ahead of an earlier resting order. This is the static analogue of the C2 concurrency race (SPIKE-FINDINGS trade-index-0: takerId=7 jumped ahead of takerId=3).",
+  "must_turn_red_gate": "exchange-lob differential (whole-output sequence diff)",
+  "how_the_gate_rejects": "The differential gate replays `orders` through the correct matcher and diffs the real output against this fixture's `corrupted_trades`. The corrupted sequence reorders the first two fills so a same-price later order matches first; the diff reports the first divergence index and REJECTS. If a gate accepts this fixture it is only checking per-trade validity (each corrupted trade is individually legal) and is a false-green.",
+  "orders": [
+    { "kind": "limit", "id": 1, "account": "A", "side": "sell", "price": 99, "qty": 10 },
+    { "kind": "limit", "id": 2, "account": "B", "side": "buy",  "price": 99, "qty": 3  },
+    { "kind": "limit", "id": 3, "account": "C", "side": "buy",  "price": 99, "qty": 4  }
+  ],
+  "correct_trades": [
+    { "takerId": 2, "makerId": 1, "price": 99, "qty": 3 },
+    { "takerId": 3, "makerId": 1, "price": 99, "qty": 4 }
+  ],
+  "corrupted_trades": [
+    { "takerId": 3, "makerId": 1, "price": 99, "qty": 4 },
+    { "takerId": 2, "makerId": 1, "price": 99, "qty": 3 }
+  ],
+  "first_divergence_index": 0,
+  "why_per_trade_checks_miss_it": "Both corrupted trades satisfy I1 (price 99 = resting price), I2 (buyQty==sellQty), I3 (net-zero), C1 (no over-fill). Only whole-sequence ordering (taker 2 arrived before taker 3, FIFO at same price) reveals the defect."
+}

@@ -1,0 +1,11 @@
+{
+  "id": "exchange-off-by-one-qty",
+  "source": "mutation",
+  "gates_under_test": ["exchange-lob"],
+  "difficulty": "hard",
+  "added_in_version": "0.1",
+  "seed": "off-by-one-qty",
+  "repro": { "input": "input.json", "expected": "expected.json" },
+  "defect": "Fill quantity off by one: the fill is shaved 5->4, leaving the aggressor with 1 unit that re-matches, so the corrupted sequence is length 2 where the reference is length 1.",
+  "invariants": ["qty"]
+}
