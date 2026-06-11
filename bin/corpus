@@ -199,19 +199,29 @@ case_truth() {
 GATE_TOTAL_FILE=""
 GATE_CATCH_FILE=""
 
+# Tally records are "gate<TAB>count". The KEY is the gate id, which is arbitrary
+# data — it can contain regex metacharacters (`.`, `+`, `[`, `^`, …). Matching it
+# with `grep -E "^${gate}\t"` (R-12) would treat those as a pattern, so a gate id
+# like `a.b` would also match `axb`, mis-tallying. We match the exact first field
+# as a FIXED STRING: `grep -F "${gate}<TAB>"` finds candidate lines without regex
+# interpretation, then awk confirms field 1 equals the gate id byte-for-byte.
+TAB="$(printf '\t')"
+
 gate_tally_add() {  # file gate delta
   local file="$1" gate="$2" delta="$3" cur
-  cur="$(grep -E "^${gate}	" "$file" 2>/dev/null | head -1 | cut -f2 || true)"
+  cur="$(grep -F "${gate}${TAB}" "$file" 2>/dev/null \
+         | awk -F'\t' -v g="$gate" '$1==g{print $2; exit}' || true)"
   [ -z "$cur" ] && cur=0
   cur=$(( cur + delta ))
-  grep -vE "^${gate}	" "$file" 2>/dev/null > "$file.tmp" || true
+  awk -F'\t' -v g="$gate" '$1!=g' "$file" 2>/dev/null > "$file.tmp" || true
   printf '%s\t%s\n' "$gate" "$cur" >> "$file.tmp"
   mv "$file.tmp" "$file"
 }
 
 gate_tally_get() {  # file gate
   local file="$1" gate="$2" v
-  v="$(grep -E "^${gate}	" "$file" 2>/dev/null | head -1 | cut -f2 || true)"
+  v="$(grep -F "${gate}${TAB}" "$file" 2>/dev/null \
+       | awk -F'\t' -v g="$gate" '$1==g{print $2; exit}' || true)"
   echo "${v:-0}"
 }
 
@@ -263,6 +273,18 @@ score_case() {
   exp_status="$(printf '%s' "$exp" | cut -f1)"
   exp_div="$(printf '%s' "$exp" | cut -f2-)"
 
+  # Case source (SCHEMA: mutation|field|user), case.json wins, INDEX fallback.
+  # A `mutation` case is a KNOWN injected defect: it MUST pin its expected
+  # first_divergence, else the case is unfalsifiable (R-10 — an unpinned mutation
+  # let ANY `fail` count as a CATCH, so a gate firing on the WRONG divergence
+  # still scored). `field`/`user` candidates may stay unpinned until human
+  # approval, so an empty pin is tolerated only for those sources.
+  local source
+  source="$(jq -r '.source // empty' "$case_dir/case.json" 2>/dev/null)"
+  if [ -z "$source" ]; then
+    source="$(jq -r --arg id "$cid" '.cases[] | select(.id==$id) | .source // empty' "$INDEX" 2>/dev/null)"
+  fi
+
   local all_caught=1 detail=""
   local gate run_sh report status div gate_caught
   while IFS= read -r gate; do
@@ -286,7 +308,12 @@ score_case() {
           # byte-identical pinpoint. Both $div and $exp_div are canonical
           # jq -cS JSON of the structured first_divergence object, so this is a
           # key-order-independent byte compare. No substring/paraphrase tolerance.
-          if [ -z "$exp_div" ] || [ "$div" = "$exp_div" ]; then
+          if [ -z "$exp_div" ] && [ "$source" = "mutation" ]; then
+            # R-10: a mutation case with no pinned first_divergence is
+            # unfalsifiable — we cannot confirm the gate caught the RIGHT defect.
+            detail="${detail}[$gate: MISS unpinned mutation case (mutation cases must pin first_divergence)] "
+            all_caught=0
+          elif [ -z "$exp_div" ] || [ "$div" = "$exp_div" ]; then
             gate_caught=1
             detail="${detail}[$gate: CATCH fail @ '${div:-<unpinned>}'] "
           else

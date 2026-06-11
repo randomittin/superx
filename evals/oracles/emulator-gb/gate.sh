@@ -114,16 +114,23 @@ trace_diff() {
 }
 
 # --- Secondary oracle: blargg serial verdict (FF01/FF02 capture) ------------------------
+# The verdict is the LAST non-empty token of the serial stream: a blargg ROM
+# prints its title then terminates with `Passed` or `Failed #n`. A stream that
+# merely CONTAINS "Passed" earlier (e.g. a sub-test line) but terminates in
+# "Failed" is a FAIL — so we (1) check Failed before Passed and (2) classify the
+# trailing verdict token, never a substring buried mid-stream. (R-11: greping
+# Passed-before-Failed false-greened any stream carrying both strings.)
 serial_verdict() {
-  local rom_name="$1" rom_path="$2" out
+  local rom_name="$1" rom_path="$2" out tail
   out="$(GB_ROM="$rom_path" bash -c "$SERIAL_CMD" || true)"
-  if printf '%s' "$out" | grep -q 'Passed'; then
-    printf 'SERIAL %s: PASS\n' "$rom_name"; return 0
-  fi
-  if printf '%s' "$out" | grep -qi 'Failed'; then
-    printf 'SERIAL %s: FAIL (%s)\n' "$rom_name" \
-      "$(printf '%s' "$out" | grep -i 'Failed' | head -1 | tr -d '\r')"
+  # Last non-empty, CR-stripped line — the terminating verdict token.
+  tail="$(printf '%s' "$out" | tr -d '\r' | grep -v '^[[:space:]]*$' | tail -1)"
+  if printf '%s' "$tail" | grep -qi 'Failed'; then
+    printf 'SERIAL %s: FAIL (%s)\n' "$rom_name" "$tail"
     return 1
+  fi
+  if printf '%s' "$tail" | grep -q 'Passed'; then
+    printf 'SERIAL %s: PASS\n' "$rom_name"; return 0
   fi
   printf 'SERIAL %s: TIMEOUT (no Passed/Failed verdict captured)\n' "$rom_name"
   return 1

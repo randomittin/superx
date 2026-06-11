@@ -218,8 +218,6 @@ if ! jq -e . "$INPUT" >/dev/null 2>&1; then
   exit 2
 fi
 
-KIND="$(jq -r '.fixture // "live"' "$INPUT")"
-
 # ── Golden: subject == reference (expected_trades + expected_book). MUST pass.
 if jq -e 'has("expected_trades")' "$INPUT" >/dev/null 2>&1; then
   trades="$(jq '.expected_trades' "$INPUT")"
