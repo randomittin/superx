@@ -110,6 +110,44 @@ ref_len="${#ref_lines[@]}"
 subj_len="${#subj_lines[@]}"
 max=$(( ref_len > subj_len ? ref_len : subj_len ))
 
+# ── R-6: empty stream is UNGRADABLE — exit 2 with status:error, never pass ───
+# An all-empty diff (max=0) previously reported `pass` at 0 instructions: a false-
+# green (a check over nothing proves nothing). Require BOTH the reference (truth)
+# and the subject (input) to carry at least one instruction line; otherwise the
+# trace is ungradable and we emit status:"error" and exit 2 (IO error — NOT pass,
+# NOT fail). Consumers (bin/falsify, bin/corpus) treat status-error / exit-2 as an
+# ERROR, never a catch.
+if [ "$ref_len" -lt 1 ] || [ "$subj_len" -lt 1 ]; then
+  HAID="${HEIMDALL_HAID:-haid:local}"
+  WAVE="${HEIMDALL_WAVE:-}"
+  TS="$(date -u +%FT%TZ)"
+  mkdir -p "$(dirname "$REPORT")"
+  tmp_report="$(mktemp)"
+  jq -n \
+    --arg gate_id "$GATE_ID" \
+    --arg file "$GATE_ID" \
+    --arg step "empty trace stream" \
+    --arg expected "ref_len>=1 and subj_len>=1" \
+    --arg actual "ref_len=$ref_len subj_len=$subj_len" \
+    --argjson truth_instructions "$ref_len" \
+    --argjson subject_instructions "$subj_len" \
+    --arg fix_hint "empty stream is ungradable: a trace diff over zero instructions proves nothing (false-green). Provide a non-empty --input trace and a non-empty --truth log." \
+    --arg haid "$HAID" \
+    --arg wave "$WAVE" \
+    --arg ts "$TS" \
+    '{gate_id:$gate_id, status:"error",
+      first_divergence:{file:$file, step:$step, expected:$expected, actual:$actual},
+      metrics:{instructions_compared:0,
+               truth_instructions:$truth_instructions,
+               subject_instructions:$subject_instructions,
+               divergence_index:0},
+      fix_hint:$fix_hint, haid:$haid,
+      wave:(if $wave=="" then null else $wave end), ts:$ts}' >"$tmp_report"
+  mv "$tmp_report" "$REPORT"
+  printf 'emulator-gb: error (empty stream, ref_len=%d subj_len=%d) -> %s\n' "$ref_len" "$subj_len" "$REPORT" >&2
+  exit 2
+fi
+
 # ── Per-instruction lockstep diff: report FIRST divergence only ──────────────
 # The first divergence is a STRUCTURED object (spec H-1): step names the diverging
 # instruction; expected/actual carry the full gameboy-doctor lines (truth vs mine).

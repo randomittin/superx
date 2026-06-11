@@ -1,0 +1,71 @@
+# GOLDEN trace fixture B — emulator-gb (DMG LR35902) — INDEPENDENT second golden.
+# ============================================================================
+# PURPOSE (remediation R-2): the falsify emulator golden check used to diff the
+# shipped golden (trace.gbdoctor) against ITSELF (no explicit --truth, the run.sh
+# default IS the input) — an X-vs-X comparison that can never go red, so "the gate
+# is not over-strict" was never actually demonstrated. This file is a SECOND,
+# INDEPENDENT golden: a DIFFERENT small program whose every line is derived
+# line-by-line from the INVARIANTS.md flag rules below (each op annotated with the
+# external-anchor rule it follows — conventions R5). falsify now grades
+# trace-b (as --input) against trace.gbdoctor's daa-style independently-derived
+# truth path so the two paths are NOT the same file: a real, falsifiable check.
+#
+# This program deliberately shares ZERO opcodes with trace.gbdoctor (which uses
+# INC A / DEC A / AND A / JR). It exercises OR / SCF / RLCA / CCF / NOP instead, so
+# the two goldens cannot share a derivation blind spot by construction.
+#
+# Format (one line per instruction, the state BEFORE it executes; first line is the
+# post-boot state, each subsequent line is the RESULT of the prior instruction):
+#   A:NN F:NN B:NN C:NN D:NN E:NN H:NN L:NN SP:NNNN PC:NNNN PCMEM:b0,b1,b2,b3
+# F low nibble is ALWAYS 0 (INVARIANTS: F &= 0xF0). PCMEM = the 4 bytes at PC.
+#
+# Program traced (loaded at 0x0100):
+#   0100  B7        OR A    ; A 01|01 = 01
+#   0101  37        SCF     ; set carry
+#   0102  07        RLCA    ; rotate A left through bit 7 -> carry
+#   0103  3F        CCF     ; complement carry
+#   0104  00        NOP     ; end
+#
+# Post-boot register init (INVARIANTS): A=01 F=B0(Z1 N0 H1 C1) B=00 C=13 D=00 E=D8 H=01 L=4D SP=FFFE PC=0100
+# ----------------------------------------------------------------------------
+A:01 F:B0 B:00 C:13 D:00 E:D8 H:01 L:4D SP:FFFE PC:0100 PCMEM:B7,37,07,3F
+A:01 F:00 B:00 C:13 D:00 E:D8 H:01 L:4D SP:FFFE PC:0101 PCMEM:37,07,3F,00
+A:01 F:10 B:00 C:13 D:00 E:D8 H:01 L:4D SP:FFFE PC:0102 PCMEM:07,3F,00,00
+A:02 F:00 B:00 C:13 D:00 E:D8 H:01 L:4D SP:FFFE PC:0103 PCMEM:3F,00,00,00
+A:02 F:10 B:00 C:13 D:00 E:D8 H:01 L:4D SP:FFFE PC:0104 PCMEM:00,00,00,00
+A:02 F:10 B:00 C:13 D:00 E:D8 H:01 L:4D SP:FFFE PC:0105 PCMEM:00,00,00,00
+# ----------------------------------------------------------------------------
+# Line-by-line derivation (each cites the INVARIANTS.md rule it follows; the rules
+# themselves are the in-repo transcription of the DMG behavior documented in the
+# Pan Docs CPU instruction tables — conventions R5 external anchor):
+#
+#  L1 PC=0100  entry state = the post-boot register init (INVARIANTS "Post-boot
+#              register init"): A=01 F=B0 (Z1 N0 H1 C1). The line shows the state
+#              BEFORE OR A executes.
+#
+#  L2 PC=0101 (after OR A, opcode B7): r = A|A = 01|01 = 01.
+#              INVARIANTS "OR/XOR: Z N=0 H=0 C=0". r=01 != 0 -> Z=0. So Z0 N0 H0 C0
+#              -> F = 0x00. (Pan Docs: OR A — Z 0 0 0.) A stays 01.
+#              NOTE the contrast with trace.gbdoctor's AND A, which forces H=1
+#              (F=0x20): OR clears H, AND sets it. Choosing OR here makes the two
+#              goldens diverge on the exact flag the H-bit bug (R-1) lived in.
+#
+#  L3 PC=0102 (after SCF, opcode 37): INVARIANTS "SCF: C=1 N=0 H=0 (Z unchanged)".
+#              Z was 0 (from OR A) and is preserved -> Z0 N0 H0 C1 -> F = 0x10.
+#              (Pan Docs: SCF — - 0 0 1.) A unchanged (01).
+#
+#  L4 PC=0103 (after RLCA, opcode 07): INVARIANTS "RLCA: C=oldbit7; A=(A<<1)|oldbit7;
+#              Z ALWAYS 0, N=0, H=0". A=01 -> oldbit7=0 -> A=(01<<1)|0 = 02, C=0.
+#              Z0 N0 H0 C0 -> F = 0x00. (Pan Docs: RLCA — 0 0 0 C; the A-register
+#              fast form forces Z=0, unlike the CB-prefixed RLC r.) A = 02.
+#
+#  L5 PC=0104 (after CCF, opcode 3F): INVARIANTS "CCF: C=~C N=0 H=0 (Z unchanged)".
+#              C was 0 (from RLCA) -> C = ~0 = 1. Z preserved (0) -> Z0 N0 H0 C1
+#              -> F = 0x10. (Pan Docs: CCF — - 0 0 C.) A unchanged (02).
+#
+#  L6 PC=0105 (after NOP, opcode 00): no flags, no registers touched -> F = 0x10,
+#              A = 02. PC advances one byte (0104 -> 0105). (Pan Docs: NOP — - - - -.)
+#
+# Every F value has low nibble 0 (masked). This program independently re-exercises
+# the F-bit map (H=0x20 vs C=0x10) the R-1 bug confused, via OR/SCF/RLCA/CCF — none
+# of which trace.gbdoctor uses — so a shared-derivation blind spot is impossible.

@@ -1,0 +1,6 @@
+{
+  "status": "error",
+  "first_divergence": null,
+  "first_divergence_summary": "ungradable empty trade stream — the gate must emit status:error and exit 2, never a pass at zero trades (R-6).",
+  "gate": "exchange-lob"
+}

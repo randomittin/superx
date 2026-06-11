@@ -302,7 +302,26 @@ score_case() {
       div="$(report_first_divergence "$report")"
       rm -f "$report"
 
-      if [ "$exp_status" = "fail" ]; then
+      if [ "$exp_status" = "error" ]; then
+        # R-6 expected-error case: the input is UNGRADABLE (empty stream). A CATCH
+        # iff the gate refused to grade it (status:"error", run.sh exit 2). error is
+        # NOT a catch-of-a-defect and NOT a pass — but for an expected-error case a
+        # matching "error" status IS the catch (the empty-stream false-green did not
+        # slip through). No first_divergence is asserted for an error case.
+        if [ "$status" = "error" ]; then
+          gate_caught=1
+          detail="${detail}[$gate: CATCH error (ungradable input correctly refused)] "
+        elif [ "$status" = "pass" ]; then
+          detail="${detail}[$gate: MISS false-green (gate PASSED an ungradable empty stream; case must error)] "
+          all_caught=0
+        elif [ "$status" = "fail" ]; then
+          detail="${detail}[$gate: MISS wrong-verdict (gate FAILED an ungradable empty stream; case must error)] "
+          all_caught=0
+        else
+          detail="${detail}[$gate: MISS no usable report.json (run.sh error)] "
+          all_caught=0
+        fi
+      elif [ "$exp_status" = "fail" ]; then
         if [ "$status" = "fail" ]; then
           # Byte-equality (SCHEMA.md §1): same case + same gate version ->
           # byte-identical pinpoint. Both $div and $exp_div are canonical

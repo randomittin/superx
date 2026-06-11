@@ -1,0 +1,18 @@
+# MUTANT: empty-trace  (domain: emulator-gb)
+# ============================================================================
+# R-6 empty-stream false-green: a subject trace with ZERO instruction lines.
+#
+# An all-empty lockstep diff (max=0) previously reported `pass` at 0 instructions
+# — a false-green: a trace diff over nothing proves nothing. The gate MUST refuse
+# to grade an empty stream: it requires ref_len>=1 AND subj_len>=1, and otherwise
+# emits report.json status:"error" with fix_hint "empty stream is ungradable" and
+# exits 2 (IO error — NOT pass, NOT fail). An ungradable trace is an ERROR, not a
+# caught defect and not a graded pass.
+#
+# This file carries ONLY comments (every line starts with `#`), so the gate's line
+# parser yields subj_len=0 instruction lines. Graded against the non-empty golden
+# truth (trace.truth.gbdoctor / trace.gbdoctor), subj_len<1 -> status:"error", exit 2.
+#
+# must_turn_red_gate: emulator-gb trace-diff — empty-stream guard (status:error, exit 2)
+# ============================================================================
+# (no instruction lines below this point — the empty subject the guard rejects)

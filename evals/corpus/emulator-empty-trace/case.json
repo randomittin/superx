@@ -1,0 +1,11 @@
+{
+  "id": "emulator-empty-trace",
+  "source": "mutation",
+  "gates_under_test": ["emulator-gb"],
+  "difficulty": "easy",
+  "added_in_version": "0.1",
+  "seed": "empty-trace",
+  "repro": { "input": "input.gbdoctor", "expected": "expected.json", "truth": "../../oracles/emulator-gb/fixtures/golden/trace.gbdoctor" },
+  "defect": "R-6 empty-stream false-green: a subject trace with zero instruction lines (comments only). An all-empty lockstep diff (max=0) previously reported pass at 0 instructions. The gate must refuse (status:error, exit 2).",
+  "invariants": ["R-6 empty-stream guard"]
+}

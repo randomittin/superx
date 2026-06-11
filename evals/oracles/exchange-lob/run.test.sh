@@ -148,6 +148,42 @@ else
   bad "node required for C2 live-arm proof"
 fi
 
+echo "[11] CORRUPT-AND-CONFIRM (R6): a corrupted golden expected side MUST drive the gate RED"
+# Conventions R6: every "must pass" check gets a corrupt-and-confirm test — the
+# golden check must be CAPABLE of failing (no X-vs-X tautology). run.sh replays the
+# golden order stream through the independent reference matcher and diffs the
+# PRODUCED trades/book against the fixture's expected_trades/expected_book. We
+# corrupt exactly ONE byte of the expected side (flip the first expected trade
+# price 99 -> 98) and grade it: the produced reference still says 99, so the gate
+# MUST report status=fail at trade index 0. If it stays green the golden check is a
+# self-comparison (R-2 false-RED defect) and the gate is not trustworthy.
+GOLDEN_OS="$FIX/golden/order-stream.json"
+corrupt_os="$TMP/golden-corrupt.json"
+jq '.expected_trades[0].price = 98' "$GOLDEN_OS" > "$corrupt_os"
+if [ "$(jq '.expected_trades[0].price' "$corrupt_os")" != "98" ]; then
+  bad "corrupt-and-confirm setup failed: did not inject price 98 into expected_trades[0]"
+else
+  cc_report="$TMP/golden-corrupt.report.json"
+  if "$RUN" --input "$corrupt_os" --report "$cc_report" >/dev/null 2>&1; then
+    cc_rc=0; else cc_rc=$?; fi
+  if [ "$cc_rc" -ne 0 ] && jq -e '.status=="fail" and (.first_divergence|type=="object") and (.first_divergence.step|test("trade index 0")) and (.first_divergence.expected|test("price.:98")) and (.first_divergence.actual|test("price.:99"))' "$cc_report" >/dev/null 2>&1; then
+    ok "corrupted golden expected side driven RED: gate fails @ trade index 0 (expected price 98 vs produced 99) — golden check is falsifiable (R-2)"
+  else
+    bad "corrupted golden did NOT drive the gate red (rc=$cc_rc) — golden check is an X-vs-X self-comparison (R-2/R6 violation)"
+    cat "$cc_report" 2>/dev/null || true
+  fi
+fi
+# Confirm-green half: the PRISTINE golden still passes (restore = re-run the
+# untouched fixture). A corrupt-and-confirm test that left the golden red would be
+# meaningless; the byte we flipped lives only in $TMP, the tracked fixture is intact.
+echo "[12] RESTORE-GREEN (R6): the pristine golden still passes (the corruption was scratch-only)"
+restore_report="$TMP/golden-restore.report.json"
+if "$RUN" --input "$GOLDEN_OS" --report "$restore_report" >/dev/null 2>&1    && jq -e '.status=="pass" and .first_divergence==null' "$restore_report" >/dev/null 2>&1; then
+  ok "pristine golden GREEN again (status=pass) — corruption did not touch the tracked fixture"
+else
+  bad "pristine golden did not pass after corrupt-and-confirm"; cat "$restore_report" 2>/dev/null || true
+fi
+
 echo ""
 echo "RESULT: $pass passed, $fail failed"
 [ "$fail" -eq 0 ]

@@ -1,16 +1,109 @@
 {
   "version": "0.1",
   "cases": [
-    { "id": "exchange-crossed-trade",    "source": "mutation", "gates_under_test": ["exchange-lob"], "difficulty": "moderate" },
-    { "id": "exchange-queue-jump",       "source": "mutation", "gates_under_test": ["exchange-lob"], "difficulty": "hard" },
-    { "id": "exchange-lifo-tiebreak",    "source": "mutation", "gates_under_test": ["exchange-lob"], "difficulty": "hard" },
-    { "id": "exchange-dropped-remainder","source": "mutation", "gates_under_test": ["exchange-lob"], "difficulty": "moderate" },
-    { "id": "exchange-off-by-one-qty",   "source": "mutation", "gates_under_test": ["exchange-lob"], "difficulty": "hard" },
-    { "id": "exchange-c2-racy",          "source": "mutation", "gates_under_test": ["exchange-lob"], "difficulty": "hard" },
-    { "id": "exchange-c2-locked",        "source": "mutation", "gates_under_test": ["exchange-lob"], "difficulty": "hard" },
-    { "id": "emulator-half-carry",       "source": "mutation", "gates_under_test": ["emulator-gb"],  "difficulty": "hard" },
-    { "id": "emulator-f-mask",           "source": "mutation", "gates_under_test": ["emulator-gb"],  "difficulty": "hard" },
-    { "id": "emulator-jr-off-by-one",    "source": "mutation", "gates_under_test": ["emulator-gb"],  "difficulty": "moderate" },
-    { "id": "emulator-daa",              "source": "mutation", "gates_under_test": ["emulator-gb"],  "difficulty": "hard" }
+    {
+      "id": "exchange-crossed-trade",
+      "source": "mutation",
+      "gates_under_test": [
+        "exchange-lob"
+      ],
+      "difficulty": "moderate"
+    },
+    {
+      "id": "exchange-queue-jump",
+      "source": "mutation",
+      "gates_under_test": [
+        "exchange-lob"
+      ],
+      "difficulty": "hard"
+    },
+    {
+      "id": "exchange-lifo-tiebreak",
+      "source": "mutation",
+      "gates_under_test": [
+        "exchange-lob"
+      ],
+      "difficulty": "hard"
+    },
+    {
+      "id": "exchange-dropped-remainder",
+      "source": "mutation",
+      "gates_under_test": [
+        "exchange-lob"
+      ],
+      "difficulty": "moderate"
+    },
+    {
+      "id": "exchange-off-by-one-qty",
+      "source": "mutation",
+      "gates_under_test": [
+        "exchange-lob"
+      ],
+      "difficulty": "hard"
+    },
+    {
+      "id": "exchange-c2-racy",
+      "source": "mutation",
+      "gates_under_test": [
+        "exchange-lob"
+      ],
+      "difficulty": "hard"
+    },
+    {
+      "id": "exchange-c2-locked",
+      "source": "mutation",
+      "gates_under_test": [
+        "exchange-lob"
+      ],
+      "difficulty": "hard"
+    },
+    {
+      "id": "emulator-half-carry",
+      "source": "mutation",
+      "gates_under_test": [
+        "emulator-gb"
+      ],
+      "difficulty": "hard"
+    },
+    {
+      "id": "emulator-f-mask",
+      "source": "mutation",
+      "gates_under_test": [
+        "emulator-gb"
+      ],
+      "difficulty": "hard"
+    },
+    {
+      "id": "emulator-jr-off-by-one",
+      "source": "mutation",
+      "gates_under_test": [
+        "emulator-gb"
+      ],
+      "difficulty": "moderate"
+    },
+    {
+      "id": "emulator-daa",
+      "source": "mutation",
+      "gates_under_test": [
+        "emulator-gb"
+      ],
+      "difficulty": "hard"
+    },
+    {
+      "id": "exchange-empty-stream",
+      "source": "mutation",
+      "gates_under_test": [
+        "exchange-lob"
+      ],
+      "difficulty": "easy"
+    },
+    {
+      "id": "emulator-empty-trace",
+      "source": "mutation",
+      "gates_under_test": [
+        "emulator-gb"
+      ],
+      "difficulty": "easy"
+    }
   ]
 }
