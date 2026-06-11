@@ -23,13 +23,17 @@
 # absorbs that logic so the gate is runnable on a fixture WITHOUT an impl present,
 # while gate.sh remains the benchmark-time live driver.
 #
-# Report schema (shared across all gates):
+# Report schema (shared across all gates, spec H-1 — 8 fields):
 #   {
 #     "gate_id": string,
 #     "status": "pass" | "fail",
-#     "first_divergence": string | null,   // pinpoint when fail; null when pass
+#     "first_divergence":                   // STRUCTURED object when fail; null on pass
+#       { "file": string, "step": string, "expected": string, "actual": string } | null,
 #     "metrics": { ... },                   // trades-compared, seeds-swept, ...
-#     "fix_hint": string                    // actionable hint
+#     "fix_hint": string,                   // actionable hint
+#     "haid": string,                       // human-agent id (env HEIMDALL_HAID else "haid:local")
+#     "wave": string | null,                // wave id (env HEIMDALL_WAVE else null)
+#     "ts": string                          // UTC ISO-8601 emit time (date -u +%FT%TZ)
 #   }
 #
 # Usage:
@@ -82,10 +86,14 @@ REPORT="${REPORT:-$DEFAULT_REPORT}"
 # ═══════════════════════════════════════════════════════════════════════════
 #  First-divergence diff primitives (differential.md). Identical semantics to
 #  the gate.sh benchmark runner and bin/falsify: return 0 when the two outputs
-#  are IDENTICAL and 1 on divergence, emitting the FIRST-divergence pinpoint on
-#  the named global PINPOINT.
+#  are IDENTICAL and 1 on divergence, emitting the FIRST-divergence pinpoint as a
+#  STRUCTURED object on the named globals DIV_STEP / DIV_EXPECTED / DIV_ACTUAL
+#  (spec H-1: first_divergence is {file, step, expected, actual}, not a string).
+#  DIV_FILE is the gate's domain dimension; the writer folds in `file`/`gate_id`.
 # ═══════════════════════════════════════════════════════════════════════════
-PINPOINT=""
+DIV_STEP=""
+DIV_EXPECTED=""
+DIV_ACTUAL=""
 
 # Whole-output trade-sequence differential: compare the ordered fill SEQUENCE
 # tuple-by-tuple AND the sequence length; pinpoint the FIRST divergence index.
@@ -99,12 +107,16 @@ diff_trade_sequence() {
     a="$(jq -cS ".[$i] // null" <<<"$ref")"
     b="$(jq -cS ".[$i] // null" <<<"$subj")"
     if [ "$a" != "$b" ]; then
-      PINPOINT="trade index ${i}: expected ${a} actual ${b} (reference len=${ref_len} actual len=${subj_len})"
+      DIV_STEP="trade index ${i} (reference len=${ref_len} actual len=${subj_len})"
+      DIV_EXPECTED="$a"
+      DIV_ACTUAL="$b"
       return 1
     fi
   done
   if [ "$ref_len" != "$subj_len" ]; then
-    PINPOINT="trade sequence length: expected ${ref_len} actual ${subj_len}"
+    DIV_STEP="trade sequence length"
+    DIV_EXPECTED="$ref_len"
+    DIV_ACTUAL="$subj_len"
     return 1
   fi
   return 0
@@ -117,7 +129,9 @@ diff_book_state() {
   a="$(jq -cS '.' <<<"$ref")"
   b="$(jq -cS '.' <<<"$subj")"
   if [ "$a" != "$b" ]; then
-    PINPOINT="post-stream book state: expected ${a} actual ${b}"
+    DIV_STEP="post-stream book state"
+    DIV_EXPECTED="$a"
+    DIV_ACTUAL="$b"
     return 1
   fi
   return 0
@@ -127,30 +141,53 @@ diff_book_state() {
 seq_len() { jq 'length' <<<"$1"; }
 
 # ═══════════════════════════════════════════════════════════════════════════
-#  Report writer — the typed contract. Writes report.json and sets EXIT_RC.
-#  Args: <status pass|fail> <first_divergence-or-empty> <metrics-json> <fix_hint>
+#  Report writer — the typed contract (spec H-1, 8 fields). Writes report.json.
+#  first_divergence is a STRUCTURED object {file, step, expected, actual} on fail,
+#  null on pass. The envelope adds haid/wave/ts.
+#  Args: <status pass|fail> <step> <expected> <actual> <metrics-json> <fix_hint>
+#    pass  -> pass STEP/EXPECTED/ACTUAL empty; first_divergence is null.
+#    fail  -> STEP names the locator (e.g. "trade index 0 (...)"); EXPECTED/ACTUAL
+#             carry the diverging values.
 # ═══════════════════════════════════════════════════════════════════════════
 write_report() {
-  local status="$1" divergence="$2" metrics="$3" fix_hint="$4"
+  local status="$1" step="$2" expected="$3" actual="$4" metrics="$5" fix_hint="$6"
   local out_dir; out_dir="$(dirname "$REPORT")"
   mkdir -p "$out_dir"
 
-  if [ -z "$divergence" ]; then
+  local haid="${HEIMDALL_HAID:-haid:local}"
+  local wave="${HEIMDALL_WAVE:-}"
+  local ts; ts="$(date -u +%FT%TZ)"
+
+  if [ -z "$step" ]; then
     jq -n \
       --arg gate_id "$GATE_ID" \
       --arg status "$status" \
       --argjson metrics "$metrics" \
       --arg fix_hint "$fix_hint" \
-      '{gate_id:$gate_id, status:$status, first_divergence:null, metrics:$metrics, fix_hint:$fix_hint}' \
+      --arg haid "$haid" \
+      --arg wave "$wave" \
+      --arg ts "$ts" \
+      '{gate_id:$gate_id, status:$status, first_divergence:null, metrics:$metrics,
+        fix_hint:$fix_hint, haid:$haid,
+        wave:(if $wave=="" then null else $wave end), ts:$ts}' \
       >"$REPORT"
   else
     jq -n \
       --arg gate_id "$GATE_ID" \
       --arg status "$status" \
-      --arg fd "$divergence" \
+      --arg file "$GATE_ID" \
+      --arg step "$step" \
+      --arg expected "$expected" \
+      --arg actual "$actual" \
       --argjson metrics "$metrics" \
       --arg fix_hint "$fix_hint" \
-      '{gate_id:$gate_id, status:$status, first_divergence:$fd, metrics:$metrics, fix_hint:$fix_hint}' \
+      --arg haid "$haid" \
+      --arg wave "$wave" \
+      --arg ts "$ts" \
+      '{gate_id:$gate_id, status:$status,
+        first_divergence:{file:$file, step:$step, expected:$expected, actual:$actual},
+        metrics:$metrics, fix_hint:$fix_hint, haid:$haid,
+        wave:(if $wave=="" then null else $wave end), ts:$ts}' \
       >"$REPORT"
   fi
   echo "report: $REPORT  (status=$status)"
@@ -170,7 +207,9 @@ if ! jq -e . "$INPUT" >/dev/null 2>&1; then
      || grep -qE 'setImmediate|Promise\.all' "$INPUT" 2>/dev/null; then
     metrics="$(jq -nc '{"trades_compared":0,"seeds_swept":0,"arm":"seeded-variable-latency-interleave"}')"
     write_report "fail" \
-      "tautological-concurrency: Promise.all over synchronous setImmediate-wrapped submit() resolves in submission order by construction — no awaited critical section, cannot interleave; the seeded variable-latency arm cannot expose the C2 race (non-falsifiable gate construction)" \
+      "interleave construction (tautological-concurrency)" \
+      "an awaited per-id seeded variable-latency critical section that can interleave (exposes the C2 race)" \
+      "Promise.all over synchronous setImmediate-wrapped submit() — resolves in submission order by construction, no awaited critical section, cannot interleave (non-falsifiable gate construction)" \
       "$metrics" \
       "Replace the fixed-yield/setImmediate dispatch with a deterministic per-id seeded variable-latency hook awaited BEFORE the read-match-mutate critical section, sweep >=200 seeds, and diff the whole concurrent fill sequence against the submission-order serial replay (see interleave.md)."
     exit 1
@@ -191,13 +230,13 @@ if jq -e 'has("expected_trades")' "$INPUT" >/dev/null 2>&1; then
   if diff_trade_sequence "$trades" "$trades" && diff_book_state "$book" "$book"; then
     metrics="$(jq -nc --argjson n "$n" \
       '{"trades_compared":$n,"seeds_swept":1,"arm":"whole-output-differential"}')"
-    write_report "pass" "" "$metrics" \
+    write_report "pass" "" "" "" "$metrics" \
       "Whole fill sequence and post-stream book equal the independent serial-replay reference at every index — no action needed."
     exit 0
   fi
   metrics="$(jq -nc --argjson n "$n" \
     '{"trades_compared":$n,"seeds_swept":1,"arm":"whole-output-differential"}')"
-  write_report "fail" "$PINPOINT" "$metrics" \
+  write_report "fail" "$DIV_STEP" "$DIV_EXPECTED" "$DIV_ACTUAL" "$metrics" \
     "Gate rejected its own golden — the differential is over-strict (false-RED). Re-derive expected_trades/expected_book from INVARIANTS.md before trusting any mutant result."
   exit 1
 fi
@@ -211,11 +250,11 @@ if jq -e 'has("corrupted_trades")' "$INPUT" >/dev/null 2>&1; then
     '{"trades_compared":$n,"seeds_swept":1,"arm":"whole-output-differential"}')"
   if diff_trade_sequence "$ref" "$subj"; then
     # Identical -> gate stayed GREEN on an injected defect -> false-green.
-    write_report "pass" "" "$metrics" \
+    write_report "pass" "" "" "" "$metrics" \
       "No divergence detected — if this input encodes a defect, the gate is a false-GREEN and must be hardened."
     exit 0
   fi
-  write_report "fail" "$PINPOINT" "$metrics" \
+  write_report "fail" "$DIV_STEP" "$DIV_EXPECTED" "$DIV_ACTUAL" "$metrics" \
     "Whole fill sequence diverges from the serial-replay reference. Enforce price-time priority (I4) and FIFO tie-break (D3): at a price level, fill the earliest-arriving (smallest seq) resting/aggressor order first, and price every trade at the RESTING maker price (I1)."
   exit 1
 fi
@@ -227,11 +266,11 @@ if jq -e 'has("corrupted_book")' "$INPUT" >/dev/null 2>&1; then
   metrics="$(jq -nc \
     '{"trades_compared":0,"seeds_swept":1,"arm":"post-stream-book-differential"}')"
   if diff_book_state "$ref" "$subj"; then
-    write_report "pass" "" "$metrics" \
+    write_report "pass" "" "" "" "$metrics" \
       "Post-stream book equals the reference — if this input encodes a defect, the gate is a false-GREEN and must be hardened."
     exit 0
   fi
-  write_report "fail" "$PINPOINT" "$metrics" \
+  write_report "fail" "$DIV_STEP" "$DIV_EXPECTED" "$DIV_ACTUAL" "$metrics" \
     "Post-stream book diverges from the serial-replay reference: a partially-filled limit order's unmatched remainder must REST at its limit price (O1), not be discarded — conservation (O4) requires qty-in == filled + resting + discarded."
   exit 1
 fi

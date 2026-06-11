@@ -80,15 +80,34 @@ pass or a fail.
 
 ## 3. `report.json` — the typed result (schema)
 
-A single JSON object. Schema shared by ALL gates:
+A single JSON object. The COMPLETE spec-H-1 schema is **8 fixed fields**, shared by
+ALL gates:
 
 | Field              | Type             | Meaning                                                          |
 |--------------------|------------------|------------------------------------------------------------------|
 | `gate_id`          | string           | Echoes `gate.json.id`. Identifies which gate produced this report.|
 | `status`           | enum             | `"pass"` or `"fail"`. The authoritative result. The ONLY field a pass/fail decision reads. |
-| `first_divergence` | string \| null   | The pinpoint of the first divergence when `status == "fail"`; `null` when `status == "pass"`. A human-readable, machine-stored locator (e.g. `"trade index 0: expected ... actual ..."`, `"instruction 4: expected ... actual ..."`). Read this field — do NOT scrape it from stdout. |
+| `first_divergence` | object \| null   | STRUCTURED locator of the first divergence when `status == "fail"`; `null` when `status == "pass"`. NOT a string — a typed object `{file, step, expected, actual}` (see below). Read this field — do NOT scrape it from stdout. |
 | `metrics`          | object           | DOMAIN-SPECIFIC, open-keyed (see section 4). Diagnostic counters.|
 | `fix_hint`         | string           | Actionable next step for whoever must fix the divergence.        |
+| `haid`             | string           | Human-agent id of the run. From env `HEIMDALL_HAID`, else `"haid:local"`. (T-1 formalizes the haid grammar later; until then a plain string.) |
+| `wave`             | string \| null   | The build wave this gate ran in. From env `HEIMDALL_WAVE`, else `null`. |
+| `ts`               | string           | UTC emit time, ISO-8601 (`date -u +%FT%TZ`, e.g. `"2026-06-11T11:43:15Z"`). |
+
+### `first_divergence` — the structured locator (spec H-1)
+
+When `status == "fail"`, `first_divergence` is an object with exactly four string
+fields; when `status == "pass"` it is `null`.
+
+| Field      | Type   | Meaning                                                                 |
+|------------|--------|-------------------------------------------------------------------------|
+| `file`     | string | The gate's domain dimension (equals `gate_id`).                         |
+| `step`     | string | The locator within the diff: e.g. `"trade index 0 (reference len=1 actual len=1)"`, `"post-stream book state"`, `"instruction 4"`. |
+| `expected` | string | The reference (truth) value at the divergence.                          |
+| `actual`   | string | The subject (mine) value at the divergence.                             |
+
+Consumers that pin a divergence (the corpus) assert byte-equality on this object
+after canonicalizing both sides through `jq -cS` (sorted keys) — see `evals/corpus/SCHEMA.md`.
 
 **Example — pass** (`exchange-lob` golden):
 
@@ -98,7 +117,10 @@ A single JSON object. Schema shared by ALL gates:
   "status": "pass",
   "first_divergence": null,
   "metrics": { "trades_compared": 3, "seeds_swept": 1, "arm": "whole-output-differential" },
-  "fix_hint": "Whole fill sequence and post-stream book equal the independent serial-replay reference at every index — no action needed."
+  "fix_hint": "Whole fill sequence and post-stream book equal the independent serial-replay reference at every index — no action needed.",
+  "haid": "haid:local",
+  "wave": null,
+  "ts": "2026-06-11T11:43:15Z"
 }
 ```
 
@@ -108,9 +130,17 @@ A single JSON object. Schema shared by ALL gates:
 {
   "gate_id": "emulator-gb",
   "status": "fail",
-  "first_divergence": "instruction 4: expected A:01 F:10 ... actual A:01 F:00 ...",
-  "metrics": { "instructions_compared": 4, "truth_instructions": 5, "subject_instructions": 5, "divergence_index": 4 },
-  "fix_hint": "First divergence at instruction 4. Compare expected (truth) vs actual (mine) field-by-field..."
+  "first_divergence": {
+    "file": "emulator-gb",
+    "step": "instruction 4",
+    "expected": "A:01 F:10 B:00 C:13 D:00 E:D8 H:01 L:4D SP:FFFE PC:0103 PCMEM:18,02,00,00",
+    "actual":   "A:01 F:00 B:00 C:13 D:00 E:D8 H:01 L:4D SP:FFFE PC:0103 PCMEM:18,02,00,00"
+  },
+  "metrics": { "instructions_compared": 4, "truth_instructions": 6, "subject_instructions": 6, "divergence_index": 4 },
+  "fix_hint": "First divergence at instruction 4. Compare expected (truth) vs actual (mine) field-by-field...",
+  "haid": "haid:local",
+  "wave": null,
+  "ts": "2026-06-11T11:43:15Z"
 }
 ```
 
@@ -122,7 +152,8 @@ A single JSON object. Schema shared by ALL gates:
 open-keyed object whose contents vary by gate. Treat unknown keys as opaque
 diagnostics; read a specific key only when you know the gate that produced it
 (`gate_id`). The fixed, gate-agnostic fields are `gate_id`, `status`,
-`first_divergence`, and `fix_hint` — `metrics` is explicitly NOT fixed.
+`first_divergence`, `fix_hint`, `haid`, `wave`, and `ts` — `metrics` is the only
+explicitly NOT-fixed field.
 
 Current per-domain keys (illustrative, not exhaustive — gates may add more):
 

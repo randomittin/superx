@@ -39,7 +39,15 @@ these are emitted by a live engine that an adversary subtly broke.
 
 ## Results — every bug CAUGHT, every pinpoint CORRECT
 
-| # | Variant | Dimension (invariant) | Gate verdict | Exit | First-divergence pinpoint |
+> **Report format note (spec H-1).** `report.json.first_divergence` is now a STRUCTURED
+> object `{file, step, expected, actual}` (alongside the `haid`/`wave`/`ts` envelope), not
+> a flat string. The pinpoint column below is the human paraphrase; the gate emits, e.g.,
+> `{"file":"exchange-lob","step":"trade index 0 (reference len=1 actual len=1)",`
+> `"expected":"{\"makerId\":1,\"price\":99,\"qty\":5,\"takerId\":2}",`
+> `"actual":"{\"makerId\":1,\"price\":105,\"qty\":5,\"takerId\":2}"}`. See
+> `evals/oracles/REPORT-CONTRACT.md` §3.
+
+| # | Variant | Dimension (invariant) | Gate verdict | Exit | First-divergence pinpoint (object: `step` / `expected` → `actual`) |
 |---|---------|-----------------------|--------------|------|---------------------------|
 | 0 | **correct impl** (golden stream) | — (must not false-RED) | **PASS** ✅ | `0` | `null` |
 | 1 | crossed trade | I1 no-cross (fill at aggressor price, not resting maker price) | **CAUGHT** (fail) ✅ | `1` | trade index 0: expected `price 99` actual `price 105` (taker/maker 2/1, len 1=1) |
@@ -85,7 +93,7 @@ echo "exit=$?"; jq '{status, first_divergence}' /tmp/r.json
 # 3. each bug must FAIL (exit 1) with the pinpoint above
 for f in bug-crossed-trade bug-queue-jump bug-lifo-tiebreak bug-drop-remainder bug-off-by-one-qty; do
   evals/oracles/exchange-lob/run.sh --input /tmp/mut-exchange/outputs/$f.json --report /tmp/r.json >/dev/null 2>&1
-  printf '%-22s exit=%s  ' "$f" "$?"; jq -c '.first_divergence' /tmp/r.json
+  printf '%-22s exit=%s  ' "$f" "$?"; jq -c '.first_divergence' /tmp/r.json   # structured {file,step,expected,actual}
 done
 ```
 

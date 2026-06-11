@@ -52,7 +52,12 @@ diagnostic/manifest sugar.
 ```json
 {
   "status":                   "fail",   // mutation cases always fail (a caught defect)
-  "first_divergence":         "trade index 0: expected {...} actual {...} (reference len=1 actual len=1)",
+  "first_divergence": {                  // spec H-1 STRUCTURED object (not a string)
+    "file":     "exchange-lob",
+    "step":     "trade index 0 (reference len=1 actual len=1)",
+    "expected": "{\"makerId\":1,\"price\":99,\"qty\":5,\"takerId\":2}",
+    "actual":   "{\"makerId\":1,\"price\":105,\"qty\":5,\"takerId\":2}"
+  },
   "first_divergence_summary": "trade index 0: expected price 99 actual price 105",
   "gate":                     "exchange-lob"  // which gate-under-test this verdict belongs to
 }
@@ -60,13 +65,16 @@ diagnostic/manifest sugar.
 
 `status` + `first_divergence` mirror the oracle `report.json` fields the runner asserts
 against. For a mutation case, `status` is always `"fail"` (the gate must catch it) and
-`first_divergence` is non-null.
+`first_divergence` is the non-null `{file, step, expected, actual}` object the gate emits
+(REPORT-CONTRACT.md §3).
 
-- **`first_divergence` is the EXACT string the gate's `run.sh` emits** into
-  `report.json.first_divergence` — the runner asserts **byte-equality**. It is captured
-  by replaying the case through the gate, never hand-paraphrased; a drift means either a
-  gate regression or a stale case (both are signal). This is the determinism law applied
-  to the verdict: same case + same gate version → byte-identical pinpoint.
+- **`first_divergence` is the EXACT object the gate's `run.sh` emits** into
+  `report.json.first_divergence` — the runner asserts **byte-equality** after
+  canonicalizing both sides through `jq -cS` (sorted keys), so the compare is
+  key-order-independent. It is captured by replaying the case through the gate, never
+  hand-paraphrased; a drift means either a gate regression or a stale case (both are
+  signal). This is the determinism law applied to the verdict: same case + same gate
+  version → byte-identical pinpoint object.
 - **`first_divergence_summary`** is the human-readable, field-level paraphrase (the form
   the MUTATION-PROOF tables use). Diagnostic only — the runner does NOT assert on it.
 
@@ -121,7 +129,8 @@ logic, exactly as `bin/falsify` is a pure orchestrator over `run.sh`:
    - Read `<tmp>` per `REPORT-CONTRACT.md` (`status`, `first_divergence`) — never parse
      `run.sh` stdout.
 3. Assert the gate's `report.json.status` == `expected.json.status` AND
-   `report.json.first_divergence` == `expected.json.first_divergence` (byte-equality).
+   `report.json.first_divergence` == `expected.json.first_divergence` (byte-equality on
+   the canonical `jq -cS` form of the structured `{file, step, expected, actual}` object).
    - **catch** = both match (the gate caught the defect at the right pinpoint).
    - **miss** = `status` is `pass`, or the pinpoint diverges — the gate is a false-green
      for this case and the run is RED.

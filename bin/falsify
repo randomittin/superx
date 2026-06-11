@@ -139,11 +139,19 @@ report_status() {
   jq -r '.status // empty' "$report" 2>/dev/null || echo ""
 }
 
-# Read the typed `first_divergence` field (the kill pinpoint) from report.json.
+# Render the typed `first_divergence` field (the kill pinpoint) from report.json
+# for human-readable stdout. first_divergence is now a STRUCTURED object
+# {file, step, expected, actual} (spec H-1) — flatten it to one line. null/absent
+# prints a sentinel; a legacy string (older gate) is printed verbatim.
 report_first_divergence() {
   local report="$1"
-  jq -r '.first_divergence // "(no first_divergence in report)"' "$report" 2>/dev/null \
-    || echo "(unreadable report)"
+  jq -r '
+    .first_divergence as $d
+    | if $d == null then "(no first_divergence in report)"
+      elif ($d | type) == "object"
+      then "\($d.step): expected \($d.expected) actual \($d.actual)"
+      else ($d | tostring) end
+  ' "$report" 2>/dev/null || echo "(unreadable report)"
 }
 
 # ═══════════════════════════════════════════════════════════════════════════

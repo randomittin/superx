@@ -6,12 +6,16 @@
 # report.json — never stdout. This is the spec-2A gate contract shared by all
 # gates:
 #
-#   report.json = {
+#   report.json = {                              # spec H-1 — 8 fields
 #     "gate_id":          string,                 # always "emulator-gb"
 #     "status":           "pass" | "fail",
-#     "first_divergence": string | null,          # the pinpoint, null on pass
+#     "first_divergence":                         # STRUCTURED object on fail, null on pass
+#       { "file": string, "step": string, "expected": string, "actual": string } | null,
 #     "metrics":          { ... },                # e.g. instructions_compared
-#     "fix_hint":         string                  # actionable next step
+#     "fix_hint":         string,                 # actionable next step
+#     "haid":             string,                 # env HEIMDALL_HAID else "haid:local"
+#     "wave":             string | null,          # env HEIMDALL_WAVE else null
+#     "ts":               string                  # date -u +%FT%TZ
 #   }
 #
 # The trace-diff algorithm here is byte-for-byte the one in gate.sh's trace_diff
@@ -107,8 +111,12 @@ subj_len="${#subj_lines[@]}"
 max=$(( ref_len > subj_len ? ref_len : subj_len ))
 
 # ── Per-instruction lockstep diff: report FIRST divergence only ──────────────
+# The first divergence is a STRUCTURED object (spec H-1): step names the diverging
+# instruction; expected/actual carry the full gameboy-doctor lines (truth vs mine).
 status="pass"
-first_div=""        # empty => null in JSON
+div_step=""         # empty => first_divergence is null in JSON
+div_expected=""     # the truth (expected) line at the divergence
+div_actual=""       # the subject (actual) line at the divergence
 div_index=0         # 1-based instruction number of the divergence
 compared=0          # instructions compared up to and including the divergence
 i=0
@@ -119,7 +127,9 @@ while [ "$i" -lt "$max" ]; do
   if [ "$r" != "$s" ]; then
     status="fail"
     div_index=$(( i + 1 ))
-    first_div="instruction ${div_index}: expected ${r} actual ${s}"
+    div_step="instruction ${div_index}"
+    div_expected="$r"
+    div_actual="$s"
     break
   fi
   i=$(( i + 1 ))
@@ -133,24 +143,38 @@ else
 fi
 
 # ── Emit the typed report.json (atomic write) ────────────────────────────────
+# spec H-1: 8 fields; first_divergence is a structured {file, step, expected,
+# actual} object on fail (null on pass); haid/wave/ts envelope added.
+HAID="${HEIMDALL_HAID:-haid:local}"
+WAVE="${HEIMDALL_WAVE:-}"
+TS="$(date -u +%FT%TZ)"
+
 mkdir -p "$(dirname "$REPORT")"
 tmp_report="$(mktemp)"
-if [ -n "$first_div" ]; then
+if [ -n "$div_step" ]; then
   jq -n \
     --arg gate_id "$GATE_ID" \
     --arg status "$status" \
-    --arg first_divergence "$first_div" \
+    --arg file "$GATE_ID" \
+    --arg step "$div_step" \
+    --arg expected "$div_expected" \
+    --arg actual "$div_actual" \
     --argjson instructions_compared "$compared" \
     --argjson truth_instructions "$ref_len" \
     --argjson subject_instructions "$subj_len" \
     --argjson divergence_index "$div_index" \
     --arg fix_hint "$fix_hint" \
-    '{gate_id:$gate_id, status:$status, first_divergence:$first_divergence,
+    --arg haid "$HAID" \
+    --arg wave "$WAVE" \
+    --arg ts "$TS" \
+    '{gate_id:$gate_id, status:$status,
+      first_divergence:{file:$file, step:$step, expected:$expected, actual:$actual},
       metrics:{instructions_compared:$instructions_compared,
                truth_instructions:$truth_instructions,
                subject_instructions:$subject_instructions,
                divergence_index:$divergence_index},
-      fix_hint:$fix_hint}' >"$tmp_report"
+      fix_hint:$fix_hint, haid:$haid,
+      wave:(if $wave=="" then null else $wave end), ts:$ts}' >"$tmp_report"
 else
   jq -n \
     --arg gate_id "$GATE_ID" \
@@ -159,12 +183,16 @@ else
     --argjson truth_instructions "$ref_len" \
     --argjson subject_instructions "$subj_len" \
     --arg fix_hint "$fix_hint" \
+    --arg haid "$HAID" \
+    --arg wave "$WAVE" \
+    --arg ts "$TS" \
     '{gate_id:$gate_id, status:$status, first_divergence:null,
       metrics:{instructions_compared:$instructions_compared,
                truth_instructions:$truth_instructions,
                subject_instructions:$subject_instructions,
                divergence_index:0},
-      fix_hint:$fix_hint}' >"$tmp_report"
+      fix_hint:$fix_hint, haid:$haid,
+      wave:(if $wave=="" then null else $wave end), ts:$ts}' >"$tmp_report"
 fi
 mv "$tmp_report" "$REPORT"
 
