@@ -50,6 +50,63 @@ If the user passes you a spec file path, read it verbatim and skip the brainstor
 5. **Maximize parallelism**: Independent sub-projects should be flagged for parallel execution
 6. **Assign agents**: For each sub-project, recommend the agent type and which skills it should invoke
 7. **Assess risks**: Flag ambiguities, potential conflicts between sub-projects, and integration risks
+8. **Wire the oracle gate**: For the final correctness wave, select the canonical external oracle from the registry (see Oracle-Gate Protocol below). This is not optional — a correctness wave with no wired oracle, or one that lets the impl agent invent its own success check, is rejected at plan-verification.
+
+## Oracle-Gate Protocol
+
+superx ships VERIFIED: every plan you emit must wire the canonical *external* oracle for the target's domain, never let the implementation agent author its own success check, and make every gate falsifiable. The headline failure mode this prevents is the **false-green oracle** — a tautological test that passes even when the code is wrong (the canonical example: a `Promise.all`-over-synchronous-`submit` concurrency test that resolves in arrival order by construction and therefore *cannot* fail). Structurally preventing that is the single most important property of the plans you produce.
+
+### Oracle selection (REQUIRED field of the final correctness wave)
+
+Oracle selection is a mandatory field on the task that gates the final correctness wave. Resolve it from the registry — do not hand-author a gate:
+
+```bash
+# list domains the registry knows
+jq -r '.oracles | keys[]' evals/oracles/registry.json
+# resolve a matched domain to its gate command (exit 0, prints the runnable command)
+bin/oracle-select exchange-lob
+```
+
+Procedure:
+1. Match the target against the registry's `domain_signals` (`evals/oracles/registry.json`). For example `order book` / `matching engine` / `price-time priority` → `exchange-lob`; `gameboy` / `blargg` / `opcode` / `LR35902` → `emulator-gb`.
+2. If a domain matches, the matching oracle's `gate_command` (from `bin/oracle-select <domain>`) becomes the mandatory `Verify:` command of the final correctness wave's task. Record the chosen domain, its `gate_type`, and the resolved gate command directly in the task spec.
+3. If NO registry domain matches, you must still wire a falsifiable correctness gate authored independently of the impl (separate agent / separate wave), and flag in the plan that no canonical registry oracle exists for this domain so a reviewer can decide whether to add one. Never default to an impl-authored property check as the sole gate.
+
+Add this field to the final correctness wave's task in the Output Format:
+
+- **Oracle gate:** registry domain (e.g. `exchange-lob`), `gate_type` (from the ranking below), and the resolved `bin/oracle-select <domain>` command. State `independent: true` and the reference author (separate agent / external dataset) — the reference half MUST NOT be authored by the impl agent.
+
+### Gate-Type Ranking
+
+When more than one gate type is available for a target, the planner applies this ranking, strongest first:
+
+`differential > trace-diff > verdict > property > example`
+
+- **differential** — whole-output equality of the implementation against an *independent* reference over an identical deterministic input stream. Asserts the ENTIRE output sequence matches, not merely that each element is individually valid. Strongest because it catches whole-sequence bugs (ordering races, missing events) that every local check passes.
+- **trace-diff** — per-step state compared line-for-line against an external truth log (e.g. gameboy-doctor per-instruction register/PC traces).
+- **verdict** — an external pass/fail signal (e.g. a Blargg ROM printing PASS over the serial link, an SSIM threshold).
+- **property** — local invariants (per-trade no-cross / qty-balance / net-zero, per-instruction flag checks). Necessary but NEVER sufficient as the sole gate for a stateful or sequence-producing target.
+- **example** — hand-written input/output cases. Weakest; supplementary only.
+
+Always wire the strongest gate type the target's oracle supports. For any stateful or sequence-producing target, the final correctness wave MUST include a `differential` or `trace-diff` gate; `property` and `example` gates may accompany it but never replace it.
+
+### Ledger emission (wave-0 artifact, BEFORE any coding)
+
+For any target with non-trivial semantics, emit an invariant ledger as a **wave-0 artifact written BEFORE the first implementation wave**, so the impl *transcribes* the spec rather than *guessing* it. The ledger states exact semantics, flag rules, and edge cases as checkable statements — e.g. the LR35902 flag table (DAA, ADD SP,e low-byte half-carry, INC/DEC carry-preservation) or the LOB matching invariants (no-cross, qty-balance, net-zero, no-double-fill, concurrent==serial-replay).
+
+- Emit `INVARIANTS.md` as a wave-0 artifact and list it under "Read first" for EVERY downstream implementation task, re-injected per wave.
+- Commit it to `.planning/` (human-readable, git-committed) or alongside the oracle at `evals/oracles/<domain>/INVARIANTS.md`.
+- Explicit limitation: the ledger has **no teeth without the differential/trace gate** — a per-element invariant suite passes a whole-sequence race. The ledger makes local correctness cheap and front-loads hard semantics; the differential/trace oracle is what actually catches the no-local-signal bug class. Emit both; never ship the ledger as a substitute for the oracle.
+
+### Coverage matrix (declare scope gaps upfront)
+
+Every plan for a multi-subsystem target MUST emit a coverage matrix that declares each subsystem as in-scope or descoped UPFRONT, and for each descoped subsystem names the oracle row that will (predictably) go red. This turns "surprise red at end-of-build" into "expected red, flagged on day zero."
+
+| Subsystem | In scope? | Oracle row affected | Expected result |
+|---|---|---|---|
+| <subsystem> | yes / descoped | <oracle gate / test row> | green / expected-red (descoped) |
+
+Emit the matrix at `evals/oracles/<domain>/COVERAGE.md` (or in the PLAN file for single-domain plans). A descoped subsystem must render as a documented expected-red row, not an unexplained failure.
 
 ## Output Format
 
@@ -68,7 +125,8 @@ Always produce a structured plan:
   - [ ] `grep -q "export const X" src/foo.ts` exits 0
   - [ ] `npm test -- --grep "X"` exits 0
   - [ ] `test -f src/foo/Bar.tsx`
-- **Verify:** [the single command the verifier agent runs to grade this task]
+- **Oracle gate** (REQUIRED on the final correctness wave's task; see Oracle-Gate Protocol): registry domain + `gate_type` + resolved `bin/oracle-select <domain>` command + `independent: true` + reference author (separate agent / external dataset).
+- **Verify:** [the single command the verifier agent runs to grade this task — for the correctness wave this IS the wired oracle gate command]
 - **Done when:** [one-line human-readable summary for the status report]
 - **Risks & Mitigation:** [bullet pairs — see Risk table below]
 
@@ -120,6 +178,15 @@ Agent(subagent_type: "superx:reviewer", description: "verify plan vs spec",
 ```
 
 If the reviewer returns REQUEST CHANGES or BLOCK, address the items and re-run. Do not hand the plan to wave-executor until APPROVE. This catches you rationalizing gaps in your own plan — the reviewer sees only the artifact, not your reasoning history.
+
+### Oracle-gate rejection rules (plan-verification BLOCKS on these)
+
+Plan-verification REJECTS a plan that violates any of the following — these are hard gates, not advisory:
+
+1. **Property-only gates for stateful targets.** For any stateful or sequence-producing target (matching engines, emulators, state machines, anything whose correctness depends on the whole output sequence and not just per-element validity), a plan whose final correctness wave gates ONLY on `property` or `example` checks is REJECTED. Such a target MUST gate on a `differential` or `trace-diff` oracle. Rationale: per-element invariants pass a whole-sequence race — proven when per-trade no-cross / qty-balance / net-zero / no-double-fill ALL passed while a concurrency race scrambled price-time priority, caught only by the whole-output differential.
+2. **Non-falsifiable gates.** A gate that cannot be shown to go RED is REJECTED. Every wired correctness gate must be falsifiable — proven able to fail on a known-bad input before it is trusted green (golden fixture passes AND every injected-defect mutant is rejected, falsifiability score 1.0). A plan whose correctness gate ships no golden+mutant fixtures, or whose gate is tautological (passes by construction regardless of correctness — e.g. `Promise.all` over synchronous `submit`), is REJECTED. State in each correctness task how the gate is proven falsifiable (e.g. `bin/falsify <domain> --assert-score 1.0`).
+3. **Impl-authored reference.** For any `differential` gate, the reference half MUST be independent of the implementation — authored by a separate agent in a separate wave with disjoint file scope, or sourced from an external dataset. A reference authored by the impl agent shares its spec misconceptions and the diff says PASS while both are wrong. The plan must show impl-author ≠ reference-author and place them in separate waves.
+4. **Tautological concurrency gates.** Any target whose spec mentions concurrency / async / parallel MUST gate on a deterministic seeded variable-latency interleaving harness swept over many seeds, NOT a fixed-yield `Promise.all` dispatch (which resolves in arrival order by construction and is non-falsifiable). A plan wiring a fixed-yield concurrency check as the gate is REJECTED.
 
 ## Code Quality (Zero Tolerance, applied to emitted plans)
 
