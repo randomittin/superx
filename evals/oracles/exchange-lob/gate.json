@@ -1,0 +1,6 @@
+{
+  "id": "exchange-lob",
+  "name": "Exchange LOB whole-output differential gate",
+  "trigger": "per-wave",
+  "severity": "hard"
+}
