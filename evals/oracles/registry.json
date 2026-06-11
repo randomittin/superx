@@ -1,0 +1,98 @@
+{
+  "version": "1.0.0",
+  "gate_type_ranking": [
+    "differential",
+    "trace-diff",
+    "verdict",
+    "property",
+    "example"
+  ],
+  "oracles": {
+    "emulator-gb": {
+      "gate_type": "trace-diff",
+      "description": "Game Boy (DMG / LR35902 CPU) emulator oracle. Verifies an implementation by diffing its per-instruction execution trace against a known-correct reference trace, then asserting the standard Blargg ROM serial-output pass markers.",
+      "domain_signals": [
+        "*.gb",
+        "gameboy",
+        "blargg",
+        "opcode",
+        "LR35902"
+      ],
+      "assets": [
+        {
+          "name": "blargg-cpu-instrs",
+          "kind": "external-dataset",
+          "purpose": "Blargg's cpu_instrs test ROM suite — the de-facto correctness battery for CPU opcode/flag behavior. Each sub-ROM prints PASS/FAIL over the serial link.",
+          "url": "https://github.com/retrio/gb-test-roms/tree/master/cpu_instrs",
+          "fetch": "git submodule or curl per-rom; do NOT copy ROM bytes into this repo"
+        },
+        {
+          "name": "gameboy-doctor-truth-traces",
+          "kind": "external-dataset",
+          "purpose": "gameboy-doctor reference CPU state logs (one line per instruction: registers + PC + opcode bytes). The trace-diff compares the implementation's emitted log line-for-line against these.",
+          "url": "https://github.com/robert/gameboy-doctor",
+          "fetch": "clone reference repo; truth logs live under its truth/ tree, keyed by test rom number"
+        }
+      ],
+      "gate_command": "evals/oracles/emulator-gb/gate.sh",
+      "reference": {
+        "independent": true,
+        "kind": "external-dataset"
+      }
+    },
+    "exchange-lob": {
+      "gate_type": "differential",
+      "description": "Limit-order-book matching-engine oracle. Replays seeded order flow through both the implementation and an independent naive O(n^2) reference matcher, then asserts the resulting fills, book state, and event streams are identical across all seeds.",
+      "domain_signals": [
+        "order book",
+        "matching engine",
+        "limit order",
+        "price-time priority"
+      ],
+      "assets": [
+        {
+          "name": "reference-matcher",
+          "kind": "separate-agent",
+          "purpose": "Independently authored naive O(n^2) price-time-priority matching engine. Deliberately simple (correctness over speed) so it shares no code path with the optimized implementation under test.",
+          "dir": "evals/oracles/exchange-lob/reference"
+        },
+        {
+          "name": "seeded-lob-replay",
+          "kind": "in-repo-dataset",
+          "purpose": "Deterministic seeded order-flow generator + recorded replay fixtures. Each seed produces a reproducible stream of limit/market/cancel orders driving the differential comparison.",
+          "dir": "evals/oracles/exchange-lob/replay"
+        }
+      ],
+      "gate_command": "evals/oracles/exchange-lob/gate.sh --differential --seeds 200",
+      "reference": {
+        "independent": true,
+        "kind": "separate-agent",
+        "dir": "evals/oracles/exchange-lob/reference"
+      }
+    },
+    "raytracer-calib": {
+      "gate_type": "verdict",
+      "calibration_only": true,
+      "description": "Ray-tracer rendering oracle used only to calibrate the gate harness (not as a pass/fail gate for shipped work). Renders a fixed scene and issues a verdict by comparing output against a reference image via SSIM at a high similarity threshold.",
+      "domain_signals": [
+        "raytracer",
+        "ray tracing",
+        "SSIM",
+        "render",
+        "path tracing"
+      ],
+      "assets": [
+        {
+          "name": "reference-render",
+          "kind": "in-repo-dataset",
+          "purpose": "Golden reference render of the calibration scene at fixed resolution/seed. The verdict gate scores the implementation's render against this image with SSIM.",
+          "dir": "evals/oracles/raytracer-calib/reference"
+        }
+      ],
+      "gate_command": "evals/oracles/raytracer-calib/gate.sh --ssim-threshold 0.99",
+      "reference": {
+        "independent": true
+      }
+    }
+  }
+}
