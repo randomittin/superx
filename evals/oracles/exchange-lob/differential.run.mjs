@@ -314,7 +314,14 @@ async function main() {
   process.exit(0);
 }
 
-main().catch((err) => {
-  process.stderr.write(String(err && err.stack ? err.stack : err) + '\n');
-  process.exit(2);
-});
+// Run main only when executed directly (not when imported — the R-5 behavioral
+// tautology probe reuses seededDelay/makeLatencyHook without launching the sweep).
+const isMain = import.meta.url === `file://${process.argv[1]}`;
+if (isMain) {
+  main().catch((err) => {
+    process.stderr.write(String(err && err.stack ? err.stack : err) + '\n');
+    process.exit(2);
+  });
+}
+
+export { seededDelay, makeLatencyHook };

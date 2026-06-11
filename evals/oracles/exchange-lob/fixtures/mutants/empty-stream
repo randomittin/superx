@@ -1,0 +1,11 @@
+{
+  "fixture": "mutant",
+  "mutant": "empty-stream",
+  "domain": "exchange-lob",
+  "defect": "R-6 empty-stream false-green: a defect mutant whose trade streams are EMPTY on both sides. A diff over zero trades is UNGRADABLE — max length is 0, so a naive sequence diff reports no divergence and the gate false-GREENS at zero work (a check over nothing proves nothing). The gate MUST refuse to grade it: status:\"error\", runner exit 2 (IO error — NOT pass, NOT fail).",
+  "must_turn_red_gate": "exchange-lob differential — empty-stream guard (status:error, exit 2)",
+  "how_the_gate_rejects": "run.sh requires ref_len>=1 AND subj_len>=1 on the correct_trades/corrupted_trades sequences. Both are empty here (len 0), so the gate emits report.json status:\"error\" with fix_hint 'empty stream is ungradable' and exits 2. It never writes status:\"pass\" and never writes status:\"fail\" — an ungradable input is an ERROR, distinct from a caught defect.",
+  "correct_trades": [],
+  "corrupted_trades": [],
+  "why_a_naive_diff_false_greens": "A lockstep sequence diff over two empty arrays finds no divergence at any index (there are no indices), so without an explicit length>=1 precondition it returns 'identical' and the gate passes at zero trades compared. The empty-stream guard converts that silent false-green into an explicit ungradable ERROR."
+}

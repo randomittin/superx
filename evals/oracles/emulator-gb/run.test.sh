@@ -124,6 +124,43 @@ fi
 # Restore the prior report.json so the test leaves no tracked-file churn.
 [ -n "$saved" ] && cp "$saved" "$DIR/report.json"
 
+echo "[10] R-2 GOLDEN-CHECK CORRUPT-AND-CONFIRM: the input-A vs independent-truth-B golden check MUST be falsifiable"
+# R-2: the falsify emulator golden check grades the golden trace (input-A) against
+# an INDEPENDENTLY-DERIVED truth log (truth-B = trace.truth.gbdoctor), NOT against
+# itself. Before R-2 falsify omitted --truth, so run.sh diffed the golden against
+# its own default (X-vs-X) and the false-RED check could never go red. This test
+# proves the check is now a REAL comparison: (a) input-A vs truth-B is GREEN (two
+# separately-authored files agree, as they must for a correct program); (b) corrupt
+# ONE byte of truth-B and the SAME golden check goes RED. A check that stays green
+# when truth-B is corrupted is an X-vs-X self-comparison (R-2 defect).
+TRUTH_B="$DIR/fixtures/golden/trace.truth.gbdoctor"
+# (a) input-A vs independent truth-B is GREEN, and the two paths differ (no X-vs-X).
+in_abs="$(cd "$(dirname "$GOLDEN")" && pwd)/$(basename "$GOLDEN")"
+truth_abs="$(cd "$(dirname "$TRUTH_B")" && pwd)/$(basename "$TRUTH_B")"
+if [ "$in_abs" != "$truth_abs" ]; then ok "golden check uses an independent truth file (input path != truth path — not X-vs-X)"; else bad "truth-B path equals input path — X-vs-X self-comparison (R-2 defect)"; fi
+ab_report="$TMP/ab.report.json"
+if "$RUN" --input "$GOLDEN" --truth "$TRUTH_B" --report "$ab_report" >/dev/null 2>&1    && jq -e '.status=="pass" and .first_divergence==null' "$ab_report" >/dev/null 2>&1; then
+  ok "input-A vs independent truth-B is GREEN (status=pass — the two derivations agree)"
+else
+  bad "input-A vs truth-B did not pass green"; cat "$ab_report" 2>/dev/null || true
+fi
+# (b) corrupt one byte of truth-B (flip the post-AND F:20 -> F:21) and confirm RED.
+corrupt_b="$TMP/truth-b-corrupt.gbdoctor"
+sed 's/F:20 \(.*\)PC:0103/F:21 \1PC:0103/' "$TRUTH_B" > "$corrupt_b"
+if ! grep -q 'F:21 .*PC:0103' "$corrupt_b"; then
+  bad "R-2 corrupt setup failed: did not inject F:21 at PC:0103 into truth-B (truth-B shape changed?)"
+else
+  cb_report="$TMP/truth-b-corrupt.report.json"
+  if "$RUN" --input "$GOLDEN" --truth "$corrupt_b" --report "$cb_report" >/dev/null 2>&1; then
+    cb_rc=0; else cb_rc=$?; fi
+  if [ "$cb_rc" -ne 0 ] && jq -e '.status=="fail" and (.first_divergence|type=="object") and (.first_divergence.expected|test("F:21")) and (.first_divergence.actual|test("F:20"))' "$cb_report" >/dev/null 2>&1; then
+    ok "corrupted truth-B drives the golden check RED (expected truth F:21 vs input F:20) — the check is a real comparison, not X-vs-X (R-2)"
+  else
+    bad "corrupted truth-B did NOT drive the golden check red (rc=$cb_rc) — X-vs-X self-comparison (R-2 violation)"
+    cat "$cb_report" 2>/dev/null || true
+  fi
+fi
+
 echo ""
 echo "RESULT: $pass passed, $fail failed"
 [ "$fail" -eq 0 ]

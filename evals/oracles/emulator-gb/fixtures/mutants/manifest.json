@@ -14,7 +14,9 @@
       "diverging_line_index": 3,
       "diverging_field": "F",
       "reject_contract": "at PC:0103 reference F=0x20 (H=1, bit 5), mutant F=0x00 (H=0) -> trace-diff divergence",
-      "blind_to": ["all register values (A is correct)"]
+      "blind_to": [
+        "all register values (A is correct)"
+      ]
     },
     {
       "name": "skip-f-mask",
@@ -25,7 +27,10 @@
       "diverging_line_index": 1,
       "diverging_field": "F",
       "reject_contract": "at PC:0101 reference F=0x10, mutant F=0x1F -> trace-diff divergence (truth F low nibble is always 0)",
-      "blind_to": ["every register value", "the high nibble of F"]
+      "blind_to": [
+        "every register value",
+        "the high nibble of F"
+      ]
     },
     {
       "name": "jr-off-by-one",
@@ -36,7 +41,23 @@
       "diverging_line_index": 4,
       "diverging_field": "PC",
       "reject_contract": "after JR reference PC=0x0107 (PCMEM 00,..), mutant PC=0x0106 (PCMEM desync) -> trace-diff divergence; downstream trace fully desynchronizes",
-      "blind_to": ["all flags (JR sets none)", "all registers"]
+      "blind_to": [
+        "all flags (JR sets none)",
+        "all registers"
+      ]
+    }
+  ],
+  "error_inputs": [
+    {
+      "name": "empty-trace",
+      "file": "empty-trace",
+      "kind": "error",
+      "expectation": "error",
+      "expect_exit": 2,
+      "expect_status": "error",
+      "defect": "R-6 empty-stream false-green: a subject trace with ZERO instruction lines (comments only). An all-empty lockstep diff (max=0) previously reported pass at 0 instructions — a false-green. The gate must refuse to grade it.",
+      "reject_contract": "report.json status:\"error\" + runner exit 2 (IO error); NEVER status:\"pass\". Requires ref_len>=1 AND subj_len>=1; the empty subject (subj_len=0) is ungradable. Pinned as the corpus expected-error case emulator-empty-trace.",
+      "why_not_a_mutant": "error_inputs are NOT defect mutants — falsify`s kill-sweep (.mutants[]) does not score them. They assert the gate`s empty-stream ERROR handling (R-6), graded by bin/corpus as expected-status:error cases. Keeping them out of .mutants[] preserves the falsifiability score denominator (3/3 emulator)."
     }
   ]
 }

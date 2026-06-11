@@ -3,7 +3,19 @@
   "case": "exchange-c2-locked",
   "domain": "exchange-lob",
   "what": "The CORRECT fix for the C2 race: the locked subject engine (fixtures/engines/locked.mjs) serializes read-match-mutate behind a FIFO mutex, so critical-section entry order == submission order even though the per-id seeded variable-latency hook is still awaited and races. The C2 live arm (gate.sh --differential --engine fixtures/engines/locked.mjs --seeds 200) is GREEN across all 200 seeds: the concurrent whole-output equals the submission-order serial replay at every index. `expected_trades` + `expected_book` are that reference serial replay (reference/matcher.mjs) over the same order stream — the locked engine reproduces them exactly. This is a known-good (expected pass) case: the gate MUST NOT false-RED it.",
-  "invariants_exercised": ["C2", "I1", "I2", "I3", "I4", "O1", "O2", "D1", "D2", "D3", "C1"],
+  "invariants_exercised": [
+    "C2",
+    "I1",
+    "I2",
+    "I3",
+    "I4",
+    "O1",
+    "O2",
+    "D1",
+    "D2",
+    "D3",
+    "C1"
+  ],
   "live_provenance": {
     "arm": "seeded-variable-latency-interleave",
     "engine": "evals/oracles/exchange-lob/fixtures/engines/locked.mjs",
@@ -13,27 +25,110 @@
     "note": "expected_trades/expected_book = reference serial replay; locked engine matches them for every seed."
   },
   "orders": [
-    { "kind": "limit",  "id": 1, "account": "A", "side": "sell", "price": 105, "qty": 10 },
-    { "kind": "limit",  "id": 2, "account": "D", "side": "sell", "price": 99,  "qty": 10 },
-    { "kind": "limit",  "id": 3, "account": "C", "side": "buy",  "price": 99,  "qty": 3  },
-    { "kind": "market", "id": 4, "account": "C", "side": "buy",                "qty": 4  },
-    { "kind": "limit",  "id": 5, "account": "B", "side": "buy",  "price": 95,  "qty": 5  },
-    { "kind": "limit",  "id": 6, "account": "D", "side": "buy",  "price": 97,  "qty": 7  },
-    { "kind": "limit",  "id": 7, "account": "D", "side": "buy",  "price": 102, "qty": 5  }
+    {
+      "kind": "limit",
+      "id": 1,
+      "account": "A",
+      "side": "sell",
+      "price": 105,
+      "qty": 10
+    },
+    {
+      "kind": "limit",
+      "id": 2,
+      "account": "D",
+      "side": "sell",
+      "price": 99,
+      "qty": 10
+    },
+    {
+      "kind": "limit",
+      "id": 3,
+      "account": "C",
+      "side": "buy",
+      "price": 99,
+      "qty": 3
+    },
+    {
+      "kind": "market",
+      "id": 4,
+      "account": "C",
+      "side": "buy",
+      "qty": 4
+    },
+    {
+      "kind": "limit",
+      "id": 5,
+      "account": "B",
+      "side": "buy",
+      "price": 95,
+      "qty": 5
+    },
+    {
+      "kind": "limit",
+      "id": 6,
+      "account": "D",
+      "side": "buy",
+      "price": 97,
+      "qty": 7
+    },
+    {
+      "kind": "limit",
+      "id": 7,
+      "account": "D",
+      "side": "buy",
+      "price": 102,
+      "qty": 5
+    }
   ],
   "expected_trades": [
-    { "takerId": 3, "makerId": 2, "price": 99, "qty": 3 },
-    { "takerId": 4, "makerId": 2, "price": 99, "qty": 4 },
-    { "takerId": 7, "makerId": 2, "price": 99, "qty": 3 }
+    {
+      "takerId": 3,
+      "makerId": 2,
+      "price": 99,
+      "qty": 3
+    },
+    {
+      "takerId": 4,
+      "makerId": 2,
+      "price": 99,
+      "qty": 4
+    },
+    {
+      "takerId": 7,
+      "makerId": 2,
+      "price": 99,
+      "qty": 3
+    }
   ],
   "expected_book": {
     "bids": [
-      { "id": 7, "account": "D", "price": 102, "qty": 5, "remaining": 2 },
-      { "id": 6, "account": "D", "price": 97,  "qty": 7, "remaining": 7 },
-      { "id": 5, "account": "B", "price": 95,  "qty": 5, "remaining": 5 }
+      {
+        "id": 7,
+        "account": "D",
+        "price": 102,
+        "qty": 2
+      },
+      {
+        "id": 6,
+        "account": "D",
+        "price": 97,
+        "qty": 7
+      },
+      {
+        "id": 5,
+        "account": "B",
+        "price": 95,
+        "qty": 5
+      }
     ],
     "asks": [
-      { "id": 1, "account": "A", "price": 105, "qty": 10, "remaining": 10 }
+      {
+        "id": 1,
+        "account": "A",
+        "price": 105,
+        "qty": 10
+      }
     ]
   }
 }

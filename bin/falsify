@@ -111,10 +111,18 @@ fi
 
 GUARD_REJECT_LINE="REJECTED: mutant survived"
 
-# Per-domain golden fixture path (the input run.sh grades for the false-RED check).
+# Per-domain golden fixture path (the input run.sh grades for the false-RED check)
+# and, where the gate diffs against a separate truth log, an INDEPENDENTLY-DERIVED
+# truth file (R-2). For emulator-gb the truth MUST be passed to run.sh explicitly
+# and MUST be a different file from the input — run.sh's default truth IS its input,
+# so omitting --truth made the golden check an X-vs-X self-diff that could never go
+# red. exchange-lob derives its serial-replay reference from the input's `orders`
+# (reference/matcher.mjs), so it takes no separate truth file.
+GOLDEN_TRUTH=""
 case "$DOMAIN" in
   exchange-lob) GOLDEN_INPUT="$GOLDEN_DIR/order-stream.json" ;;
-  emulator-gb)  GOLDEN_INPUT="$GOLDEN_DIR/trace.gbdoctor" ;;
+  emulator-gb)  GOLDEN_INPUT="$GOLDEN_DIR/trace.gbdoctor"
+                GOLDEN_TRUTH="$GOLDEN_DIR/trace.truth.gbdoctor" ;;
   *) echo "error: no golden fixture wired for domain '$DOMAIN'" >&2; exit 2 ;;
 esac
 
@@ -133,7 +141,14 @@ run_gate() {
   local input="$1" report
   report="$(mktemp)"
   # run.sh exit: 0=pass, 1=fail (both write a valid report), 2=IO/usage error.
-  bash "$RUN_SH" --input "$input" --report "$report" >/dev/null 2>&1 || true
+  # When the domain ships a separate independently-derived truth log (emulator-gb,
+  # R-2), forward it as --truth so the diff is input-vs-independent-truth, never the
+  # X-vs-X self-diff run.sh's default truth would produce.
+  if [ -n "$GOLDEN_TRUTH" ]; then
+    bash "$RUN_SH" --input "$input" --truth "$GOLDEN_TRUTH" --report "$report" >/dev/null 2>&1 || true
+  else
+    bash "$RUN_SH" --input "$input" --report "$report" >/dev/null 2>&1 || true
+  fi
   echo "$report"
 }
 
@@ -174,6 +189,22 @@ golden_check() {
   # (false-RED) and is itself broken.
   [ -f "$GOLDEN_INPUT" ] || { echo "  golden missing: $GOLDEN_INPUT" >&2; return 1; }
   echo "  golden: ${GOLDEN_INPUT#"$PLUGIN_DIR"/}"
+
+  # R-2 falsifiability precondition: where a separate truth log is used, the truth
+  # file MUST exist and MUST NOT be the input file. An X-vs-X comparison (truth path
+  # == input path) can never go red, so it proves nothing — refuse to run it.
+  if [ -n "$GOLDEN_TRUTH" ]; then
+    [ -f "$GOLDEN_TRUTH" ] || { echo "  golden truth missing: $GOLDEN_TRUTH" >&2; return 1; }
+    local in_abs truth_abs
+    in_abs="$(cd "$(dirname "$GOLDEN_INPUT")" && pwd)/$(basename "$GOLDEN_INPUT")"
+    truth_abs="$(cd "$(dirname "$GOLDEN_TRUTH")" && pwd)/$(basename "$GOLDEN_TRUTH")"
+    if [ "$in_abs" = "$truth_abs" ]; then
+      echo "  golden check is X-vs-X: --truth path equals --input path ($in_abs) — non-falsifiable, refusing" >&2
+      return 1
+    fi
+    echo "  truth:  ${GOLDEN_TRUTH#"$PLUGIN_DIR"/} (independent derivation; input path != truth path)"
+  fi
+
   local report status
   report="$(run_gate "$GOLDEN_INPUT")"
   status="$(report_status "$report")"

@@ -1,0 +1,76 @@
+// MUTANT: tautological-queuemicrotask  (domain: exchange-lob)
+// ============================================================================
+// THE GREP-EVADING FALSE-GREEN REGRESSION GUARD (remediation R-5).
+//
+// This is the SAME can't-fail tautology as `tautological-concurrency`, but it is
+// written to EVADE the legacy string grep. The old guard detection in run.sh was a
+// token scan for the two yield/gather names the original guard used. This
+// construction uses NEITHER token: it yields via `queueMicrotask` and gathers the
+// pending promises with a hand-rolled await loop (none of the scanned tokens appear
+// anywhere in this file — verified by run.test.sh's grep-miss assertion).
+// So the grep alone MISSES it and the non-falsifiable construction would sail
+// through green. The BEHAVIORAL probe (tautology.probe.mjs) catches it: under
+// seeded per-id variable latency, this construction's arrival order equals
+// submission order for every seed (microtasks drain in enqueue order), so it
+// cannot interleave -> non-falsifiable -> REJECT.
+//
+// must_turn_red_gate: exchange-lob seeded variable-latency differential (C2),
+//                     via the BEHAVIORAL tautology verdict (grep is advisory only).
+// is_false_green_regression_guard: true
+// ============================================================================
+
+// ---- WHY THIS CANNOT FAIL (the defect being encoded) -----------------------
+// Node is single-threaded. `engine.submit(o)` below is SYNCHRONOUS. Wrapping a
+// synchronous call in `queueMicrotask` and awaiting the gathered promises does NOT
+// interleave anything: the microtask queue drains its callbacks in the ORDER THEY
+// WERE QUEUED (= submission order), each running to completion atomically. So the
+// "concurrent" run is provably equal to the serial run BY CONSTRUCTION. There is
+// no awaited critical section, no variable latency, no genuine interleaving — the
+// concurrency claim is a tautology. A real awaited engine that reorders fills
+// under a latency race (the actual C2 bug) would still pass this "test".
+//
+// queueMicrotask + a manual await loop were chosen specifically because they are
+// OUTSIDE the legacy grep. None of the scanned yield/gather tokens appear, so a
+// token scan does not match; only the behavioral measurement (does arrival order
+// ever permute under seeded latency?) exposes the identical tautology.
+
+async function tautologicalQueueMicrotaskTest(engine, orders) {
+  // (1) "Concurrent" submission — the grep-evading false-green construction.
+  //     queueMicrotask-wrapped SYNCHRONOUS submits, gathered with a manual await
+  //     loop (deliberately NOT the array-combinator the grep scans for).
+  const pending = [];
+  for (const o of orders) {
+    pending.push(
+      new Promise((resolve) => {
+        queueMicrotask(() => {
+          engine.submit(o); // SYNCHRONOUS: completes atomically, no await inside
+          resolve();
+        });
+      })
+    );
+  }
+  for (const p of pending) await p; // gather — drains in enqueue (= submission) order
+  const concurrentTrades = engine.trades();
+
+  // (2) Serial replay of the SAME submission order.
+  const serial = engine.fresh();
+  for (const o of orders) serial.submit(o);
+  const serialTrades = serial.trades();
+
+  // (3) The tautological assertion. Because (1) drains microtasks in queue
+  //     (= submission) order and submit() is synchronous, the two sequences are
+  //     identical by construction. This passes for ANY engine, correct or racy.
+  //     THE CHECK HAS NO TEETH.
+  return JSON.stringify(concurrentTrades) === JSON.stringify(serialTrades);
+}
+
+// ---- WHAT A REAL (falsifiable) GATE DOES INSTEAD ---------------------------
+// Award latency from a seeded variable-latency scheduler, AWAIT it inside the
+// critical section BEFORE the read-match-mutate step, sweep many seeds, and diff
+// the WHOLE concurrent trade sequence against the serial-replay reference. The
+// behavioral probe runs exactly this dispatch and measures permutation: a genuine
+// construction permutes arrival under some seed; this queueMicrotask construction
+// never does. The gate that runs the behavioral verdict MUST flag this as non-
+// falsifiable and REJECT it — even though the grep cannot see it.
+
+module.exports = { tautologicalQueueMicrotaskTest };

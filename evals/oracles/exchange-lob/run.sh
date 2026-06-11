@@ -198,44 +198,125 @@ write_report() {
 # ═══════════════════════════════════════════════════════════════════════════
 
 # The tautological-concurrency false-green guard is JS source, not a JSON output
-# stream — it is a non-falsifiable GATE CONSTRUCTION (Promise.all over synchronous
-# setImmediate-wrapped submit), not a defect input. The interleave arm REJECTS it:
-# a gate that cannot interleave cannot expose the C2 race, so the gate is non-
+# stream — it is a non-falsifiable GATE CONSTRUCTION (a Promise gather over a
+# synchronous yield-wrapped submit), not a defect input. The interleave arm REJECTS
+# it: a gate that cannot interleave cannot expose the C2 race, so the gate is non-
 # falsifiable and the input fails. Detect it before attempting a JSON parse.
+#
+# R-5 — the verdict is BEHAVIORAL, not a string grep. The legacy
+# `grep -E 'setImmediate|Promise.all'` is kept ONLY as an ADVISORY fast-path: a
+# renamed/`queueMicrotask` construction evades it. The VERDICT is measured by
+# tautology.probe.mjs, which dispatches the fixture's construction under seeded
+# per-id variable latency over 5 seeds and checks whether arrival order ever
+# permutes. If it never permutes, the construction cannot interleave -> non-
+# falsifiable -> REJECT. Behavior catches what the grep misses.
 if ! jq -e . "$INPUT" >/dev/null 2>&1; then
+  PROBE="$ORACLE_DIR/tautology.probe.mjs"
+  # Advisory grep fast-path (R-5): records whether the legacy token scan would have
+  # flagged this construction. It does NOT decide the verdict — the behavioral probe
+  # does — but it is reported so a grep-evading construction is visibly caught only
+  # by behavior, not by the string match.
+  grep_advisory="miss"
+  if grep -qE 'setImmediate|Promise\.all' "$INPUT" 2>/dev/null; then grep_advisory="match"; fi
+
+  if command -v node >/dev/null 2>&1 && [ -f "$PROBE" ]; then
+    # Behavioral verdict: probe exit 1 == non-falsifiable (never permutes); exit 0 ==
+    # genuinely interleaves (falsifiable, not a tautology); exit 2 == probe IO error.
+    probe_rc=0
+    node "$PROBE" --fixture "$INPUT" --seeds 5 >/dev/null 2>&1 || probe_rc=$?
+    if [ "$probe_rc" -eq 1 ]; then
+      metrics="$(jq -nc --arg ga "$grep_advisory" \
+        '{"trades_compared":0,"seeds_swept":5,"arm":"behavioral-tautology-probe","grep_advisory":$ga}')"
+      write_report "fail" \
+        "interleave construction (behavioral tautology verdict)" \
+        "an awaited per-id seeded variable-latency critical section whose arrival order PERMUTES under at least one seed (exposes the C2 race)" \
+        "a synchronous yield-wrapped submit() — arrival order == submission order for all 5 seeds, no awaited critical section, cannot interleave (non-falsifiable construction; grep fast-path: ${grep_advisory})" \
+        "$metrics" \
+        "Replace the fixed-yield dispatch (setImmediate/queueMicrotask/process.nextTick over a synchronous submit) with a deterministic per-id seeded variable-latency hook awaited BEFORE the read-match-mutate critical section, sweep >=200 seeds, and diff the whole concurrent fill sequence against the submission-order serial replay (see interleave.md)."
+      exit 1
+    elif [ "$probe_rc" -eq 0 ]; then
+      # The construction genuinely interleaves -> NOT a tautology. It is still not a
+      # gradable JSON output stream, so this is an IO error, not a pass/fail verdict.
+      echo "error: input is a genuinely-interleaving construction (behavioral probe: falsifiable), not a gradable output stream: $INPUT" >&2
+      exit 2
+    fi
+    # probe_rc == 2 (or other): probe could not run -> fall through to grep fast-path.
+    echo "warn: behavioral probe could not classify $INPUT (exit $probe_rc); falling back to advisory grep" >&2
+  fi
+
+  # Fallback advisory grep (only when node/probe unavailable): the legacy fast-path.
   if grep -q 'tautological-concurrency' "$INPUT" 2>/dev/null \
      || grep -qE 'setImmediate|Promise\.all' "$INPUT" 2>/dev/null; then
-    metrics="$(jq -nc '{"trades_compared":0,"seeds_swept":0,"arm":"seeded-variable-latency-interleave"}')"
+    metrics="$(jq -nc '{"trades_compared":0,"seeds_swept":0,"arm":"advisory-grep-fallback"}')"
     write_report "fail" \
-      "interleave construction (tautological-concurrency)" \
+      "interleave construction (tautological-concurrency, advisory grep)" \
       "an awaited per-id seeded variable-latency critical section that can interleave (exposes the C2 race)" \
-      "Promise.all over synchronous setImmediate-wrapped submit() — resolves in submission order by construction, no awaited critical section, cannot interleave (non-falsifiable gate construction)" \
+      "a synchronous yield-wrapped submit() resolving in submission order by construction (non-falsifiable gate construction; behavioral probe unavailable, advisory grep matched)" \
       "$metrics" \
-      "Replace the fixed-yield/setImmediate dispatch with a deterministic per-id seeded variable-latency hook awaited BEFORE the read-match-mutate critical section, sweep >=200 seeds, and diff the whole concurrent fill sequence against the submission-order serial replay (see interleave.md)."
+      "Replace the fixed-yield dispatch with a deterministic per-id seeded variable-latency hook awaited BEFORE the read-match-mutate critical section, sweep >=200 seeds, and diff the whole concurrent fill sequence against the submission-order serial replay (see interleave.md)."
     exit 1
   fi
   echo "error: input is neither valid JSON nor a recognized concurrency-guard fixture: $INPUT" >&2
   exit 2
 fi
 
-# ── Golden: subject == reference (expected_trades + expected_book). MUST pass.
+# ── Golden: REPLAY the order stream through the independent reference matcher and
+#    diff the PRODUCED trades/book against the fixture's expected_trades/
+#    expected_book (R-2: a real comparison, never X-vs-X). The matcher
+#    (reference/matcher.mjs) shares no lineage with the expectations, so a
+#    corrupted expected side drives the golden check RED — the false-RED check is
+#    now falsifiable. MUST pass on the correct golden.
 if jq -e 'has("expected_trades")' "$INPUT" >/dev/null 2>&1; then
-  trades="$(jq '.expected_trades' "$INPUT")"
-  book="$(jq '.expected_book // {}' "$INPUT")"
-  n="$(seq_len "$trades")"
-  # Diff the authoritative whole-output against itself: a divergence here means
-  # the gate is over-strict (false-RED) — the diff must stay green.
-  if diff_trade_sequence "$trades" "$trades" && diff_book_state "$book" "$book"; then
+  command -v node >/dev/null 2>&1 || { echo "error: node is required to replay golden orders through reference/matcher.mjs" >&2; exit 2; }
+  MATCHER="$ORACLE_DIR/reference/matcher.mjs"
+  [ -f "$MATCHER" ] || { echo "error: reference matcher missing: $MATCHER" >&2; exit 2; }
+
+  expected_trades="$(jq '.expected_trades' "$INPUT")"
+  expected_book="$(jq '.expected_book // {"bids":[],"asks":[]}' "$INPUT")"
+  n="$(seq_len "$expected_trades")"
+
+  # R-6: an empty expected trade sequence cannot be graded — a check over nothing
+  # proves nothing (a zero-trade golden passes trivially). Treat as IO error.
+  if [ "$n" -lt 1 ]; then
+    metrics="$(jq -nc '{"trades_compared":0,"seeds_swept":0,"arm":"whole-output-differential"}')"
+    write_report "error" "empty expected trade stream" "ref_len>=1" "ref_len=0" "$metrics" \
+      "empty stream is ungradable: a golden with zero expected_trades cannot demonstrate the gate caught anything. Provide a non-empty order stream."
+    exit 2
+  fi
+
+  # Replay orders through the independent reference matcher. Its book renders
+  # {id,account,price,qty(original),remaining}; the golden's expected_book uses
+  # {id,account,price,qty:=remaining}, so normalize the produced book to that
+  # shape before diffing (qty := remaining, drop the original-qty/remaining split).
+  replay="$(jq '{orders}' "$INPUT" | node "$MATCHER" 2>/dev/null)" || {
+    echo "error: reference matcher failed to replay golden orders" >&2; exit 2; }
+  produced_trades="$(jq '.trades' <<<"$replay")"
+  produced_book="$(jq '.book | {bids:[.bids[]|{id,account,price,qty:.remaining}], asks:[.asks[]|{id,account,price,qty:.remaining}]}' <<<"$replay")"
+
+  # R-6: a subject (produced) stream with zero trades is equally ungradable.
+  subj_n="$(seq_len "$produced_trades")"
+  if [ "$subj_n" -lt 1 ]; then
+    metrics="$(jq -nc --argjson n "$n" '{"trades_compared":$n,"seeds_swept":0,"arm":"whole-output-differential"}')"
+    write_report "error" "empty produced trade stream" "subj_len>=1" "subj_len=0" "$metrics" \
+      "empty stream is ungradable: the reference matcher produced zero trades for this order stream."
+    exit 2
+  fi
+
+  # Diff the PRODUCED whole-output (trades + normalized book) against the fixture's
+  # expectations: a divergence means the expectations are wrong (or the gate is
+  # over-strict). The correct golden must stay green; a corrupted expected side
+  # MUST go red (R-2 falsifiability).
+  if diff_trade_sequence "$expected_trades" "$produced_trades" && diff_book_state "$expected_book" "$produced_book"; then
     metrics="$(jq -nc --argjson n "$n" \
       '{"trades_compared":$n,"seeds_swept":1,"arm":"whole-output-differential"}')"
     write_report "pass" "" "" "" "$metrics" \
-      "Whole fill sequence and post-stream book equal the independent serial-replay reference at every index — no action needed."
+      "Whole fill sequence and post-stream book equal the independent serial-replay reference (reference/matcher.mjs) at every index — no action needed."
     exit 0
   fi
   metrics="$(jq -nc --argjson n "$n" \
     '{"trades_compared":$n,"seeds_swept":1,"arm":"whole-output-differential"}')"
   write_report "fail" "$DIV_STEP" "$DIV_EXPECTED" "$DIV_ACTUAL" "$metrics" \
-    "Gate rejected its own golden — the differential is over-strict (false-RED). Re-derive expected_trades/expected_book from INVARIANTS.md before trusting any mutant result."
+    "Golden expectations diverge from the independent serial-replay reference (reference/matcher.mjs). Re-derive expected_trades/expected_book from INVARIANTS.md, or fix the corrupted expected side."
   exit 1
 fi
 
@@ -244,6 +325,16 @@ if jq -e 'has("corrupted_trades")' "$INPUT" >/dev/null 2>&1; then
   ref="$(jq '.correct_trades' "$INPUT")"
   subj="$(jq '.corrupted_trades' "$INPUT")"
   n="$(seq_len "$ref")"
+  subj_n="$(seq_len "$subj")"
+  # R-6: both sides must carry >=1 trade. An empty reference OR subject sequence is
+  # ungradable — exit 2 with status:error, never a silent pass/fail.
+  if [ "$n" -lt 1 ] || [ "$subj_n" -lt 1 ]; then
+    metrics="$(jq -nc --argjson n "$n" --argjson s "$subj_n" \
+      '{"trades_compared":0,"ref_len":$n,"subj_len":$s,"seeds_swept":0,"arm":"whole-output-differential"}')"
+    write_report "error" "empty trade stream" "ref_len>=1 and subj_len>=1" "ref_len=$n subj_len=$subj_n" "$metrics" \
+      "empty stream is ungradable: a defect mutant must carry at least one trade on each side to be compared."
+    exit 2
+  fi
   metrics="$(jq -nc --argjson n "$n" \
     '{"trades_compared":$n,"seeds_swept":1,"arm":"whole-output-differential"}')"
   if diff_trade_sequence "$ref" "$subj"; then

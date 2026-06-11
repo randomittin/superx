@@ -51,7 +51,7 @@ diagnostic/manifest sugar.
 
 ```json
 {
-  "status":                   "fail",   // mutation cases always fail (a caught defect)
+  "status":                   "fail",   // one of: "fail" (caught defect) | "pass" (known-good) | "error" (ungradable input — R-6)
   "first_divergence": {                  // spec H-1 STRUCTURED object (not a string)
     "file":     "exchange-lob",
     "step":     "trade index 0 (reference len=1 actual len=1)",
@@ -67,6 +67,26 @@ diagnostic/manifest sugar.
 against. For a mutation case, `status` is always `"fail"` (the gate must catch it) and
 `first_divergence` is the non-null `{file, step, expected, actual}` object the gate emits
 (REPORT-CONTRACT.md §3).
+
+### `status` enum
+
+`status` is one of three values — the verdict the case asserts the gate emits:
+
+| `status` | Meaning                                                                                          | `first_divergence` |
+|----------|--------------------------------------------------------------------------------------------------|--------------------|
+| `"fail"` | The gate CAUGHT a defect (the mutation-case norm). Pinned `first_divergence` object is asserted. | non-null object    |
+| `"pass"` | The gate stayed green on a known-good case (a false-RED guard, e.g. `exchange-c2-locked`).        | `null`             |
+| `"error"`| The input is UNGRADABLE — a check over nothing proves nothing (R-6 empty-stream). The gate refused to grade and the runner exited 2 (IO error — NOT pass, NOT fail). | `null` or a diagnostic locator object; the runner asserts only `status` for error cases. |
+
+- **`"error"` (R-6).** An empty trade stream (exchange) or an empty instruction
+  trace (emulator) cannot be graded: a lockstep diff over zero elements finds no
+  divergence and would false-GREEN at zero work. Both gates' `run.sh` require
+  `ref_len >= 1` AND `subj_len >= 1`; otherwise they write `status:"error"` and exit
+  2. An expected-error corpus case (`source: "mutation"`, `status: "error"`) is a
+  CATCH iff the gate emits `status == "error"`. Because there is no defect to
+  pinpoint, an error case does NOT pin a `first_divergence` and the runner does NOT
+  assert one for it (the byte-equality pin applies only to `"fail"` cases). The
+  seeded `error` cases are `exchange-empty-stream` and `emulator-empty-trace`.
 
 - **`first_divergence` is the EXACT object the gate's `run.sh` emits** into
   `report.json.first_divergence` — the runner asserts **byte-equality** after
@@ -156,9 +176,16 @@ logic, exactly as `bin/falsify` is a pure orchestrator over `run.sh`:
 3. Assert the gate's `report.json.status` == `expected.json.status` AND
    `report.json.first_divergence` == `expected.json.first_divergence` (byte-equality on
    the canonical `jq -cS` form of the structured `{file, step, expected, actual}` object).
-   - **catch** = both match (the gate caught the defect at the right pinpoint).
-   - **miss** = `status` is `pass`, or the pinpoint diverges — the gate is a false-green
-     for this case and the run is RED.
+   - **catch** = both match. For an expected-`fail` case: the gate went `fail` at the
+     pinned pinpoint. For an expected-`pass` case: the gate stayed green. For an
+     expected-`error` case (R-6): the gate emitted `status == "error"` (the input was
+     correctly refused as ungradable — error ≠ catch-of-a-defect, but for an
+     expected-error case a matching `error` status IS the catch). No `first_divergence`
+     is asserted for an error case.
+   - **miss** = the status does not match the expectation (e.g. an expected-`error`
+     case where the gate `pass`ed or `fail`ed — the empty-stream false-green slipped
+     through), or, for an expected-`fail` case, the pinpoint diverges — the gate is a
+     false-green for this case and the run is RED.
 4. Aggregate: per-case catch/miss, per-gate catch-rate, **corpus catch-rate for this
    Heimdall version** (the published time series). `heimdall bench` draws from this.
 

@@ -1,0 +1,11 @@
+{
+  "id": "exchange-empty-stream",
+  "source": "mutation",
+  "gates_under_test": ["exchange-lob"],
+  "difficulty": "easy",
+  "added_in_version": "0.1",
+  "seed": "empty-stream",
+  "repro": { "input": "input.json", "expected": "expected.json" },
+  "defect": "R-6 empty-stream false-green: correct_trades and corrupted_trades are both empty. A lockstep diff over zero trades is ungradable — the gate must refuse (status:error, exit 2), never false-green at zero work.",
+  "invariants": ["R-6 empty-stream guard"]
+}

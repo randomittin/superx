@@ -1,0 +1,37 @@
+# TRUTH derivation for the golden program — emulator-gb (DMG LR35902).
+# ============================================================================
+# PURPOSE (remediation R-2): an INDEPENDENTLY-DERIVED truth log for the SAME
+# program traced in trace.gbdoctor (the golden, "goldenA"). The falsify emulator
+# golden check grades `--input trace.gbdoctor --truth trace.truth.gbdoctor` —
+# input path != truth path — so the false-RED check is a REAL comparison of two
+# separately-authored files, not the X-vs-X self-diff it was before (run.sh's
+# default truth IS its input). Corrupt one byte of EITHER file and the golden
+# check goes RED; that is the falsifiability this file restores.
+#
+# These lines were re-derived from the INVARIANTS.md flag rules from scratch (NOT
+# copied from trace.gbdoctor). Because the golden program is correct, the two
+# files necessarily AGREE line-for-line — that agreement is exactly the green the
+# golden check asserts, and any disagreement (a corruption in either) is the red.
+#
+# Program (loaded at 0x0100), identical to trace.gbdoctor:
+#   0100  3C        INC A   ; A 01->02
+#   0101  3D        DEC A   ; A 02->01
+#   0102  A7        AND A   ; A&A=01
+#   0103  18 02     JR +2   ; PC 0103+2+2 = 0107
+#   0107  00        NOP
+#
+# Independent derivation (INVARIANTS.md 8-bit ALU rules; Pan Docs CPU tables):
+#   L1 PC=0100 : post-boot init A=01 F=B0(Z1 N0 H1 C1).
+#   L2 after INC A : A=02. "INC r: Z N=0 H=((r&0xF)==0) C=unchanged". low nibble
+#                    1->2 (!=0) -> H=0; C PRESERVED from boot =1. Z0 N0 H0 C1 = 0x10.
+#   L3 after DEC A : A=01. "DEC r: Z N=1 H=((r&0xF)==0xF) C=unchanged". low nibble
+#                    2->1 (was not 0, so no borrow) -> H=0; C preserved =1. Z0 N1 H0 C1 = 0x50.
+#   L4 after AND A : A=01&01=01. "AND: Z N=0 H=1 C=0". H bit (0x20) SET, C bit (0x10)
+#                    CLEARED -> F = 0x20. (This is the byte the R-1 bug flipped to 0x10.)
+#   L5 after JR +2 : "JR sets no flags" -> F stays 0x20. PC = 0103 + 2(len) + 2(e) = 0107.
+# ----------------------------------------------------------------------------
+A:01 F:B0 B:00 C:13 D:00 E:D8 H:01 L:4D SP:FFFE PC:0100 PCMEM:3C,3D,A7,18
+A:02 F:10 B:00 C:13 D:00 E:D8 H:01 L:4D SP:FFFE PC:0101 PCMEM:3D,A7,18,02
+A:01 F:50 B:00 C:13 D:00 E:D8 H:01 L:4D SP:FFFE PC:0102 PCMEM:A7,18,02,00
+A:01 F:20 B:00 C:13 D:00 E:D8 H:01 L:4D SP:FFFE PC:0103 PCMEM:18,02,00,00
+A:01 F:20 B:00 C:13 D:00 E:D8 H:01 L:4D SP:FFFE PC:0107 PCMEM:00,00,00,00

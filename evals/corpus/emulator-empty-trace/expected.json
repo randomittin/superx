@@ -1,0 +1,6 @@
+{
+  "status": "error",
+  "first_divergence": null,
+  "first_divergence_summary": "ungradable empty instruction trace — the gate must emit status:error and exit 2, never a pass at zero instructions (R-6).",
+  "gate": "emulator-gb"
+}

@@ -8,47 +8,119 @@
       "name": "queue-jump",
       "file": "queue-jump",
       "defect": "later same-price order matches before an earlier resting order (price-time / FIFO violation)",
-      "invariant_violated": ["I4", "D3"],
+      "invariant_violated": [
+        "I4",
+        "D3"
+      ],
       "must_turn_red_gate": "differential",
       "reject_contract": "whole-output trade-sequence diff diverges at index 0 (makerId/taker ordering)",
-      "blind_to": ["I1", "I2", "I3", "C1"]
+      "blind_to": [
+        "I1",
+        "I2",
+        "I3",
+        "C1"
+      ]
     },
     {
       "name": "fill-at-aggressor-price",
       "file": "fill-at-aggressor-price",
       "defect": "trade executes at aggressor limit price instead of resting maker price (maker/taker price swap)",
-      "invariant_violated": ["I1"],
+      "invariant_violated": [
+        "I1"
+      ],
       "must_turn_red_gate": "differential",
       "reject_contract": "trade.price field diverges from reference at index 0 (105 vs resting 99)",
-      "blind_to": ["I2", "I3", "C1"]
+      "blind_to": [
+        "I2",
+        "I3",
+        "C1"
+      ]
     },
     {
       "name": "lifo-tiebreak",
       "file": "lifo-tiebreak",
       "defect": "equal-price makers filled most-recent-first (LIFO) instead of earliest-first (FIFO)",
-      "invariant_violated": ["D3", "I4"],
+      "invariant_violated": [
+        "D3",
+        "I4"
+      ],
       "must_turn_red_gate": "differential",
       "reject_contract": "makerId of first trade diverges (id2 LIFO vs id1 FIFO)",
-      "blind_to": ["I1", "I2", "I3", "C1"]
+      "blind_to": [
+        "I1",
+        "I2",
+        "I3",
+        "C1"
+      ]
     },
     {
       "name": "drop-resting-remainder",
       "file": "drop-resting-remainder",
       "defect": "partially-filled limit order's remainder dropped instead of resting (quantity destroyed)",
-      "invariant_violated": ["O1", "O4"],
+      "invariant_violated": [
+        "O1",
+        "O4"
+      ],
       "must_turn_red_gate": "differential",
       "reject_contract": "post-stream book-state diff: reference rests id1 x6, mutant shows empty book; O4 conservation count 14 != 8",
-      "blind_to": ["I1", "I2", "I3", "C1"]
+      "blind_to": [
+        "I1",
+        "I2",
+        "I3",
+        "C1"
+      ]
     },
     {
       "name": "tautological-concurrency",
       "file": "tautological-concurrency",
       "defect": "Promise.all over synchronous setImmediate-wrapped submit() — resolves in submission order by construction; the concurrency check CANNOT fail (the raw-arm false-green)",
-      "invariant_violated": ["C2"],
+      "invariant_violated": [
+        "C2"
+      ],
       "must_turn_red_gate": "seeded-variable-latency differential (interleave)",
       "reject_contract": "REJECTED: mutant survived — a gate that lets this pass is non-falsifiable; the seeded-interleave gate must flag the absence of a genuine awaited critical section",
       "is_false_green_regression_guard": true,
-      "blind_to": ["I1", "I2", "I3", "C1", "fixed-yield-concurrency-test"]
+      "blind_to": [
+        "I1",
+        "I2",
+        "I3",
+        "C1",
+        "fixed-yield-concurrency-test"
+      ]
+    },
+    {
+      "name": "tautological-queuemicrotask",
+      "file": "tautological-queuemicrotask",
+      "defect": "Promise-gather over synchronous queueMicrotask-wrapped submit() — resolves in submission order by construction; the SAME can't-fail tautology as tautological-concurrency, but written to EVADE the legacy string grep (no setImmediate / no Promise.all token). The grep MISSES it; the behavioral probe (tautology.probe.mjs) catches it by measuring that arrival order never permutes under seeded latency.",
+      "invariant_violated": [
+        "C2"
+      ],
+      "must_turn_red_gate": "seeded-variable-latency differential (interleave) — BEHAVIORAL verdict (grep advisory)",
+      "reject_contract": "REJECTED: mutant survived — the behavioral tautology probe must flag this grep-evading construction as non-falsifiable (arrival order == submission order for all 5 seeds); a gate relying on the grep alone is blind to it",
+      "is_false_green_regression_guard": true,
+      "evades_grep": true,
+      "caught_by": "behavioral-tautology-probe",
+      "blind_to": [
+        "I1",
+        "I2",
+        "I3",
+        "C1",
+        "fixed-yield-concurrency-test",
+        "string-grep-detection"
+      ]
+    }
+  ],
+  "error_inputs": [
+    {
+      "name": "empty-stream",
+      "file": "empty-stream",
+      "kind": "error",
+      "expectation": "error",
+      "expect_exit": 2,
+      "expect_status": "error",
+      "defect": "R-6 empty-stream false-green: a fixture whose correct_trades and corrupted_trades are BOTH empty. A lockstep diff over zero trades is ungradable (a check over nothing proves nothing) and previously false-greened. The gate must refuse to grade it.",
+      "reject_contract": "report.json status:\"error\" + runner exit 2 (IO error); NEVER status:\"pass\" and NEVER status:\"fail\". An ungradable input is an ERROR, distinct from a caught defect (fail) and a clean golden (pass). Pinned as the corpus expected-error case exchange-empty-stream.",
+      "why_not_a_mutant": "error_inputs are NOT defect mutants — falsify`s kill-sweep (.mutants[]) does not score them. They assert the gate`s empty-stream ERROR handling (R-6), graded by bin/corpus as expected-status:error cases. Keeping them out of .mutants[] preserves the falsifiability score denominator (6/6 exchange)."
     }
   ]
 }
