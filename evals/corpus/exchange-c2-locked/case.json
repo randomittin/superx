@@ -1,0 +1,11 @@
+{
+  "id": "exchange-c2-locked",
+  "source": "mutation",
+  "gates_under_test": ["exchange-lob"],
+  "difficulty": "hard",
+  "added_in_version": "0.1",
+  "seed": "static",
+  "repro": { "input": "input.json", "expected": "expected.json" },
+  "defect": "Known-good (expected PASS) — the C2 fix: the locked engine serializes the critical section behind a FIFO mutex, so concurrent whole-output == submission-order serial replay across all 200 seeds. The gate MUST NOT false-RED this. Paired with exchange-c2-racy as the make-it-fail / make-it-pass discriminator for the C2 live arm.",
+  "invariants": ["C2"]
+}

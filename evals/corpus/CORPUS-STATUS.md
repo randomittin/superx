@@ -7,7 +7,7 @@ by `bin/corpus run` — every number is a real gate run over real cases.
 
 | Version | Cases | Caught | Catch-rate |
 | --- | ---: | ---: | ---: |
-| 0.1 | 9 cases | 9/9 caught | 100% |
+| 0.1 | 11 cases | 11/11 caught | 100% |
 
 <!-- DIP-LOG: append-only incident record; preserved across runs -->
 ## Dip log — corpus RED events during reference fixes

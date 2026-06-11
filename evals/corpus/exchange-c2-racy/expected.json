@@ -1,0 +1,11 @@
+{
+  "status": "fail",
+  "first_divergence": {
+    "file": "exchange-lob",
+    "step": "trade index 0 (reference len=3 actual len=3)",
+    "expected": "{\"makerId\":2,\"price\":99,\"qty\":3,\"takerId\":3}",
+    "actual": "{\"makerId\":1,\"price\":105,\"qty\":4,\"takerId\":4}"
+  },
+  "first_divergence_summary": "trade index 0: expected takerId 3 @99x3 (maker 2), actual takerId 4 @105x4 (maker 1) — racy engine entered the critical section out of submission order under the seed-1 latency race",
+  "gate": "exchange-lob"
+}
