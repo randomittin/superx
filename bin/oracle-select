@@ -1,0 +1,58 @@
+#!/usr/bin/env bash
+# oracle-select — resolve an oracle domain id to its gate command.
+#
+# Reads evals/oracles/registry.json and prints the `gate_command` for the
+# requested domain id. Used by the oracle-gate harness to look up which gate
+# script (and flags) to run for a given problem domain.
+#
+# Usage:
+#   oracle-select <domain-id>
+#
+# Examples:
+#   oracle-select exchange-lob   -> evals/oracles/exchange-lob/gate.sh --differential --seeds 200
+#   oracle-select emulator-gb    -> evals/oracles/emulator-gb/gate.sh
+#
+# Exit codes:
+#   0  domain found, gate_command printed to stdout
+#   1  missing/empty argument, or registry missing/unreadable
+#   2  unknown domain id (not present in registry)
+#   3  jq missing
+set -euo pipefail
+
+# ── Resolve paths (mirror bin/benchmark) ──
+SELF="$0"
+if command -v readlink &>/dev/null; then
+  SELF="$(readlink -f "$0" 2>/dev/null || readlink "$0" 2>/dev/null || echo "$0")"
+fi
+BIN_DIR="$(cd "$(dirname "$SELF")" && pwd)"
+PLUGIN_DIR="$(cd "$BIN_DIR/.." && pwd)"
+REGISTRY="$PLUGIN_DIR/evals/oracles/registry.json"
+
+command -v jq >/dev/null 2>&1 || { echo "error: jq is required" >&2; exit 3; }
+
+usage() { sed -n '2,17p' "$SELF" | sed 's/^# \{0,1\}//'; }
+
+# ── Args ──
+if [ $# -lt 1 ] || [ -z "${1:-}" ]; then
+  echo "error: domain id required" >&2
+  usage >&2
+  exit 1
+fi
+DOMAIN="$1"
+
+if [ ! -r "$REGISTRY" ]; then
+  echo "error: oracle registry not found or unreadable: $REGISTRY" >&2
+  exit 1
+fi
+
+# ── Look up gate_command for the domain ──
+GATE_COMMAND="$(jq -re --arg d "$DOMAIN" '.oracles[$d].gate_command // empty' "$REGISTRY")" || GATE_COMMAND=""
+
+if [ -z "$GATE_COMMAND" ]; then
+  echo "error: unknown oracle domain: $DOMAIN" >&2
+  KNOWN="$(jq -r '.oracles | keys[]' "$REGISTRY" 2>/dev/null | paste -sd ', ' -)"
+  [ -n "$KNOWN" ] && echo "known domains: $KNOWN" >&2
+  exit 2
+fi
+
+printf '%s\n' "$GATE_COMMAND"
