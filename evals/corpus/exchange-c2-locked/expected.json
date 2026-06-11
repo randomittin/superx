@@ -1,0 +1,6 @@
+{
+  "status": "pass",
+  "first_divergence": null,
+  "first_divergence_summary": "no divergence — the locked engine's concurrent whole-output equals the submission-order serial replay; the gate must not false-RED this known-good fix",
+  "gate": "exchange-lob"
+}

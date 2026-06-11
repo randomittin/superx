@@ -109,6 +109,31 @@ The v0.1 seed is the 9 mutation proofs (5 exchange + 4 emulator). Field and user
 accumulate the corpus over time; the version-stamped catch-rate curve only impresses
 when long, so the series starts now at 9.
 
+### 3.1 Live-style cases (engine-captured C2 — R-3.2)
+
+The first two **live-style** `mutation` cases are `exchange-c2-racy` and `exchange-c2-locked`.
+They differ from the hand-authored mutation seeds only in PROVENANCE: their `input.*` carries a
+real trade sequence **captured by running a subject engine through the C2 seeded
+variable-latency differential arm** (`evals/oracles/exchange-lob/differential.run.mjs`), not a
+hand-edited reorder. The on-disk shape is unchanged — `bin/corpus`/`run.sh` grade them through
+the existing seams — so no runner change is required:
+
+- **`exchange-c2-racy`** (expected `fail`): the racy engine (`fixtures/engines/racy.mjs`) awaits
+  the per-id latency hook BEFORE the read-match-mutate critical section. Its `corrupted_trades`
+  is the engine's actual concurrent output at the pinned `live_provenance.seed`; `correct_trades`
+  is the reference serial replay. `run.sh` diffs them and rejects at the first-divergence index —
+  the same pinpoint the live arm reports. This is the make-it-fail proof, frozen as a case.
+- **`exchange-c2-locked`** (expected `pass`): the locked engine (`fixtures/engines/locked.mjs`)
+  serializes the critical section behind a FIFO mutex; its concurrent whole-output equals the
+  serial replay across all swept seeds. The case ships `expected_trades`/`expected_book` (the
+  serial replay) and asserts the gate stays GREEN — a **false-RED guard** (a known-good fix the
+  gate must not reject). `bin/corpus` already scores an expected-`pass` case as a CATCH iff the
+  gate stays green; such a known-good case is admitted ONLY as the paired discriminator for a
+  live make-it-fail case, never on its own.
+
+Both cases pin `live_provenance` (arm, engine path, seed, submits, first-divergence index) in
+`input.json` so the live-vs-fixture equivalence is auditable and the capture is reproducible.
+
 ---
 
 ## 4. How the runner consumes a case

@@ -79,6 +79,75 @@ else
   bad "default report.json not written to gate dir"
 fi
 
+# ── R-9: registry-lint. Every oracle's registry gate_command should expose --help
+# cleanly (exit 0). A gate_command whose flags disagree with its script exits 2
+# (the C2 live-arm defect this remediation fixes); a clean --help is the canary
+# that the registered invocation parses at all. We resolve each oracle's
+# gate_command from registry.json, take the leading script token, run `<script>
+# --help` from the plugin root, and check exit 0.
+#
+# Scope (R-3.2): exchange-lob's --help cleanliness is HARD-asserted (the arm this
+# task owns). Other oracles' gaps are surfaced as WARN — fixing emulator-gb's and
+# raytracer-calib's gate_command --help is R-9 work for THOSE oracles, out of this
+# task's scope. The lint still PRINTS them so the gaps are visible, not glossed.
+echo "[8] R-9 registry-lint: gate_command --help cleanliness (exchange-lob HARD; others WARN)"
+PLUGIN_DIR="$(cd "$DIR/../../.." && pwd)"
+REGISTRY="$PLUGIN_DIR/evals/oracles/registry.json"
+if [ ! -f "$REGISTRY" ]; then
+  bad "registry.json not found at $REGISTRY"
+elif ! command -v jq >/dev/null 2>&1; then
+  bad "jq required for registry-lint"
+else
+  while IFS=$'\t' read -r oracle gc; do
+    [ -n "$gc" ] || continue
+    # gate_command is a shell string: "<script> [flags...]". Leading token = script.
+    # shellcheck disable=SC2086
+    set -- $gc
+    script="$1"
+    help_path="$PLUGIN_DIR/$script"
+    help_rc=0
+    if [ ! -f "$help_path" ]; then
+      help_rc=127
+    else
+      ( cd "$PLUGIN_DIR" && bash "$script" --help >/dev/null 2>&1 ) || help_rc=$?
+    fi
+    if [ "$oracle" = "exchange-lob" ]; then
+      if [ "$help_rc" -eq 0 ]; then ok "--help clean (exit 0): $script"; else bad "--help NOT clean (exit $help_rc): $script"; fi
+    else
+      if [ "$help_rc" -eq 0 ]; then
+        ok "--help clean (exit 0): $script"
+      else
+        printf '  WARN: --help not clean (exit %s): %s [R-9 backlog for %s, out of R-3.2 scope]\n' "$help_rc" "$script" "$oracle"
+      fi
+    fi
+  done < <(jq -r '.oracles | to_entries[] | "\(.key)\t\(.value.gate_command)"' "$REGISTRY")
+fi
+
+echo "[9] exchange-lob registered gate_command exits 0|1 (never 2 — the C2 live arm exists)"
+EXCH_GC="$(jq -r '.oracles."exchange-lob".gate_command' "$REGISTRY")"
+# Trim the sweep to a few seeds for the test (the runner honours SEEDS env via gate.sh).
+gc_rc=0
+( cd "$PLUGIN_DIR" && SEEDS=5 bash $EXCH_GC >/dev/null 2>&1 ) || gc_rc=$?
+if [ "$gc_rc" -eq 0 ] || [ "$gc_rc" -eq 1 ]; then
+  ok "registered gate_command exited $gc_rc (0=pass/1=fail, never 2)"
+else
+  bad "registered gate_command exited $gc_rc (expected 0 or 1, never 2)"
+fi
+
+echo "[10] C2 live arm: racy engine RED, locked engine GREEN (make-it-fail proof)"
+RUNNER="$DIR/differential.run.mjs"
+ENG="$DIR/fixtures/engines"
+if command -v node >/dev/null 2>&1; then
+  locked_rc=0
+  node "$RUNNER" --engine "$ENG/locked.mjs" --seeds 50 >/dev/null 2>&1 || locked_rc=$?
+  racy_rc=0
+  node "$RUNNER" --engine "$ENG/racy.mjs" --seeds 50 >/dev/null 2>&1 || racy_rc=$?
+  if [ "$locked_rc" -eq 0 ]; then ok "locked engine GREEN (exit 0)"; else bad "locked engine not green (exit $locked_rc)"; fi
+  if [ "$racy_rc" -eq 1 ]; then ok "racy engine RED (exit 1 — divergence found)"; else bad "racy engine did not go red (exit $racy_rc)"; fi
+else
+  bad "node required for C2 live-arm proof"
+fi
+
 echo ""
 echo "RESULT: $pass passed, $fail failed"
 [ "$fail" -eq 0 ]
