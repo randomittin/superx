@@ -47,7 +47,13 @@ the repo tree). `BUG=<name> node cpu.js` reproduces any row below.
 
 ## Verdict table
 
-| # | mutation | dimension | gate verdict | first_divergence (instruction → expected vs actual) | exit |
+> **Report format note (spec H-1).** `report.json.first_divergence` is now a STRUCTURED
+> object `{file, step, expected, actual}` (plus the `haid`/`wave`/`ts` envelope), not a
+> flat string. The column below paraphrases `step` (the instruction) and the diverging
+> field; the gate emits, e.g., `{"file":"emulator-gb","step":"instruction 4",`
+> `"expected":"A:18 F:20 …","actual":"A:18 F:00 …"}`. See `evals/oracles/REPORT-CONTRACT.md` §3.
+
+| # | mutation | dimension | gate verdict | first_divergence (`step` → expected vs actual) | exit |
 |---|----------|-----------|--------------|------------------------------------------------------|------|
 | 0 | none (correct trace) | — | **PASS** (no false-RED) | `null` | `0` |
 | 1 | `half-carry` | wrong flag derivation (ADD half-carry computed on the full byte, not the low nibble) | **CAUGHT** | instr **4**: `F:20` → `F:00` (H bit cleared; A/PC identical) | `1` |
@@ -56,11 +62,14 @@ the repo tree). `BUG=<name> node cpu.js` reproduces any row below.
 | 4 | `daa` | DAA BCD mis-adjust (+0x05 instead of +0x06 on one instruction) | **CAUGHT** | instr **5**: `A:1E` → `A:1D` | `1` |
 
 **MISSED bugs: none.** Every mutant produced `status:"fail"` with a correct
-`divergence_index` and the precise expected/actual line.
+`metrics.divergence_index` and the precise `first_divergence.expected` / `.actual` line.
 
 ---
 
 ## Raw gate evidence (`report.json`, via `run.sh --input <trace> --truth truth.gbdoctor`)
+
+first_divergence is the spec-H-1 structured object; `metrics.divergence_index` carries
+the 1-based instruction (shown as `idx` here for brevity):
 
 ```
 ########## correct ##########
@@ -70,26 +79,26 @@ emulator-gb: pass (6 instructions compared)        exit=0
 ########## half-carry (wrong flag derivation) ##########
 emulator-gb: fail (4 instructions compared)        exit=1
 {"status":"fail","idx":4,
- "first_divergence":"instruction 4: expected A:18 F:20 ... PC:0104 ...
-                                   actual A:18 F:00 ... PC:0104 ..."}
+ "first_divergence":{"file":"emulator-gb","step":"instruction 4",
+   "expected":"A:18 F:20 ... PC:0104 ...","actual":"A:18 F:00 ... PC:0104 ..."}}
 
 ########## f-mask (F low nibble not masked) ##########
 emulator-gb: fail (2 instructions compared)        exit=1
 {"status":"fail","idx":2,
- "first_divergence":"instruction 2: expected A:0B F:00 ... PC:0102 ...
-                                   actual A:0B F:0B ... PC:0102 ..."}
+ "first_divergence":{"file":"emulator-gb","step":"instruction 2",
+   "expected":"A:0B F:00 ... PC:0102 ...","actual":"A:0B F:0B ... PC:0102 ..."}}
 
 ########## jr-off-by-one (jump target off by one) ##########
 emulator-gb: fail (6 instructions compared)        exit=1
 {"status":"fail","idx":6,
- "first_divergence":"instruction 6: expected ... PC:0109 PCMEM:00,00,00,00
-                                   actual ... PC:010A PCMEM:00,00,00,00"}
+ "first_divergence":{"file":"emulator-gb","step":"instruction 6",
+   "expected":"... PC:0109 PCMEM:00,00,00,00","actual":"... PC:010A PCMEM:00,00,00,00"}}
 
 ########## daa (BCD mis-adjust) ##########
 emulator-gb: fail (5 instructions compared)        exit=1
 {"status":"fail","idx":5,
- "first_divergence":"instruction 5: expected A:1E ... PC:0105 ...
-                                   actual A:1D ... PC:0105 ..."}
+ "first_divergence":{"file":"emulator-gb","step":"instruction 5",
+   "expected":"A:1E ... PC:0105 ...","actual":"A:1D ... PC:0105 ..."}}
 ```
 
 ---

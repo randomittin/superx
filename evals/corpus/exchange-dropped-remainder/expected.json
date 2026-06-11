@@ -1,6 +1,11 @@
 {
   "status": "fail",
-  "first_divergence": "post-stream book state: expected {\"asks\":[],\"bids\":[{\"account\":\"A\",\"id\":1,\"price\":100,\"qty\":6}]} actual {\"asks\":[],\"bids\":[]}",
+  "first_divergence": {
+    "file": "exchange-lob",
+    "step": "post-stream book state",
+    "expected": "{\"asks\":[],\"bids\":[{\"account\":\"A\",\"id\":1,\"price\":100,\"qty\":6}]}",
+    "actual": "{\"asks\":[],\"bids\":[]}"
+  },
   "first_divergence_summary": "post-stream book: expected bids [id1@100x6] actual bids []",
   "gate": "exchange-lob"
 }

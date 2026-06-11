@@ -1,6 +1,11 @@
 {
   "status": "fail",
-  "first_divergence": "trade index 0: expected {\"makerId\":1,\"price\":99,\"qty\":3,\"takerId\":3} actual {\"makerId\":2,\"price\":99,\"qty\":3,\"takerId\":3} (reference len=2 actual len=2)",
+  "first_divergence": {
+    "file": "exchange-lob",
+    "step": "trade index 0 (reference len=2 actual len=2)",
+    "expected": "{\"makerId\":1,\"price\":99,\"qty\":3,\"takerId\":3}",
+    "actual": "{\"makerId\":2,\"price\":99,\"qty\":3,\"takerId\":3}"
+  },
   "first_divergence_summary": "trade index 0: expected makerId 1 actual makerId 2",
   "gate": "exchange-lob"
 }

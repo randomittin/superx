@@ -29,10 +29,13 @@
 #                truth:    <relpath to the reference truth log; emulator-gb only,
 #                          passed as run.sh --truth; absent for exchange-lob> } }
 #   evals/corpus/<id>/expected.json (SCHEMA.md §1):
-#     { status: "fail"|"pass", first_divergence: <string|null>, gate: <gate-id> }
+#     { status: "fail"|"pass",
+#       first_divergence: {file, step, expected, actual} | null,   # spec H-1 object
+#       gate: <gate-id> }
 #   first_divergence is asserted BYTE-EQUAL against report.json.first_divergence
-#   (SCHEMA.md §1/§4 — the determinism law applied to the verdict). All paths in
-#   `repro` resolve relative to the case dir (SCHEMA.md §4 truth-resolution).
+#   after BOTH sides are canonicalized through `jq -cS` (sorted keys) — the
+#   determinism law applied to the structured verdict (SCHEMA.md §1/§4). All paths
+#   in `repro` resolve relative to the case dir (SCHEMA.md §4 truth-resolution).
 #   Determinism law: every case ships a seeded repro. Non-reproducible != a case.
 #
 # SCORING (per the spec):
@@ -128,10 +131,15 @@ report_status() {
   jq -r '.status // empty' "$report" 2>/dev/null || echo ""
 }
 
-# Read the typed `first_divergence` field (echo empty if null/absent).
+# Read the typed `first_divergence` field as CANONICAL compact JSON (jq -S sorts
+# object keys) so the byte-equality assert is order-independent (spec H-1:
+# first_divergence is a structured object now, not a string). Echoes empty when
+# first_divergence is null/absent; echoes the canonical JSON otherwise (an object
+# like {"actual":..,"expected":..,"file":..,"step":..} or a legacy JSON string).
 report_first_divergence() {
   local report="$1"
-  jq -r '.first_divergence // empty' "$report" 2>/dev/null || echo ""
+  jq -cS 'if .first_divergence == null then empty else .first_divergence end' \
+    "$report" 2>/dev/null || echo ""
 }
 
 # ── Resolve the expected.json path a case pins (SCHEMA.md: case.json.repro.expected,
@@ -147,13 +155,18 @@ case_expected_path() {
 # The canonical verdict lives in the expected.json the case pins via
 # repro.expected (SCHEMA.md §1). status + first_divergence are the runner-read
 # fields; first_divergence_summary is diagnostic and never asserted on.
+# first_divergence is a STRUCTURED object (spec H-1); it is read as CANONICAL
+# compact JSON (jq -cS, sorted keys) so the byte-equality assert against the
+# gate's report.json.first_divergence is key-order-independent — both sides go
+# through identical jq -cS canonicalization.
 # Echoes "status\tfirst_divergence" (tab-separated; divergence may be empty).
 case_expected() {
   local case_dir="$1" ej status div
   ej="$(case_expected_path "$case_dir")"
   if [ -f "$ej" ]; then
     status="$(jq -r '.status // empty' "$ej" 2>/dev/null)"
-    div="$(jq -r '.first_divergence // empty' "$ej" 2>/dev/null)"
+    div="$(jq -cS 'if .first_divergence == null then empty else .first_divergence end' \
+      "$ej" 2>/dev/null)"
   fi
   # Default expectation for a corpus case is "the gate must go fail".
   [ -z "$status" ] && status="fail"
@@ -270,7 +283,9 @@ score_case() {
       if [ "$exp_status" = "fail" ]; then
         if [ "$status" = "fail" ]; then
           # Byte-equality (SCHEMA.md §1): same case + same gate version ->
-          # byte-identical pinpoint. No substring/paraphrase tolerance.
+          # byte-identical pinpoint. Both $div and $exp_div are canonical
+          # jq -cS JSON of the structured first_divergence object, so this is a
+          # key-order-independent byte compare. No substring/paraphrase tolerance.
           if [ -z "$exp_div" ] || [ "$div" = "$exp_div" ]; then
             gate_caught=1
             detail="${detail}[$gate: CATCH fail @ '${div:-<unpinned>}'] "

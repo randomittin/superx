@@ -1,6 +1,11 @@
 {
   "status": "fail",
-  "first_divergence": "instruction 2: expected A:02 F:10 B:00 C:13 D:00 E:D8 H:01 L:4D SP:FFFE PC:0101 PCMEM:3D,A7,18,02 actual A:02 F:1F B:00 C:13 D:00 E:D8 H:01 L:4D SP:FFFE PC:0101 PCMEM:3D,A7,18,02",
+  "first_divergence": {
+    "file": "emulator-gb",
+    "step": "instruction 2",
+    "expected": "A:02 F:10 B:00 C:13 D:00 E:D8 H:01 L:4D SP:FFFE PC:0101 PCMEM:3D,A7,18,02",
+    "actual": "A:02 F:1F B:00 C:13 D:00 E:D8 H:01 L:4D SP:FFFE PC:0101 PCMEM:3D,A7,18,02"
+  },
   "first_divergence_summary": "instruction 2: F:10 vs F:1F (low nibble nonzero)",
   "gate": "emulator-gb"
 }
