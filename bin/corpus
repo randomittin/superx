@@ -17,25 +17,31 @@
 #   run.sh is the single source of diff-truth; corpus is a pure scorer over it.
 #   See evals/oracles/REPORT-CONTRACT.md.
 #
-# THE CORPUS CONTRACT (the schema this consumes):
+# THE CORPUS CONTRACT (the canonical schema this consumes — evals/corpus/SCHEMA.md):
 #   evals/corpus/INDEX.json:
-#     { "version": "v0.1",
+#     { "version": "0.1",
 #       "cases": [ {id, source, gates_under_test[], difficulty}, ... ] }
 #   evals/corpus/<id>/case.json:
 #     { id, source: mutation|field|user, gates_under_test[], difficulty,
 #       added_in_version, seed,
-#       repro: <relpath to the deterministic repro input fed to run.sh>
-#              (default: repro.json),
-#       expected: { status: "fail"|"pass", first_divergence: <string|null> }
-#              (or a sibling expected.json with the same shape) }
+#       repro: { input:    <relpath to the seeded repro fed to run.sh --input>,
+#                expected: <relpath to expected.json — the pinned gate verdict>,
+#                truth:    <relpath to the reference truth log; emulator-gb only,
+#                          passed as run.sh --truth; absent for exchange-lob> } }
+#   evals/corpus/<id>/expected.json (SCHEMA.md §1):
+#     { status: "fail"|"pass", first_divergence: <string|null>, gate: <gate-id> }
+#   first_divergence is asserted BYTE-EQUAL against report.json.first_divergence
+#   (SCHEMA.md §1/§4 — the determinism law applied to the verdict). All paths in
+#   `repro` resolve relative to the case dir (SCHEMA.md §4 truth-resolution).
 #   Determinism law: every case ships a seeded repro. Non-reproducible != a case.
 #
 # SCORING (per the spec):
 #   per-case CATCH / MISS:
-#     CATCH  the case's gate(s) went `fail` exactly as the case expects (and, when
-#            the case pins a first_divergence, the gate's first_divergence matches
-#            it — substring match, since divergence strings are human-readable
-#            locators). A case asserting an expected `pass` is a CATCH when the
+#     CATCH  the case's gate(s) went `fail` exactly as the case expects AND, when
+#            the case pins a first_divergence, the gate's first_divergence is
+#            BYTE-EQUAL to it (SCHEMA.md §1 — same case + same gate version ->
+#            byte-identical pinpoint; a drift is a gate regression or a stale case,
+#            both RED). A case asserting an expected `pass` is a CATCH when the
 #            gate stays green (a known-good case must NOT be a false-RED).
 #     MISS   the gate passed when the case says it must fail (a false-GREEN), or
 #            it failed at the WRONG divergence (caught the wrong defect), or the
@@ -102,10 +108,16 @@ gate_run_sh() {
 # ── Invoke a gate's run.sh against an input; echo the temp report.json path. ──
 # run.sh exit: 0=pass, 1=fail (both write a valid report), 2=IO/usage error.
 # A fail exit is EXPECTED for corpus cases, so we never let it abort the runner.
+# Args: <run.sh> <input> [<truth>]. A non-empty truth is forwarded as --truth
+# (emulator-gb resolves its reference trace this way; exchange-lob takes none).
 run_gate() {
-  local run_sh="$1" input="$2" report
+  local run_sh="$1" input="$2" truth="${3:-}" report
   report="$(mktemp)"
-  bash "$run_sh" --input "$input" --report "$report" >/dev/null 2>&1 || true
+  if [ -n "$truth" ]; then
+    bash "$run_sh" --input "$input" --truth "$truth" --report "$report" >/dev/null 2>&1 || true
+  else
+    bash "$run_sh" --input "$input" --report "$report" >/dev/null 2>&1 || true
+  fi
   echo "$report"
 }
 
@@ -122,28 +134,49 @@ report_first_divergence() {
   jq -r '.first_divergence // empty' "$report" 2>/dev/null || echo ""
 }
 
+# ── Resolve the expected.json path a case pins (SCHEMA.md: case.json.repro.expected,
+# relative to the case dir; defaults to the sibling expected.json). ──
+case_expected_path() {
+  local case_dir="$1" cj="$1/case.json" rel
+  rel="$(jq -r '.repro.expected // empty' "$cj" 2>/dev/null)"
+  [ -z "$rel" ] && rel="expected.json"
+  echo "$case_dir/$rel"
+}
+
 # ── Resolve a case's expected {status, first_divergence}. ──
-# Precedence: case.json.expected object, else sibling expected.json.
+# The canonical verdict lives in the expected.json the case pins via
+# repro.expected (SCHEMA.md §1). status + first_divergence are the runner-read
+# fields; first_divergence_summary is diagnostic and never asserted on.
 # Echoes "status\tfirst_divergence" (tab-separated; divergence may be empty).
 case_expected() {
-  local case_dir="$1" cj="$1/case.json" status div
-  status="$(jq -r '.expected.status // empty' "$cj" 2>/dev/null)"
-  div="$(jq -r '.expected.first_divergence // empty' "$cj" 2>/dev/null)"
-  if [ -z "$status" ] && [ -f "$case_dir/expected.json" ]; then
-    status="$(jq -r '.status // empty' "$case_dir/expected.json" 2>/dev/null)"
-    div="$(jq -r '.first_divergence // empty' "$case_dir/expected.json" 2>/dev/null)"
+  local case_dir="$1" ej status div
+  ej="$(case_expected_path "$case_dir")"
+  if [ -f "$ej" ]; then
+    status="$(jq -r '.status // empty' "$ej" 2>/dev/null)"
+    div="$(jq -r '.first_divergence // empty' "$ej" 2>/dev/null)"
   fi
   # Default expectation for a corpus case is "the gate must go fail".
   [ -z "$status" ] && status="fail"
   printf '%s\t%s\n' "$status" "$div"
 }
 
-# ── Resolve a case's repro input path (default: repro.json in the case dir). ──
+# ── Resolve a case's repro INPUT path (SCHEMA.md: case.json.repro.input, relative
+# to the case dir). repro is an OBJECT {input, expected, truth?}, not a string. ──
 case_repro() {
   local case_dir="$1" cj="$1/case.json" rel
-  rel="$(jq -r '.repro // empty' "$cj" 2>/dev/null)"
-  [ -z "$rel" ] && rel="repro.json"
+  rel="$(jq -r '.repro.input // empty' "$cj" 2>/dev/null)"
+  [ -z "$rel" ] && rel="input.json"
   echo "$case_dir/$rel"
+}
+
+# ── Resolve a case's TRUTH reference path if it pins one (SCHEMA.md §4:
+# case.json.repro.truth, relative to the case dir — emulator-gb cases only).
+# Echoes the resolved abspath, or empty when the case pins no truth. ──
+case_truth() {
+  local case_dir="$1" cj="$1/case.json" rel
+  rel="$(jq -r '.repro.truth // empty' "$cj" 2>/dev/null)"
+  [ -z "$rel" ] && { echo ""; return 0; }
+  ( cd "$case_dir" && cd "$(dirname "$rel")" && printf '%s/%s\n' "$(pwd)" "$(basename "$rel")" )
 }
 
 # ═══════════════════════════════════════════════════════════════════════════
@@ -201,7 +234,14 @@ score_case() {
 
   local repro; repro="$(case_repro "$case_dir")"
   if [ ! -f "$repro" ]; then
-    CASE_DETAIL="repro missing: ${repro#"$CORPUS_DIR"/}"
+    CASE_DETAIL="repro input missing: ${repro#"$CORPUS_DIR"/}"
+    return 0
+  fi
+
+  # Truth reference (emulator-gb cases pin one via repro.truth; exchange-lob none).
+  local truth; truth="$(case_truth "$case_dir")"
+  if [ -n "$truth" ] && [ ! -f "$truth" ]; then
+    CASE_DETAIL="repro truth missing: ${truth#"$CORPUS_DIR"/}"
     return 0
   fi
 
@@ -222,14 +262,16 @@ score_case() {
       detail="${detail}[$gate: run.sh missing] "
       all_caught=0
     else
-      report="$(run_gate "$run_sh" "$repro")"
+      report="$(run_gate "$run_sh" "$repro" "$truth")"
       status="$(report_status "$report")"
       div="$(report_first_divergence "$report")"
       rm -f "$report"
 
       if [ "$exp_status" = "fail" ]; then
         if [ "$status" = "fail" ]; then
-          if [ -z "$exp_div" ] || case "$div" in *"$exp_div"*) true ;; *) false ;; esac; then
+          # Byte-equality (SCHEMA.md §1): same case + same gate version ->
+          # byte-identical pinpoint. No substring/paraphrase tolerance.
+          if [ -z "$exp_div" ] || [ "$div" = "$exp_div" ]; then
             gate_caught=1
             detail="${detail}[$gate: CATCH fail @ '${div:-<unpinned>}'] "
           else
