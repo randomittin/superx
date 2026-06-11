@@ -1,0 +1,6 @@
+{
+  "id": "emulator-gb",
+  "name": "Game Boy (DMG / LR35902) per-instruction trace-diff oracle",
+  "trigger": "per-wave",
+  "severity": "hard"
+}

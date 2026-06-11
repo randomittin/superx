@@ -1,0 +1,12 @@
+{
+  "gate_id": "emulator-gb",
+  "status": "pass",
+  "first_divergence": null,
+  "metrics": {
+    "instructions_compared": 5,
+    "truth_instructions": 5,
+    "subject_instructions": 5,
+    "divergence_index": 0
+  },
+  "fix_hint": "No divergence over 5 instruction(s); trace matches the truth log line-for-line."
+}
