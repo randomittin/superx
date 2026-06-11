@@ -85,6 +85,12 @@ if [ -n "${HEIMDALL_BLOAT_SCORER:-}" ] && command -v "${HEIMDALL_BLOAT_SCORER%% 
 fi
 
 # ── Branch 2: deterministic toolset, whichever is installed ───────────
+# errexit DISABLED for the whole deterministic arm. Several lines use the
+# `<condition> && findings+=(...)` idiom, which returns non-zero when the
+# condition is false, and tool/`grep -c` pipelines return non-zero on zero
+# matches. None of those are failures of THIS sentinel — the verdict is carried
+# in dead_exports/dup_pct/findings. errexit is re-enabled before the report.
+set +e
 ran_any=0
 dead_exports=0
 dup_pct=""
@@ -145,6 +151,7 @@ metrics="$(jq -nc \
 # A fail if any deterministic signal fired (dead code shipped or dup >= 3%).
 dup_over=0
 [ -n "${dup_pct:-}" ] && awk -v p="${dup_pct:-0}" 'BEGIN{exit !(p+0 >= 3)}' && dup_over=1
+set -e   # re-enable errexit now that the verdict is computed
 if [ "$dead_exports" -gt 0 ] || [ "$dup_over" -eq 1 ]; then
   first="${findings[0]:-bloat signal}"
   sentinel_report "$REPORT" "$GATE_ID" "fail" "$metrics" \

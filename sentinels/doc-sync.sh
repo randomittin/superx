@@ -123,7 +123,13 @@ check_doc() {
   done < <(grep -oE '`[^`]+`' "$doc" 2>/dev/null | tr -d '`')
 }
 
+# Run the scan with errexit DISABLED. A failing intermediate command inside the
+# checks (a short-circuited `&&`, a grep with no match, an arithmetic step that
+# evaluates to 0) must NOT abort the script before report.json is written. The
+# verdict lives in FAIL_DOC/refs_checked, never in any command's exit status.
+set +e
 for d in "${docs[@]}"; do check_doc "$d"; done
+set -e
 
 metrics="$(jq -nc --argjson n "${#docs[@]}" --argjson r "$refs_checked" \
   '{docs_checked:$n, refs_checked:$r}')"

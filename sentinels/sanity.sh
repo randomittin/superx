@@ -106,11 +106,16 @@ if [ -z "$CMD" ]; then
 fi
 
 # Run the discovered command in the clean checkout. Capture tail for the locator.
+# errexit DISABLED around the run + log capture: the command's non-zero exit IS
+# the verdict (recorded in $rc), and the tail pipeline must not abort the script
+# under set -e/pipefail before report.json is written.
+set +e
 LOG="$(mktemp)"
 rc=0
 ( cd "$WT" && eval "$CMD" ) >"$LOG" 2>&1 || rc=$?
 TAIL="$(tail -c 500 "$LOG" | tr '\n' ' ' | tr -s ' ')"
 rm -f "$LOG"
+set -e
 
 if [ "$rc" -eq 0 ]; then
   metrics="$(jq -nc --arg sha "$SHA" --arg cmd "$CMD" \
