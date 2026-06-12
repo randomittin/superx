@@ -37,7 +37,7 @@ This single command does the full bootstrap:
 3. **Port-all**: discovers every `screen-*.jsx|tsx` / `*Screen.jsx|tsx` in the bundle and writes each to `src/screens/<Name>.tsx` preceded by the TRANSLATION GUIDE (web → RN idiom map).
 4. **Wire**: prints the `App.tsx` snippet (primeVisualQaFlag / applyVisualQaState / overrideFeatureFlags / VqaBadge / long-press handler).
 
-Slash command equivalent (inside a superx session): `/superx:designmatch <url-or-path>`.
+Slash command equivalent (inside a Heimdall session): `/heimdall:designmatch <url-or-path>`.
 
 Auth: if the canonical URL is behind login, add `--headed` so Chromium launches visibly for interactive auth — the fetch picks up after sign-in.
 

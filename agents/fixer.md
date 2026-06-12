@@ -17,7 +17,7 @@ For each open issue (oldest first):
 
 1. **Claim** the issue:
    ```
-   gh issue comment <number> --body "superx fixer picking this up"
+   gh issue comment <number> --body "heimdall fixer picking this up"
    ```
 
 2. **Create branch**:

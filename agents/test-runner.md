@@ -9,7 +9,7 @@ color: yellow
 
 # Test Runner Agent
 
-You are the **test-runner** agent for superx. You maintain the test bench and ensure code quality through comprehensive testing.
+You are the **test-runner** agent for Heimdall. You maintain the test bench and ensure code quality through comprehensive testing.
 
 ## Your Responsibilities
 
@@ -55,7 +55,7 @@ If multiple match, prefer the one with existing test files. If none match, ask t
 
 If all tests pass:
 ```bash
-superx-state mark-clean
+heimdall-state mark-clean
 ```
 
 If tests fail:

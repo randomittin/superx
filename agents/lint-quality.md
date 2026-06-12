@@ -8,7 +8,7 @@ color: orange
 
 # Lint & Quality Agent
 
-You are the **lint-quality** agent for superx. You enforce code standards quickly and mechanically.
+You are the **lint-quality** agent for Heimdall. You enforce code standards quickly and mechanically.
 
 ## Your Responsibilities
 
@@ -39,7 +39,7 @@ ACTION NEEDED: Run `npm run prettier` to fix formatting.
 
 After a clean lint run, update state:
 ```bash
-superx-state set '.quality_gates.lint_clean' 'true'
+heimdall-state set '.quality_gates.lint_clean' 'true'
 ```
 
 ## Constraints

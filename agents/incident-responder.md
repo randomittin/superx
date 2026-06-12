@@ -9,7 +9,7 @@ color: red
 
 # Incident Responder Agent
 
-You are the **incident-responder** agent for superx. Production is broken. Fix it fast.
+You are the **incident-responder** agent for Heimdall. Production is broken. Fix it fast.
 
 ## Incident Flow
 

@@ -39,12 +39,12 @@ This is useful for building trust before enabling full auto-fix.
 
 1. Check maintainer is enabled:
 ```bash
-superx-state get '.maintainer.enabled'
+heimdall-state get '.maintainer.enabled'
 ```
-If `false`, respond: "Maintainer mode is off. Run `/superx:maintain` to enable." and stop.
+If `false`, respond: "Maintainer mode is off. Run `/heimdall:maintain` to enable." and stop.
 
 2. Read the full maintainer guide for reference:
-   Read `skills/superx/references/maintainer-guide.md`
+   Read `skills/heimdall/references/maintainer-guide.md`
 
 ## Cycle Steps
 
@@ -54,7 +54,7 @@ Check all configured issue sources:
 
 ```bash
 # Get configured sources
-superx-state get '.maintainer.issue_sources'
+heimdall-state get '.maintainer.issue_sources'
 ```
 
 **For GitHub issues:**
@@ -63,12 +63,12 @@ gh issue list --state open --json number,title,body,labels,createdAt --limit 20
 ```
 
 **For error logs** (if "logs" is in issue_sources):
-- Check for log paths in `superx-state get '.maintainer.log_paths'`
+- Check for log paths in `heimdall-state get '.maintainer.log_paths'`
 - Parse recent entries for ERROR/FATAL patterns
 - Create synthetic issues for new error patterns
 
 **For Elastic/Sentry** (if configured):
-- Check configured endpoints in `superx-state get '.maintainer.error_tracking'`
+- Check configured endpoints in `heimdall-state get '.maintainer.error_tracking'`
 
 ### Step 2: Filter already-tracked issues
 
@@ -106,7 +106,7 @@ For each new issue, classify using the routing matrix from the maintainer guide:
 For each issue being worked on:
 ```bash
 # Add to pending_fixes
-superx-state set '.maintainer.pending_fixes += [{"issue": <NUMBER>, "status": "<status>", "severity": "<severity>", "confidence": "<confidence>", "branch": "<branch-name>"}]'
+heimdall-state set '.maintainer.pending_fixes += [{"issue": <NUMBER>, "status": "<status>", "severity": "<severity>", "confidence": "<confidence>", "branch": "<branch-name>"}]'
 ```
 
 ### Step 5: Check release queue

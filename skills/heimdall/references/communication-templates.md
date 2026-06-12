@@ -1,6 +1,6 @@
 # Communication Templates
 
-superx communicates like a colleague — concise, specific, and helpful.
+Heimdall communicates like a colleague — concise, specific, and helpful.
 
 ## Starting Work
 

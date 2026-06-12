@@ -1,11 +1,11 @@
 # Maintainer Mode Guide
 
-Maintainer mode turns superx into an autonomous repo maintainer that triages issues, fixes bugs, and manages releases.
+Maintainer mode turns Heimdall into an autonomous repo maintainer that triages issues, fixes bugs, and manages releases.
 
 ## Activation
 
 ```
-/superx:maintain
+/heimdall:maintain
 ```
 
 This runs a guided setup wizard that:
@@ -15,21 +15,21 @@ This runs a guided setup wizard that:
 4. Optionally configures Slack notifications
 5. Enables maintainer mode and runs the first check immediately
 
-For subsequent activations, `/superx:maintain` remembers your configuration.
+For subsequent activations, `/heimdall:maintain` remembers your configuration.
 
 ## Continuous Monitoring
 
 After activation, keep the monitor running with:
 ```
-/loop 30m /superx:maintain-check
+/loop 30m /heimdall:maintain-check
 ```
 
 Or for persistent monitoring that survives session restarts:
 ```
-/schedule maintain-check --cron "*/30 * * * *" --command "/superx:maintain-check"
+/schedule maintain-check --cron "*/30 * * * *" --command "/heimdall:maintain-check"
 ```
 
-Each `/superx:maintain-check` invocation runs one full cycle: scan → triage → fix → release.
+Each `/heimdall:maintain-check` invocation runs one full cycle: scan → triage → fix → release.
 
 ## Issue Ingestion
 
@@ -117,7 +117,7 @@ Maintainer mode communicates progress naturally:
 
 ## State Tracking
 
-All maintainer activity is tracked in superx-state.json under the `maintainer` key:
+All maintainer activity is tracked in heimdall-state.json under the `maintainer` key:
 
 ```json
 {

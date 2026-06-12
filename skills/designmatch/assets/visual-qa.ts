@@ -1,7 +1,7 @@
 /**
  * visual-qa.ts — drop-in Visual QA stub-mode helper for React Native.
  *
- * Part of the `designmatch` skill (superx). Enables a controlled,
+ * Part of the `designmatch` skill (Heimdall). Enables a controlled,
  * predictable boot state so a canonical HTML render (Playwright) and
  * the live RN app can be screenshot-compared at the same logical state.
  *

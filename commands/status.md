@@ -1,24 +1,24 @@
 ---
 name: status
-description: Show current superx state — project phase, active agents, quality gates, conflicts
+description: Show current Heimdall state — project phase, active agents, quality gates, conflicts
 disable-model-invocation: true
 ---
 
-# superx Status
+# Heimdall Status
 
-Show the current superx project state.
+Show the current Heimdall project state.
 
 ## Instructions:
 
-1. Check if `superx-state.json` exists. If not, run `superx-state init` first.
+1. Check if `heimdall-state.json` exists. If not, run `heimdall-state init` first.
 
-2. Run `superx-state status` to get the formatted summary.
+2. Run `heimdall-state status` to get the formatted summary.
 
 3. Additionally, read the full state file and present a rich status view:
 
 ```
 ═══════════════════════════════════════
-  superx status
+  Heimdall status
 ═══════════════════════════════════════
 
   Project:  <name or (unnamed)>
