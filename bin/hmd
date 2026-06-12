@@ -1,0 +1,21 @@
+#!/usr/bin/env bash
+#
+# hmd — the canonical short entry point for Heimdall.
+#
+# `hmd` and `heimdall` are the SAME tool. At install time the installer
+# hardlinks both names to the same inode (so they are byte-identical and share
+# routing). In the repo, hardlinks do not survive git, so this committed `hmd`
+# delegates to its sibling `heimdall` in the same bin dir via exec — the router
+# resolves the plugin root from the resolved path of `heimdall`, so every
+# subcommand (demo, uninstall, version, help) and the task-prompt fallthrough
+# behave identically whether invoked as `hmd` or `heimdall`.
+#
+set -euo pipefail
+
+self="$0"
+if command -v readlink >/dev/null 2>&1; then
+  self="$(readlink -f "$0" 2>/dev/null || readlink "$0" 2>/dev/null || echo "$0")"
+fi
+dir="$(cd "$(dirname "$self")" && pwd)"
+
+exec "$dir/heimdall" "$@"
