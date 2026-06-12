@@ -12,9 +12,14 @@
 # author/committer identity allowlist. Both this hook and the CC PreToolUse gate
 # call that one script; there is no duplicated logic.
 #
-# Installed by `hmd guard install`, which wires it via core.hooksPath (so a
-# bare `.git/hooks` clobber cannot silently disable it) and bakes the resolved
-# path to heimdall-selfscan into HEIMDALL_SELFSCAN below.
+# Installed by `hmd guard install`, which wires it via core.hooksPath set to the
+# RELATIVE path `.heimdall/git-hooks` (so a bare `.git/hooks` clobber cannot
+# silently disable it, AND a repo move/rename keeps it wired — git resolves
+# core.hooksPath relative to the working tree root).
+#
+# RELOCATABLE: this hook bakes NO absolute path. It resolves heimdall-selfscan at
+# RUNTIME from the repo top (`git rev-parse --show-toplevel`), falling back to a
+# PATH lookup. Moving or renaming the repo therefore keeps the gate working.
 #
 # git invokes pre-push as:  pre-push <remote-name> <remote-url>   (refs on stdin)
 # A nonzero exit aborts the push. The success line printed by selfscan
@@ -23,21 +28,15 @@
 
 set -euo pipefail
 
-# HEIMDALL_SELFSCAN is rewritten in place by `hmd guard install` to the absolute
-# path of the installing plugin's bin/heimdall-selfscan. The token below is the
-# install-time anchor; if it survives unrewritten (hook copied by hand), we fall
-# back to a PATH lookup of heimdall-selfscan.
-HEIMDALL_SELFSCAN="__HEIMDALL_SELFSCAN_PATH__"
-
 resolve_selfscan() {
-  # 1. Baked-in absolute path (the normal install case). `hmd guard install`
-  #    rewrites the assignment above to an absolute path starting with `/`. The
-  #    unrewritten anchor token does NOT start with `/`, so this case-test
-  #    distinguishes them without comparing against the literal token (a literal
-  #    comparison would itself be rewritten by the installer's sed).
-  case "$HEIMDALL_SELFSCAN" in
-    /*) [ -x "$HEIMDALL_SELFSCAN" ] && { printf '%s' "$HEIMDALL_SELFSCAN"; return 0; } ;;
-  esac
+  # 1. In-repo scanner, resolved at runtime from the repo top. This is the
+  #    normal case and is RELOCATABLE — moving/renaming the repo moves the
+  #    scanner with it, and we never reference a baked absolute path.
+  local top
+  if top="$(git rev-parse --show-toplevel 2>/dev/null)" \
+     && [ -x "$top/bin/heimdall-selfscan" ]; then
+    printf '%s' "$top/bin/heimdall-selfscan"; return 0
+  fi
   # 2. On PATH (brew / ~/.local/bin installs).
   if command -v heimdall-selfscan >/dev/null 2>&1; then
     command -v heimdall-selfscan; return 0
