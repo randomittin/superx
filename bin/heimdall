@@ -322,6 +322,77 @@ case "${1:-}" in
     fi
     exec "$DEMO_BIN" "$@"
     ;;
+  guard)
+    # `hmd guard install` — wire the NATIVE git pre-push hook into the git repo
+    # at the current directory. The hook runs on EVERY push (human or agent),
+    # closing the gap left by the Claude Code PreToolUse gate (which only sees
+    # agent pushes). Maintainer gate: install.sh does NOT call this — it is not
+    # user-facing. Idempotent: re-running re-wires cleanly.
+    shift
+    sub="${1:-}"
+    case "$sub" in
+      install) ;;
+      ""|-h|--help)
+        echo "Usage: hmd guard install"
+        echo ""
+        echo "  Installs Heimdall's native git pre-push hook into the git repo at the"
+        echo "  current directory. The hook delegates to heimdall-selfscan, which runs"
+        echo "  gitleaks over the full history and enforces the author/committer identity"
+        echo "  allowlist on EVERY push (human or agent). Idempotent."
+        [ -z "$sub" ] && exit 2 || exit 0
+        ;;
+      *)
+        echo "  Error: unknown guard subcommand: $sub (expected: install)" >&2
+        exit 2
+        ;;
+    esac
+
+    # Must be inside a git work tree.
+    if ! repo_root="$(git rev-parse --show-toplevel 2>/dev/null)"; then
+      echo "  Error: not inside a git repository (run from your repo's working tree)." >&2
+      exit 1
+    fi
+
+    # Source hook + its companion heimdall-selfscan must both exist in the plugin.
+    src_hook="$PLUGIN_DIR/hooks/git/pre-push"
+    selfscan="$PLUGIN_DIR/bin/heimdall-selfscan"
+    if [ ! -f "$src_hook" ]; then
+      echo "  Error: hook template not found at $src_hook" >&2
+      echo "  Reinstall: curl -fsSL https://runheimdall.dev/install | bash" >&2
+      exit 1
+    fi
+    if [ ! -x "$selfscan" ]; then
+      echo "  Error: heimdall-selfscan not found/executable at $selfscan" >&2
+      echo "  Reinstall: curl -fsSL https://runheimdall.dev/install | bash" >&2
+      exit 1
+    fi
+
+    # Wire via core.hooksPath into a heimdall-managed dir, NOT .git/hooks — so a
+    # later `.git/hooks` clobber (or a fresh clone re-init) cannot silently
+    # disable the gate, and we never trample a user's existing hooks.
+    hooks_dir="$repo_root/.heimdall/git-hooks"
+    mkdir -p "$hooks_dir"
+    dst_hook="$hooks_dir/pre-push"
+
+    # Copy + bake the absolute selfscan path in place of the install-time anchor.
+    # sed with a path containing slashes → use a pipe delimiter.
+    sed "s|__HEIMDALL_SELFSCAN_PATH__|$selfscan|g" "$src_hook" > "$dst_hook"
+    chmod +x "$dst_hook"
+
+    git -C "$repo_root" config core.hooksPath "$hooks_dir"
+
+    apply_heimdall_theme 2>/dev/null || true
+    G='\033[32m'; D='\033[2m'; B='\033[1m'; R='\033[0m'
+    printf "\n  ${B}Heimdall push guard installed${R}\n\n"
+    printf "  ${G}✓${R} hook        %s\n" "$dst_hook"
+    printf "  ${G}✓${R} delegates   %s\n" "$selfscan"
+    printf "  ${G}✓${R} core.hooksPath = %s\n" "$hooks_dir"
+    printf "\n"
+    printf "  ${D}Runs on EVERY push (human or agent): gitleaks full-history secret scan${R}\n"
+    printf "  ${D}+ author/committer identity allowlist. A blocked push prints the reason;${R}\n"
+    printf "  ${D}a clean push prints: guard: gitleaks=0 · identities=N/N allowlisted${R}\n\n"
+    exit 0
+    ;;
   uninstall)
     # Remove the plugin dir + BOTH entry points (hmd, heimdall) and nothing
     # else. This is on the success card, so it must exist. No stdin prompt
