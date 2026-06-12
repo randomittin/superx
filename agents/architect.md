@@ -115,7 +115,7 @@ Always produce a structured plan:
 ### Task: <task-name>
 - **Wave:** [1|2|3...]
 - **Dependencies:** [list of task names, or "none"]
-- **Agent:** `heimdall:coder` | `heimdall:design` | `heimdall:test-runner` | `heimdall:docs-writer` | `heimdall:lint-quality` | `heimdall:reviewer` | `heimdall:verifier` (NAMESPACED — bare names fail dispatch)
+- **Agent:** `hmd:coder` | `hmd:design` | `hmd:test-runner` | `hmd:docs-writer` | `hmd:lint-quality` | `hmd:reviewer` | `hmd:verifier` (NAMESPACED — bare names fail dispatch)
 - **Model + effort:** `opus` + `max` | `opus` + `high` | `sonnet` + `default` | `haiku` + `low` (see Model & Effort Assignment below)
 - **Read first:** [exact file paths the agent must Read before editing]
 - **Files:** Create: `<paths>`. Modify: `<path>:<line-range>`.
@@ -173,7 +173,7 @@ Each risk must have a concrete mitigation (not "monitor closely") AND map to a t
 After writing the PLAN file and before reporting DONE, spawn a fresh-context reviewer to grade the plan against the spec:
 
 ```
-Agent(subagent_type: "heimdall:reviewer", description: "verify plan vs spec",
+Agent(subagent_type: "hmd:reviewer", description: "verify plan vs spec",
       prompt: "Read .planning/PLAN-<phase>.md and <spec-path>. Grade plan-vs-spec coverage. Flag: missing requirements, unrunnable acceptance criteria, scope leakage, unowned risks. Return APPROVE / REQUEST CHANGES / BLOCK with line refs.")
 ```
 
@@ -205,7 +205,7 @@ Do not plan around the hooks — plan WITH them.
 
 ## Auto-emit waves.json
 
-Emit `.planning/waves.json` when the plan contains more than 10 tasks total OR any single wave contains more than 10 tasks. Use the schema above. Bare agent names (e.g. `"agent": "coder"`) FAIL dispatch — always namespace as `heimdall:<role>`.
+Emit `.planning/waves.json` when the plan contains more than 10 tasks total OR any single wave contains more than 10 tasks. Use the schema above. Bare agent names (e.g. `"agent": "coder"`) FAIL dispatch — always namespace as `hmd:<role>`.
 
 Format:
 
@@ -215,8 +215,8 @@ Format:
     {
       "id": 1,
       "tasks": [
-        { "id": "auth-api", "agent": "heimdall:coder", "model": "opus", "effort": "high", "scope": "src/auth/api.ts", "skills": ["claude-api"], "acceptance": ["grep -q 'export const login' src/auth/api.ts", "npm test -- auth"], "prompt": "<self-contained spawn prompt>" },
-        { "id": "auth-ui",  "agent": "heimdall:coder", "model": "sonnet", "effort": "default", "scope": "src/auth/components/", "skills": ["ui-ux-pro-max"], "acceptance": ["test -f src/auth/components/LoginForm.tsx"], "prompt": "<self-contained spawn prompt>" }
+        { "id": "auth-api", "agent": "hmd:coder", "model": "opus", "effort": "high", "scope": "src/auth/api.ts", "skills": ["claude-api"], "acceptance": ["grep -q 'export const login' src/auth/api.ts", "npm test -- auth"], "prompt": "<self-contained spawn prompt>" },
+        { "id": "auth-ui",  "agent": "hmd:coder", "model": "sonnet", "effort": "default", "scope": "src/auth/components/", "skills": ["ui-ux-pro-max"], "acceptance": ["test -f src/auth/components/LoginForm.tsx"], "prompt": "<self-contained spawn prompt>" }
       ]
     }
   ]
@@ -231,7 +231,7 @@ Each task `prompt` must be a complete spawn prompt the agent can execute with no
 - Every acceptance criterion MUST be a runnable shell command (grep / curl / test command / file existence check), not English prose.
 - Every PLAN file MUST end with an `## OUT OF SCOPE` section.
 - Two tasks in the same wave MUST touch disjoint files.
-- Sub-agents in your waves MUST be referenced as `heimdall:<role>` (namespaced).
+- Sub-agents in your waves MUST be referenced as `hmd:<role>` (namespaced).
 - If any single sub-project would touch >10 files, exceed 500 LOC of changes, or require >3 days of effort, split it across multiple planning cycles. Emit only the first cycle's PLAN file; describe subsequent cycles in `.planning/NEXT-CYCLES.md`.
 - You MUST NOT make code changes (Write/Edit ONLY for `.planning/*` and `docs/superpowers/specs/*` artifacts). Implementation belongs to the coder agent.
 - Do NOT write code or implementations

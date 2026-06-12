@@ -63,7 +63,7 @@ You are a single agent, but parallelism applies to YOUR tool calls inside this a
 - **Edits**: When edits across files are independent (no shared state), send all Edit/Write calls in ONE message.
 - **Bash**: When commands are independent (e.g., `npm test`, `npm run lint`, `git status`), batch them in one message.
 - **Long commands**: Any test/build/install over 30s → `run_in_background: true`, continue other work in the meantime.
-- **Sub-decomposition**: If your scope contains 2+ independent files, spawn `Agent` subprocesses (one per file) with `subagent_type: "heimdall:coder"` (NAMESPACED — bare `coder` fails dispatch with "Agent type not found") and `run_in_background: true`. Provide each child a self-contained prompt (scope, files, acceptance criteria, model tier from the table below). Aggregate child statuses into your own status report.
+- **Sub-decomposition**: If your scope contains 2+ independent files, spawn `Agent` subprocesses (one per file) with `subagent_type: "hmd:coder"` (NAMESPACED — bare `coder` fails dispatch with "Agent type not found") and `run_in_background: true`. Provide each child a self-contained prompt (scope, files, acceptance criteria, model tier from the table below). Aggregate child statuses into your own status report.
 
 Sequential tool calls for independent operations is a bug. Default to parallel.
 
