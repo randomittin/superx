@@ -92,7 +92,7 @@ printf "\n"
 
 # ── Step 1: Node.js ──
 
-printf "  ${D}[1/5]${R} ${B}Node.js${R}\n"
+printf "  ${D}[1/6]${R} ${B}Node.js${R}\n"
 if ! command -v node &>/dev/null; then
   if command -v brew &>/dev/null; then
     spin_cmd "Installing Node.js via Homebrew" brew install node
@@ -110,7 +110,7 @@ step_ok "Node.js $(node --version)"
 
 # ── Step 2: Claude Code ──
 
-printf "\n  ${D}[2/5]${R} ${B}Claude Code${R}\n"
+printf "\n  ${D}[2/6]${R} ${B}Claude Code${R}\n"
 if ! command -v claude &>/dev/null; then
   # Try without sudo (nvm/fnm), then with sudo (system npm)
   if npm install -g @anthropic-ai/claude-code >/dev/null 2>&1; then
@@ -152,7 +152,7 @@ fi
 
 # ── Step 3: Heimdall ──
 
-printf "\n  ${D}[3/5]${R} ${B}Heimdall${R}\n"
+printf "\n  ${D}[3/6]${R} ${B}Heimdall${R}\n"
 if [ -d "$INSTALL_DIR/.git" ]; then
   spin_cmd "Pulling latest" git -C "$INSTALL_DIR" pull --ff-only origin main
 else
@@ -167,7 +167,7 @@ step_ok "Heimdall at ${C}~/.heimdall${R}"
 
 # ── Step 4: PATH ──
 
-printf "\n  ${D}[4/5]${R} ${B}PATH${R}\n"
+printf "\n  ${D}[4/6]${R} ${B}PATH${R}\n"
 SHELL_RC=""
 if [ -f "$HOME/.zshrc" ]; then
   SHELL_RC="$HOME/.zshrc"
@@ -191,9 +191,41 @@ else
   printf "  ${W}⚠${R} Add to your shell profile: export PATH=\"\$PATH:\$HOME/.heimdall/bin\"\n"
 fi
 
-# ── Step 5: Companion plugins ──
+# ── Step 5: Register the Heimdall plugin with Claude Code ──
+#
+# The cloned repo at ~/.heimdall is its own marketplace: it ships
+# .claude-plugin/marketplace.json declaring the "heimdall" plugin with
+# source "./". We add that local clone as a marketplace and install the
+# plugin from it, so Claude Code loads heimdall's agents, skills, and hooks
+# in every session. This works entirely from the local clone — no separate
+# marketplace repo and no network round-trip required.
 
-printf "\n  ${D}[5/5]${R} ${B}Companion plugins${R}\n"
+printf "\n  ${D}[5/6]${R} ${B}Heimdall plugin${R}\n"
+
+# Add the local clone as a marketplace (idempotent: re-adding updates in place).
+if claude plugins marketplace list 2>/dev/null | grep -q "^[[:space:]]*❯ heimdall$"; then
+  spin_cmd "Updating heimdall marketplace" claude plugins marketplace update heimdall || true
+else
+  spin_cmd "Registering heimdall marketplace" claude plugins marketplace add "$INSTALL_DIR" || true
+fi
+
+# Install / enable the plugin from the heimdall marketplace.
+if claude plugins list 2>/dev/null | grep -q "heimdall@heimdall"; then
+  step_ok "Heimdall plugin already installed"
+else
+  spin_cmd "Installing heimdall plugin" claude plugins install heimdall@heimdall || true
+fi
+
+# Confirm the plugin is loadable; warn honestly if it is not.
+if claude plugins list 2>/dev/null | grep -q "heimdall@heimdall"; then
+  step_ok "Heimdall plugin ${C}enabled${R} ${D}(agents + skills + gates load in every session)${R}"
+else
+  printf "  ${W}⚠${R} Plugin registration didn't confirm. Retry: ${C}claude plugins marketplace add ~/.heimdall && claude plugins install heimdall@heimdall${R}\n"
+fi
+
+# ── Step 6: Companion plugins ──
+
+printf "\n  ${D}[6/6]${R} ${B}Companion plugins${R}\n"
 
 # caveman
 if ! claude plugins list 2>/dev/null | grep -q "caveman"; then
@@ -218,13 +250,6 @@ else
   step_ok "claude-mem"
 fi
 
-# heimdall marketplace
-if ! claude plugins marketplace list 2>/dev/null | grep -q "heimdall-marketplace"; then
-  spin_cmd "heimdall marketplace" claude plugins marketplace add randomittin/heimdall-marketplace || true
-else
-  step_ok "heimdall marketplace"
-fi
-
 # ── Done ──
 
 printf "\n"
@@ -232,7 +257,11 @@ printf "  ${V}━━━━━━━━━━━━━━━━━━━━━━
 printf "  ${G}${B}✔ Heimdall ready${R}\n"
 printf "  ${V}━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━${R}\n"
 printf "\n"
-printf "  ${B}Usage${R} ${D}(from any project directory):${R}\n"
+printf "  ${B}Next${R} ${D}— see Heimdall build a real full-stack app, dry by default:${R}\n"
+printf "\n"
+printf "  ${C}heimdall-demo${R}                  ${D}scaffold the demo task (add --run to build it)${R}\n"
+printf "\n"
+printf "  ${B}Then, from any project directory:${R}\n"
 printf "\n"
 printf "  ${C}heimdall \"build a dashboard\"${R}  ${D}end-to-end task${R}\n"
 printf "  ${C}heimdall${R}                      ${D}interactive mode${R}\n"
@@ -240,6 +269,6 @@ printf "  ${C}heimdall --dashboard${R}          ${D}pixel art web UI${R}\n"
 printf "  ${C}heimdall --update${R}             ${D}pull latest version${R}\n"
 printf "\n"
 if [ -n "$SHELL_RC" ]; then
-  printf "  ${W}▸${R} Run ${UL}source ~/${SHELL_RC##*/}${R} or open a new terminal to start.\n"
+  printf "  ${W}▸${R} Run ${UL}source ~/${SHELL_RC##*/}${R} or open a new terminal so ${C}heimdall${R} is on your PATH.\n"
 fi
 printf "\n"

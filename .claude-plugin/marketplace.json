@@ -1,0 +1,17 @@
+{
+  "$schema": "https://anthropic.com/claude-code/marketplace.schema.json",
+  "name": "heimdall",
+  "description": "Nothing ships unproven. Marketplace for Heimdall — the autonomous multi-agent orchestrator for Claude Code that turns one prompt into a finished project and keeps the merge blocked until the work is proven correct.",
+  "owner": {
+    "name": "Heimdall contributors",
+    "url": "https://github.com/randomittin/heimdall"
+  },
+  "plugins": [
+    {
+      "name": "heimdall",
+      "description": "Autonomous multi-agent orchestrator for Claude Code. Decomposes a prompt into waves, spawns parallel agents, wires an external falsifiable oracle so the implementation can never grade its own homework, and keeps the Bifröst closed until the work is proven correct. Live terminal-native HUD + end-of-run summary card.",
+      "source": "./",
+      "category": "productivity"
+    }
+  ]
+}
