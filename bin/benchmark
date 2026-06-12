@@ -41,7 +41,7 @@ BENCH_DIR="$PLUGIN_DIR/evals/benchmark"
 TASKS_DIR="$BENCH_DIR/tasks"
 RESULTS_JSONL="$BENCH_DIR/results.jsonl"
 RESULTS_MD="$BENCH_DIR/results.md"
-SUPERX_BIN="$BIN_DIR/heimdall"
+HEIMDALL_BIN="$BIN_DIR/heimdall"
 
 command -v jq >/dev/null 2>&1 || { echo "error: jq is required" >&2; exit 1; }
 
@@ -310,7 +310,7 @@ fi
 # ── LIVE: prerequisites ──
 command -v claude >/dev/null 2>&1 || { echo "error: claude CLI not found (needed for --live)" >&2; exit 1; }
 if [ "$ARM" = "heimdall" ] || [ "$ARM" = "both" ]; then
-  [ -x "$SUPERX_BIN" ] || echo "warning: $SUPERX_BIN not executable; heimdall arm uses claude --agent heimdall directly" >&2
+  [ -x "$HEIMDALL_BIN" ] || echo "warning: $HEIMDALL_BIN not executable; heimdall arm uses claude --agent heimdall directly" >&2
 fi
 
 : > "$RESULTS_JSONL"
