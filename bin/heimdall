@@ -411,23 +411,33 @@ case "${1:-}" in
     # Wire via core.hooksPath into a heimdall-managed dir, NOT .git/hooks — so a
     # later `.git/hooks` clobber (or a fresh clone re-init) cannot silently
     # disable the gate, and we never trample a user's existing hooks.
-    hooks_dir="$repo_root/.heimdall/git-hooks"
+    #
+    # RELOCATABLE: the value STORED in git config is the RELATIVE path
+    # `.heimdall/git-hooks`. git resolves core.hooksPath relative to the working
+    # tree root, so `mv`-ing or renaming the repo keeps the hook wired — an
+    # absolute path would dangle the instant the repo moves. The hook body itself
+    # resolves heimdall-selfscan at RUNTIME via `git rev-parse --show-toplevel`
+    # (no baked absolute path), so the delegate target moves with the repo too.
+    rel_hooks_dir=".heimdall/git-hooks"
+    hooks_dir="$repo_root/$rel_hooks_dir"
     mkdir -p "$hooks_dir"
     dst_hook="$hooks_dir/pre-push"
 
-    # Copy + bake the absolute selfscan path in place of the install-time anchor.
-    # sed with a path containing slashes → use a pipe delimiter.
-    sed "s|__HEIMDALL_SELFSCAN_PATH__|$selfscan|g" "$src_hook" > "$dst_hook"
+    # Copy the hook verbatim — NO path is baked. The hook resolves the scanner at
+    # runtime from the repo top, so it survives a repo move/rename.
+    cp "$src_hook" "$dst_hook"
     chmod +x "$dst_hook"
 
-    git -C "$repo_root" config core.hooksPath "$hooks_dir"
+    # RELATIVE on purpose (see above). Run from $repo_root so a stale absolute
+    # value from a prior install is overwritten with the relocatable one.
+    git -C "$repo_root" config core.hooksPath "$rel_hooks_dir"
 
     apply_heimdall_theme 2>/dev/null || true
     G='\033[32m'; D='\033[2m'; B='\033[1m'; R='\033[0m'
     printf "\n  ${B}Heimdall push guard installed${R}\n\n"
     printf "  ${G}✓${R} hook        %s\n" "$dst_hook"
-    printf "  ${G}✓${R} delegates   %s\n" "$selfscan"
-    printf "  ${G}✓${R} core.hooksPath = %s\n" "$hooks_dir"
+    printf "  ${G}✓${R} delegates   %s ${D}(resolved at push time)${R}\n" "$repo_root/bin/heimdall-selfscan"
+    printf "  ${G}✓${R} core.hooksPath = %s ${D}(relative → survives a repo move)${R}\n" "$rel_hooks_dir"
     printf "\n"
     printf "  ${D}Runs on EVERY push (human or agent): gitleaks full-history secret scan${R}\n"
     printf "  ${D}+ author/committer identity allowlist. A blocked push prints the reason;${R}\n"
