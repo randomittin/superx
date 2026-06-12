@@ -1,5 +1,5 @@
 #!/usr/bin/env bash
-# report-issue — file a GitHub issue against the superx plugin repo.
+# report-issue — file a GitHub issue against the heimdall plugin repo.
 #
 # Usage:
 #   report-issue --title "..." --body-file <path> [--kind bug|feature|docs|question]
@@ -7,7 +7,7 @@
 #                                                 [--repo owner/name]
 #
 # The repo slug defaults to the `origin` remote of $CLAUDE_PLUGIN_ROOT (the
-# superx plugin checkout). Auto-prepends an "## Environment" section with
+# heimdall plugin checkout). Auto-prepends an "## Environment" section with
 # plugin SHA, OS, kernel, recent commits, and (if cwd is in a git repo)
 # the files modified in the current working directory.
 #

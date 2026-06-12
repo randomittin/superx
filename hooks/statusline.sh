@@ -1,13 +1,13 @@
 #!/usr/bin/env bash
-# statusline.sh — superx HUD for Claude Code's status bar
-# Outputs a SINGLE line: [SUPERX] phase | tasks | dispatch | goal | token-bar | gates
+# statusline.sh — heimdall HUD for Claude Code's status bar
+# Outputs a SINGLE line: [HEIMDALL] phase | tasks | dispatch | goal | token-bar | gates
 # Called by Claude Code via settings.json statusline config.
 # Hard rules: never error, never block the status bar, degrade gracefully if
 # jq/python3 absent. All rendering is shell-side — zero model involvement.
 
 PROJECT="${1:-.}"
 PLANNING="$PROJECT/.planning"
-STATE_JSON="$PROJECT/superx-state.json"
+STATE_JSON="$PROJECT/heimdall-state.json"
 
 # ── Color detection (mirrors install.sh) ──
 if [[ "${COLORTERM:-}" == "truecolor" || "${COLORTERM:-}" == "24bit" || "${TERM:-}" == *256color* ]]; then
@@ -150,7 +150,7 @@ GOAL_SEG=""
 [ "$ST_GOAL" != "-" ] && GOAL_SEG="◎"
 
 # ── Emit single line ──
-printf "%b[SUPERX]%b %b%s%b" "$B$C" "$R" "$B" "$PHASE" "$R"
+printf "%b[HEIMDALL]%b %b%s%b" "$B$C" "$R" "$B" "$PHASE" "$R"
 [ -n "$WAVE_INFO" ] && printf " %b|%b %s tasks" "$D" "$R" "$WAVE_INFO"
 [ -n "$DISPATCH" ] && printf " %b|%b %s" "$D" "$R" "$DISPATCH"
 [ -n "$GOAL_SEG" ] && printf " %b|%b %s" "$D" "$R" "$GOAL_SEG"

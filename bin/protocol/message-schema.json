@@ -1,6 +1,6 @@
 {
   "$schema": "http://json-schema.org/draft-07/schema#",
-  "$id": "https://superx/heimdall/protocol/message-schema-2.0.0.json",
+  "$id": "https://heimdall/protocol/message-schema-2.0.0.json",
   "title": "Heimdall Token-Frugal Protocol v2 — typed inter-agent message",
   "description": "Every main<->spawn message is one of these typed shapes. Messages reference artifacts by ID (symbols, capsules, criteria, commits) — they NEVER restate the artifact body. Schema-validated on receipt: malformed -> one retry -> escalate. Human-readable always; no opaque codes.",
   "type": "object",

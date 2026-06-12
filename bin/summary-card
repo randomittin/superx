@@ -1,6 +1,6 @@
 #!/usr/bin/env bash
-# summary-card — superx end-of-run summary card.
-# Renders a truecolor ASCII box from .planning/STATE.md + superx-state.json + git log.
+# summary-card — heimdall end-of-run summary card.
+# Renders a truecolor ASCII box from .planning/STATE.md + heimdall-state.json + git log.
 # Pure shell. No network, no model involvement. Missing data → "—", never crashes.
 #
 # Usage: summary-card [PROJECT_DIR]   (defaults to cwd)
@@ -9,7 +9,14 @@ set -uo pipefail
 PROJECT="${1:-.}"
 PLANNING="$PROJECT/.planning"
 STATE_MD="$PLANNING/STATE.md"
-STATE_JSON="$PROJECT/superx-state.json"
+# Prefer heimdall-state.json; fall back to legacy superx-state.json (back-compat).
+if [ -f "$PROJECT/heimdall-state.json" ]; then
+  STATE_JSON="$PROJECT/heimdall-state.json"
+elif [ -f "$PROJECT/superx-state.json" ]; then
+  STATE_JSON="$PROJECT/superx-state.json"
+else
+  STATE_JSON="$PROJECT/heimdall-state.json"
+fi
 
 # ── Color detection (mirrors install.sh) ──
 if [[ "${COLORTERM:-}" == "truecolor" || "${COLORTERM:-}" == "24bit" || "${TERM:-}" == *256color* ]]; then
@@ -94,12 +101,13 @@ for plan in "$PLANNING"/PLAN-*.md; do
 done
 
 # ── Commits this session ──
-# Boundary = most recent superx session-end checkpoint commit. Count commits
+# Boundary = most recent heimdall session-end checkpoint commit. Count commits
 # AFTER it (i.e. work done since last session closed). If none found, count
 # all commits reachable from HEAD (capped display).
+# Match both the new 'heimdall:' prefix and the legacy 'superx:' one (back-compat).
 COMMITS="$DASH"
 if [ -d "$PROJECT/.git" ] || git -C "$PROJECT" rev-parse --git-dir >/dev/null 2>&1; then
-  boundary=$(git -C "$PROJECT" log --grep='superx: session-end checkpoint' \
+  boundary=$(git -C "$PROJECT" log --grep='\(heimdall\|superx\): session-end checkpoint' \
               --format='%H' -n1 2>/dev/null || true)
   if [ -n "$boundary" ]; then
     c=$(git -C "$PROJECT" rev-list --count "${boundary}..HEAD" 2>/dev/null || echo "")
@@ -136,7 +144,7 @@ fmt_tokens() {
 }
 if [ "$ST_TOTAL" != "-" ]; then
   SPENT=$(fmt_tokens "$ST_TOTAL")
-  # Estimate of raw (non-superx) Claude Code usage at a ~4x efficiency baseline.
+  # Estimate of raw (non-heimdall) Claude Code usage at a ~4x efficiency baseline.
   EST_RAW=$(awk -v t="$ST_TOTAL" 'BEGIN{printf "%d", t/0.25}')
   EST_LBL=$(fmt_tokens "$EST_RAW")
 else
@@ -201,7 +209,7 @@ TOKENS_COLORED="${C}${SPENT}${R} ${D}spent${R}  ${D}(vs ~${R}${W}${EST_LBL}${R} 
 
 printf "\n"
 printf "%b┌%s┐%b\n" "$D" "$(hr "─")" "$R"
-title_row "superx · run summary"
+title_row "heimdall · run summary"
 printf "%b├%s┤%b\n" "$D" "$(hr "─")" "$R"
 row "task " "$TASK_T" "${C}${TASK_T}${R}"
 row "phase" "$PHASE_T" "${C}${PHASE_T}${R}"

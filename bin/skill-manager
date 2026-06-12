@@ -1,5 +1,5 @@
 #!/usr/bin/env bash
-# skill-manager — project-aware plugin lifecycle for superx
+# skill-manager — project-aware plugin lifecycle for heimdall
 # Enables plugins needed for current project, disables the rest.
 # State stored in ~/.claude/settings.json under enabledPlugins.
 set -eo pipefail
@@ -9,9 +9,11 @@ if command -v readlink &>/dev/null; then
   SELF="$(readlink -f "$0" 2>/dev/null || readlink "$0" 2>/dev/null || echo "$0")"
 fi
 PLUGIN_DIR="$(cd "$(dirname "$SELF")/.." && pwd)"
-CONFIG="$PLUGIN_DIR/superx-skills.json"
+# Prefer heimdall-skills.json; fall back to legacy superx-skills.json (back-compat).
+CONFIG="$PLUGIN_DIR/heimdall-skills.json"
+[ -f "$CONFIG" ] || [ ! -f "$PLUGIN_DIR/superx-skills.json" ] || CONFIG="$PLUGIN_DIR/superx-skills.json"
 SETTINGS="$HOME/.claude/settings.json"
-RESTORE_FILE="/tmp/superx-skill-restore-$$.json"
+RESTORE_FILE="/tmp/heimdall-skill-restore-$$.json"
 
 G='\033[38;2;78;204;163m'
 D='\033[38;2;100;100;120m'

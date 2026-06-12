@@ -84,7 +84,7 @@ static void state_path(char *out, size_t cap, const char *suffix) {
 
     size_t tlen = strlen(tmpdir);
     int needs_slash = (tlen > 0 && tmpdir[tlen - 1] != '/');
-    snprintf(out, cap, "%s%ssuperx-parallel/%s.%s",
+    snprintf(out, cap, "%s%sheimdall-parallel/%s.%s",
              tmpdir, needs_slash ? "/" : "", sid, suffix);
 }
 
@@ -93,7 +93,7 @@ static void state_dir(char *out, size_t cap) {
     if (!tmpdir || !*tmpdir) tmpdir = "/tmp";
     size_t tlen = strlen(tmpdir);
     int needs_slash = (tlen > 0 && tmpdir[tlen - 1] != '/');
-    snprintf(out, cap, "%s%ssuperx-parallel",
+    snprintf(out, cap, "%s%sheimdall-parallel",
              tmpdir, needs_slash ? "/" : "");
 }
 
@@ -213,14 +213,14 @@ static int do_check(const char *tool) {
 
     if (agent_nudge) {
         fprintf(stderr,
-                "[superx] SEQUENTIAL AGENT SPAWNS DETECTED. "
+                "[heimdall] SEQUENTIAL AGENT SPAWNS DETECTED. "
                 "You spawned %d Agent calls in separate turns. "
                 "If these tasks are independent, send ALL Agent calls in ONE message "
                 "with run_in_background: true. Sequential agents = slow. Parallel = fast.\n",
                 AGENT_SOLO_TRIGGER);
     } else if (nudge) {
         fprintf(stderr,
-                "[superx] STOP READING — DELEGATE NOW. "
+                "[heimdall] STOP READING — DELEGATE NOW. "
                 "%d consecutive solo tool calls (last: %s). "
                 "You are the orchestrator, not the implementer. "
                 "Spawn parallel agents and let THEM read/investigate. "
@@ -269,7 +269,7 @@ static int do_grade(void) {
         }
     }
 
-    printf("[superx] parallelism: %ld batched / %ld turns (ratio %.2f, %ld calls)",
+    printf("[heimdall] parallelism: %ld batched / %ld turns (ratio %.2f, %ld calls)",
            s.batch_turns, s.total_turns, ratio, s.calls);
     if (s.agent_calls > 0) {
         printf(" | agents: %ld calls, %ld batched", s.agent_calls, s.agent_batched);

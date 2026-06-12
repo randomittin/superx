@@ -1,13 +1,23 @@
 #!/usr/bin/env bash
-# conflict-log — Log and review skill conflicts in superx-state.json
+# conflict-log — Log and review skill conflicts in heimdall-state.json
 set -euo pipefail
 
-STATE_FILE="${SUPERX_STATE_FILE:-superx-state.json}"
+# Prefer heimdall-state.json; adopt a legacy superx-state.json if present (back-compat).
+STATE_FILE="${HEIMDALL_STATE_FILE:-${SUPERX_STATE_FILE:-}}"
+if [ -z "$STATE_FILE" ]; then
+  if [ -f heimdall-state.json ]; then
+    STATE_FILE="heimdall-state.json"
+  elif [ -f superx-state.json ]; then
+    STATE_FILE="superx-state.json"
+  else
+    STATE_FILE="heimdall-state.json"
+  fi
+fi
 
 # Verify dependencies
-for cmd in jq superx-state; do
+for cmd in jq heimdall-state; do
   if ! command -v "$cmd" &>/dev/null; then
-    echo "Error: '$cmd' not found in PATH. Add superx/bin to your PATH." >&2
+    echo "Error: '$cmd' not found in PATH. Add heimdall/bin to your PATH." >&2
     exit 1
   fi
 done
@@ -42,7 +52,7 @@ cmd_add() {
     --arg r "$resolution" \
     '{timestamp: $ts, skills: [$sa, $sb], conflict: $c, resolution: $r, reflected: false}')
 
-  superx-state add-conflict "$entry"
+  heimdall-state add-conflict "$entry"
 }
 
 cmd_list() {

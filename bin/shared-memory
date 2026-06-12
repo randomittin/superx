@@ -1,5 +1,5 @@
 #!/usr/bin/env python3
-"""shared-memory — SQLite-based shared memory for superx parallel agents.
+"""shared-memory — SQLite-based shared memory for heimdall parallel agents.
 
 Replaces file-based state sharing. Concurrent-safe via SQLite WAL mode.
 Agents call this CLI to read/write shared state during parallel execution.
@@ -25,7 +25,20 @@ import sys
 import time
 from pathlib import Path
 
-DB_PATH = os.environ.get("SUPERX_MEMORY_DB", str(Path.home() / ".superx" / "shared-memory.db"))
+def _resolve_db_path():
+    # Prefer HEIMDALL_MEMORY_DB, fall back to legacy SUPERX_MEMORY_DB env.
+    env = os.environ.get("HEIMDALL_MEMORY_DB") or os.environ.get("SUPERX_MEMORY_DB")
+    if env:
+        return env
+    # Default to ~/.heimdall; adopt a pre-existing ~/.superx DB for back-compat.
+    new = Path.home() / ".heimdall" / "shared-memory.db"
+    legacy = Path.home() / ".superx" / "shared-memory.db"
+    if not new.exists() and legacy.exists():
+        return str(legacy)
+    return str(new)
+
+
+DB_PATH = _resolve_db_path()
 
 
 def get_db():
@@ -148,7 +161,7 @@ def cmd_delete(args):
 def cmd_lock(args):
     key = args[0]
     timeout = float(get_flag(args, "--timeout", "30"))
-    owner = os.environ.get("SUPERX_AGENT_ID", f"pid-{os.getpid()}")
+    owner = os.environ.get("HEIMDALL_AGENT_ID") or os.environ.get("SUPERX_AGENT_ID") or f"pid-{os.getpid()}"
     now = time.time()
     stale = now - 60  # auto-expire locks older than 60s
 
@@ -192,7 +205,7 @@ def cmd_unlock(args):
 def cmd_publish(args):
     channel = args[0]
     message = args[1]
-    sender = os.environ.get("SUPERX_AGENT_ID")
+    sender = os.environ.get("HEIMDALL_AGENT_ID") or os.environ.get("SUPERX_AGENT_ID")
     now = time.time()
 
     conn = get_db()

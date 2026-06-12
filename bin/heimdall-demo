@@ -1,20 +1,20 @@
 #!/usr/bin/env bash
-# superx-demo — the first-five-minutes wow.
+# heimdall-demo — the first-five-minutes wow.
 #
 # Scaffolds a fully-specified demo task into a fresh project dir, then hands you
-# the exact command to paste into Claude Code (via superx) to watch superx build
+# the exact command to paste into Claude Code (via heimdall) to watch heimdall build
 # a small but real full-stack app end-to-end.
 #
 # Usage:
-#   superx-demo [dir] [--dry|--run] [--force] [--help]
+#   heimdall-demo [dir] [--dry|--run] [--force] [--help]
 #
-#   superx-demo                       Scaffold ./superx-demo-app (dry, safe)
-#   superx-demo /tmp/my-demo          Scaffold into a custom dir
-#   superx-demo --run                 Scaffold AND launch superx on the task
-#   superx-demo ./demo --force        Overwrite an existing scaffold
+#   heimdall-demo                       Scaffold ./heimdall-demo-app (dry, safe)
+#   heimdall-demo /tmp/my-demo          Scaffold into a custom dir
+#   heimdall-demo --run                 Scaffold AND launch heimdall on the task
+#   heimdall-demo ./demo --force        Overwrite an existing scaffold
 #
 # Dry mode is the default and never executes work — it only writes files and
-# prints the paste-ready next step. --run additionally launches superx.
+# prints the paste-ready next step. --run additionally launches heimdall.
 #
 set -euo pipefail
 
@@ -32,7 +32,7 @@ else
 fi
 B='\033[1m'; R='\033[0m'; UL='\033[4m'
 
-# ── Resolve plugin root (bin/superx-demo → superx/) ──
+# ── Resolve plugin root (bin/heimdall-demo → heimdall/) ──
 
 SELF="$0"
 if command -v readlink &>/dev/null; then
@@ -45,24 +45,24 @@ PLUGIN_DIR="$(cd "$(dirname "$SELF")/.." && pwd)"
 TARGET_DIR=""
 MODE="dry"        # dry | run
 FORCE=false
-TASK_FILE=".superx-demo-task.md"
+TASK_FILE=".heimdall-demo-task.md"
 PLAN_FILE=".planning/PLAN.md"
 
 # ── Usage ──
 
 usage() {
   cat <<EOF
-$(printf "${P}${B}")superx-demo$(printf "${R}") — scaffold a real full-stack demo task and watch superx build it
+$(printf "${P}${B}")heimdall-demo$(printf "${R}") — scaffold a real full-stack demo task and watch heimdall build it
 
 $(printf "${B}")USAGE$(printf "${R}")
-  superx-demo [dir] [--dry|--run] [--force]
+  heimdall-demo [dir] [--dry|--run] [--force]
 
 $(printf "${B}")ARGUMENTS$(printf "${R}")
-  dir            Target project directory (default: ./superx-demo-app)
+  dir            Target project directory (default: ./heimdall-demo-app)
 
 $(printf "${B}")FLAGS$(printf "${R}")
   --dry          Scaffold + print the paste-ready command. Never executes. (default)
-  --run          Scaffold AND launch superx on the task (requires \`superx\` on PATH).
+  --run          Scaffold AND launch heimdall on the task (requires \`heimdall\` on PATH).
   --force        Overwrite the target dir if it already exists.
   -h, --help     Show this help.
 
@@ -72,10 +72,10 @@ $(printf "${B}")WHAT IT DOES$(printf "${R}")
   <dir>/$PLAN_FILE, then prints the exact command to run it.
 
 $(printf "${B}")EXAMPLES$(printf "${R}")
-  superx-demo                     # scaffold ./superx-demo-app (safe, dry)
-  superx-demo /tmp/demo           # custom dir
-  superx-demo --run               # scaffold and launch superx
-  superx-demo ./demo --force      # overwrite an existing scaffold
+  heimdall-demo                     # scaffold ./heimdall-demo-app (safe, dry)
+  heimdall-demo /tmp/demo           # custom dir
+  heimdall-demo --run               # scaffold and launch heimdall
+  heimdall-demo ./demo --force      # overwrite an existing scaffold
 EOF
 }
 
@@ -89,7 +89,7 @@ for arg in "$@"; do
     --force)   FORCE=true ;;
     -*)
       printf "  ${P}✘${R} Unknown flag: ${B}%s${R}\n" "$arg" >&2
-      printf "  ${D}Run ${C}superx-demo --help${D} for usage.${R}\n" >&2
+      printf "  ${D}Run ${C}heimdall-demo --help${D} for usage.${R}\n" >&2
       exit 2
       ;;
     *)
@@ -103,14 +103,14 @@ for arg in "$@"; do
   esac
 done
 
-[ -z "$TARGET_DIR" ] && TARGET_DIR="./superx-demo-app"
+[ -z "$TARGET_DIR" ] && TARGET_DIR="./heimdall-demo-app"
 
 # ── Banner ──
 
 printf "\n"
-printf "  ${P}${B}░▒▓█${R} ${C}${B}S U P E R X   D E M O${R} ${P}${B}█▓▒░${R}\n"
+printf "  ${P}${B}░▒▓█${R} ${C}${B}H E I M D A L L   D E M O${R} ${P}${B}█▓▒░${R}\n"
 printf "  ${V}━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━${R}\n"
-printf "  ${D}One command → watch superx build a real full-stack app.${R}\n"
+printf "  ${D}One command → watch heimdall build a real full-stack app.${R}\n"
 printf "\n"
 
 # ── Idempotency guard ──
@@ -119,7 +119,7 @@ if [ -e "$TARGET_DIR" ]; then
   if [ "$FORCE" != true ]; then
     printf "  ${W}⚠${R} Target already exists: ${B}%s${R}\n" "$TARGET_DIR"
     printf "  ${D}Re-run with ${C}--force${D} to overwrite, or pick another dir:${R}\n"
-    printf "  ${C}superx-demo %s --force${R}\n\n" "$TARGET_DIR"
+    printf "  ${C}heimdall-demo %s --force${R}\n\n" "$TARGET_DIR"
     exit 1
   fi
   printf "  ${W}⚠${R} Overwriting existing ${B}%s${R} ${D}(--force)${R}\n" "$TARGET_DIR"
@@ -135,7 +135,7 @@ ABS_DIR="$(cd "$TARGET_DIR" && pwd)"
 # Real, fully-specified, scoped to ~5 files, with runnable acceptance criteria.
 
 cat > "$ABS_DIR/$TASK_FILE" <<'TASK'
-# superx demo task — Todo REST API + single-page frontend
+# heimdall demo task — Todo REST API + single-page frontend
 
 Build a small but complete full-stack **Todo** application in this directory. Keep
 it to ~5 source files. Everything must run with zero cloud dependencies and an
@@ -194,10 +194,10 @@ TASK
 # ── The plan seed ──
 
 cat > "$ABS_DIR/$PLAN_FILE" <<'PLAN'
-# Plan seed — superx demo (Todo full-stack)
+# Plan seed — heimdall demo (Todo full-stack)
 
-This is a ready-to-execute plan for the task in `.superx-demo-task.md`.
-superx will refine and parallelize it; it exists so the demo starts with momentum.
+This is a ready-to-execute plan for the task in `.heimdall-demo-task.md`.
+heimdall will refine and parallelize it; it exists so the demo starts with momentum.
 
 ## Waves
 ### Wave 1 — backend core (parallel-safe)
@@ -214,7 +214,7 @@ superx will refine and parallelize it; it exists so the demo starts with momentu
 - [ ] Run `pytest -q` -> green. Boot `uvicorn app:app` -> `GET /` serves HTML.
 
 ## Definition of done
-All six acceptance criteria in `.superx-demo-task.md` pass with quoted evidence.
+All six acceptance criteria in `.heimdall-demo-task.md` pass with quoted evidence.
 PLAN
 
 # ── Output ──
@@ -225,34 +225,34 @@ printf "    ${D}task  ${R}%s\n" "$TASK_FILE"
 printf "    ${D}plan  ${R}%s\n" "$PLAN_FILE"
 printf "\n"
 printf "  ${V}━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━${R}\n"
-printf "  ${B}The task superx will build:${R}\n"
+printf "  ${B}The task heimdall will build:${R}\n"
 printf "  ${D}A Todo REST API (FastAPI) + single-page frontend + pytest + README.${R}\n"
 printf "  ${D}Five real endpoints, runnable acceptance criteria, ~5 files.${R}\n"
 printf "  ${V}━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━${R}\n"
 printf "\n"
 
-# The exact prompt to hand superx — points it at the scaffolded task file.
-DEMO_PROMPT="Build the full-stack app specified in .superx-demo-task.md, following the plan seed in .planning/PLAN.md. All acceptance criteria must pass with runnable evidence."
+# The exact prompt to hand heimdall — points it at the scaffolded task file.
+DEMO_PROMPT="Build the full-stack app specified in .heimdall-demo-task.md, following the plan seed in .planning/PLAN.md. All acceptance criteria must pass with runnable evidence."
 
 if [ "$MODE" = "run" ]; then
-  if ! command -v superx &>/dev/null; then
-    printf "  ${W}⚠${R} ${B}superx${R} not found on PATH — cannot auto-run.\n"
+  if ! command -v heimdall &>/dev/null; then
+    printf "  ${W}⚠${R} ${B}heimdall${R} not found on PATH — cannot auto-run.\n"
     printf "  ${D}Install it, then paste the command below. Falling back to dry output.${R}\n\n"
     MODE="dry"
   else
-    printf "  ${P}▸${R} ${B}Launching superx${R} ${D}(--run)${R}\n"
-    printf "  ${D}cd %s && superx \"%s\"${R}\n\n" "$ABS_DIR" "$DEMO_PROMPT"
+    printf "  ${P}▸${R} ${B}Launching heimdall${R} ${D}(--run)${R}\n"
+    printf "  ${D}cd %s && heimdall \"%s\"${R}\n\n" "$ABS_DIR" "$DEMO_PROMPT"
     cd "$ABS_DIR"
-    exec superx "$DEMO_PROMPT"
+    exec heimdall "$DEMO_PROMPT"
   fi
 fi
 
 # Dry mode (default & fallback): print the paste-ready next step, execute nothing.
-printf "  ${B}Next step${R} ${D}— paste this to watch superx build it:${R}\n"
+printf "  ${B}Next step${R} ${D}— paste this to watch heimdall build it:${R}\n"
 printf "\n"
-printf "  ${C}cd %s && superx \"%s\"${R}\n" "$ABS_DIR" "$DEMO_PROMPT"
+printf "  ${C}cd %s && heimdall \"%s\"${R}\n" "$ABS_DIR" "$DEMO_PROMPT"
 printf "\n"
-printf "  ${D}No ${C}superx${D} on PATH? Open Claude Code in that dir and say:${R}\n"
+printf "  ${D}No ${C}heimdall${D} on PATH? Open Claude Code in that dir and say:${R}\n"
 printf "  ${D}  \"%s\"${R}\n" "$DEMO_PROMPT"
 printf "\n"
 printf "  ${W}▸${R} Safe by default — nothing was executed. Add ${C}--run${R} to launch automatically.\n"

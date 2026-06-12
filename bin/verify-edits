@@ -33,7 +33,7 @@ ISSUES=""
 
 paths=$("$TRACKER" paths 2>/dev/null)
 if [ -z "$paths" ]; then
-  echo "[superx] verify-edits: No edits tracked this session."
+  echo "[heimdall] verify-edits: No edits tracked this session."
   exit 0
 fi
 
@@ -130,7 +130,7 @@ fi
 
 # Full or quick report
 echo "━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━"
-echo "[superx] Edit Verification Report"
+echo "[heimdall] Edit Verification Report"
 echo "━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━"
 echo ""
 "$TRACKER" summary

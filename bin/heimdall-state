@@ -1,9 +1,21 @@
 #!/usr/bin/env bash
-# superx-state — CRUD operations on superx-state.json
-# Used by the superx orchestrator and hooks to manage project state.
+# heimdall-state — CRUD operations on heimdall-state.json
+# Used by the heimdall orchestrator and hooks to manage project state.
 set -euo pipefail
 
-STATE_FILE="${SUPERX_STATE_FILE:-superx-state.json}"
+# State file: prefer HEIMDALL_STATE_FILE, fall back to legacy SUPERX_STATE_FILE.
+# Default to heimdall-state.json, but adopt a pre-existing legacy superx-state.json
+# in the cwd for back-compat (older projects keep working without a migration step).
+STATE_FILE="${HEIMDALL_STATE_FILE:-${SUPERX_STATE_FILE:-}}"
+if [ -z "$STATE_FILE" ]; then
+  if [ -f heimdall-state.json ]; then
+    STATE_FILE="heimdall-state.json"
+  elif [ -f superx-state.json ]; then
+    STATE_FILE="superx-state.json"
+  else
+    STATE_FILE="heimdall-state.json"
+  fi
+fi
 LOCK_FILE="${STATE_FILE}.lock"
 LOCK_TIMEOUT=10
 
@@ -40,7 +52,7 @@ trap release_lock EXIT
 
 usage() {
   cat <<'EOF'
-Usage: superx-state <command> [args]
+Usage: heimdall-state <command> [args]
 
 Commands:
   init                          Create initial state file
@@ -64,14 +76,14 @@ EOF
 
 ensure_state() {
   if [ ! -f "$STATE_FILE" ]; then
-    echo "No superx-state.json found. Run 'superx-state init' first." >&2
+    echo "No heimdall-state.json found. Run 'heimdall-state init' first." >&2
     exit 1
   fi
 }
 
 cmd_init() {
   if [ -f "$STATE_FILE" ]; then
-    echo "superx-state.json already exists. Skipping init." >&2
+    echo "heimdall-state.json already exists. Skipping init." >&2
     return 0
   fi
   cat > "$STATE_FILE" <<'INIT'
@@ -215,7 +227,7 @@ cmd_add_agent() {
 
 cmd_status() {
   ensure_state
-  echo "=== superx status ==="
+  echo "=== heimdall status ==="
   echo "Project: $(jq -r '.project.name // "(unnamed)"' "$STATE_FILE")"
   echo "Phase:   $(jq -r '.project.phase' "$STATE_FILE")"
   echo "Level:   $(jq -r '.project.autonomy_level' "$STATE_FILE") (1=Guided, 2=Checkpoint, 3=Full Auto)"
@@ -338,7 +350,7 @@ cmd_migrate() {
   if [ "$changed" -eq 1 ]; then
     jq '.version = "1.2.0"' "$tmp" > "${tmp}.new" && mv "${tmp}.new" "$tmp"
     mv "$tmp" "$STATE_FILE"
-    echo "Migrated superx-state.json to v1.2.0"
+    echo "Migrated heimdall-state.json to v1.2.0"
   else
     rm "$tmp"
     echo "State file is already up to date."
