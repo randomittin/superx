@@ -42,7 +42,7 @@ Three levels, cycleable at any time:
 | 3 | **Full Auto** | Runs until complete, only stops if blocked or encounters an error it can't resolve |
 
 **How to change levels:**
-- **Slash command:** `/superx:level 1`, `/superx:level 2`, `/superx:level 3`
+- **Slash command:** `/heimdall:level 1`, `/heimdall:level 2`, `/heimdall:level 3`
 - **Arrow key cycling:** Quick keyboard shortcut to cycle 1→2→3→1 (mirrors Claude Code effort slider UX)
 - **Adaptive suggestions:** superx notices patterns:
   - If user approves everything without changes at Level 1 → suggests bumping to Level 2
@@ -309,10 +309,10 @@ superx/
 │       └── assets/
 │           └── superx-state-schema.json
 ├── commands/
-│   ├── level.md                 # /superx:level command
-│   ├── status.md                # /superx:status — show current state
-│   ├── maintain.md              # /superx:maintain — toggle maintainer mode
-│   └── reflect.md               # /superx:reflect — force reflection pass
+│   ├── level.md                 # /heimdall:level command
+│   ├── status.md                # /heimdall:status — show current state
+│   ├── maintain.md              # /heimdall:maintain — toggle maintainer mode
+│   └── reflect.md               # /heimdall:reflect — force reflection pass
 ├── docs/
 │   └── superpowers/
 │       └── specs/
@@ -332,9 +332,9 @@ superx/
 
 2. **State sync across agents**: File-based locking via `superx-state.json`. Each agent operates in a git worktree (isolation), and state writes are serialized through the `superx-state` CLI tool. The orchestrator is the only agent that reads aggregate state and coordinates. Parallel agents write only to their own sub-project status.
 
-3. **Maintainer cron implementation**: Claude Code scheduled triggers (`/schedule` skill or `RemoteTrigger`) for cloud-hosted sessions. For local usage, the `/loop` skill provides polling (`/loop 30m /superx:maintain`). OS-level cron is not needed — Claude Code's native scheduling covers both cases.
+3. **Maintainer cron implementation**: Claude Code scheduled triggers (`/schedule` skill or `RemoteTrigger`) for cloud-hosted sessions. For local usage, the `/loop` skill provides polling (`/loop 30m /heimdall:maintain`). OS-level cron is not needed — Claude Code's native scheduling covers both cases.
 
-4. **Arrow key binding**: Not possible — Claude Code keybindings only support built-in actions, no custom action registration. Resolved with `/superx:level +` (cycle up) and `/superx:level -` (cycle down), which provides fast cycling via tab-completion. Adaptive suggestions complement this by proactively offering level changes based on user behavior.
+4. **Arrow key binding**: Not possible — Claude Code keybindings only support built-in actions, no custom action registration. Resolved with `/heimdall:level +` (cycle up) and `/heimdall:level -` (cycle down), which provides fast cycling via tab-completion. Adaptive suggestions complement this by proactively offering level changes based on user behavior.
 
 ---
 
