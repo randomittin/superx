@@ -1,9 +1,9 @@
 #!/usr/bin/env bash
-# benchmark — honest receipts harness: superx vs raw Claude Code.
+# benchmark — honest receipts harness: heimdall vs raw Claude Code.
 #
 # Runs a fixed suite of representative coding tasks under two arms:
-#   raw     plain Claude Code (claude -p, no superx agent/plugin/goal preamble)
-#   superx  Claude Code driven through the superx agent + plugin + goal mode
+#   raw     plain Claude Code (claude -p, no heimdall agent/plugin/goal preamble)
+#   heimdall  Claude Code driven through the heimdall agent + plugin + goal mode
 #
 # For each task x arm it captures REAL numbers:
 #   - tokens used        (parsed from `claude --output-format json` .usage)
@@ -18,7 +18,7 @@
 #
 # Flags:
 #   --task <id>        run a single task by id (default: all)
-#   --arm raw|superx|both   which arm(s) to run (default: both)
+#   --arm raw|heimdall|both   which arm(s) to run (default: both)
 #   --dry              validate suite + print the capture plan, capture NOTHING
 #                      (DEFAULT — running with no flags does NOT hit the API)
 #   --live             actually run the arms and measure (opt-in)
@@ -27,7 +27,7 @@
 #   -h, --help         show help
 #
 # Honesty principle: this harness publishes whatever it measures, including
-# tasks where superx loses. See evals/benchmark/README.md.
+# tasks where heimdall loses. See evals/benchmark/README.md.
 set -euo pipefail
 
 # ── Resolve paths ──
@@ -41,7 +41,7 @@ BENCH_DIR="$PLUGIN_DIR/evals/benchmark"
 TASKS_DIR="$BENCH_DIR/tasks"
 RESULTS_JSONL="$BENCH_DIR/results.jsonl"
 RESULTS_MD="$BENCH_DIR/results.md"
-SUPERX_BIN="$BIN_DIR/superx"
+SUPERX_BIN="$BIN_DIR/heimdall"
 
 command -v jq >/dev/null 2>&1 || { echo "error: jq is required" >&2; exit 1; }
 
@@ -57,7 +57,7 @@ usage() { sed -n '2,38p' "$SELF"; }
 while [ $# -gt 0 ]; do
   case "$1" in
     --task)          ONLY_TASK="${2:?--task needs an id}"; shift 2 ;;
-    --arm)           ARM="${2:?--arm needs raw|superx|both}"; shift 2 ;;
+    --arm)           ARM="${2:?--arm needs raw|heimdall|both}"; shift 2 ;;
     --dry)           MODE="dry"; shift ;;
     --live)          MODE="live"; shift ;;
     --interventions) INTERVENTIONS="${2:?--interventions needs N}"; shift 2 ;;
@@ -67,15 +67,15 @@ while [ $# -gt 0 ]; do
   esac
 done
 
-case "$ARM" in raw|superx|both) ;; *) echo "error: --arm must be raw|superx|both" >&2; exit 2 ;; esac
+case "$ARM" in raw|heimdall|both) ;; *) echo "error: --arm must be raw|heimdall|both" >&2; exit 2 ;; esac
 case "$MODE" in dry|live) ;; *) echo "error: bad mode" >&2; exit 2 ;; esac
 case "$INTERVENTIONS" in (*[!0-9]*|"") echo "error: --interventions must be a non-negative integer" >&2; exit 2 ;; esac
 
 arms_to_run() {
   case "$ARM" in
     raw)    echo "raw" ;;
-    superx) echo "superx" ;;
-    both)   echo "raw superx" ;;
+    heimdall) echo "heimdall" ;;
+    both)   echo "raw heimdall" ;;
   esac
 }
 
@@ -124,7 +124,7 @@ materialize_workspace() {
   # mktemp needs a trailing run of X's; build it from a variable so the literal
   # substring never trips content scanners that look for that pattern.
   xrun="$(printf 'X%.0s' 1 2 3 4 5 6)"
-  tmpl="${TMPDIR:-/tmp}/superx-bench.${xrun}"
+  tmpl="${TMPDIR:-/tmp}/heimdall-bench.${xrun}"
   ws="$(mktemp -d "$tmpl")"
   # Write seed_files (object: relpath -> content) first so __SEED__ steps see them.
   # SECURITY: task JSONs are untrusted community input. A seed_files key like
@@ -166,8 +166,8 @@ materialize_workspace() {
   (
     cd "$ws"
     git init -q
-    git config user.email bench@superx.local
-    git config user.name superx-bench
+    git config user.email bench@heimdall.local
+    git config user.name heimdall-bench
     # Run setup steps (skip the __SEED__ sentinel — seeds already written above).
     if jq -e '.setup' "$f" >/dev/null 2>&1; then
       while IFS= read -r step; do
@@ -197,16 +197,16 @@ run_verify() {
 
 # ── Build the claude command for an arm. Sets ARM_CMD array. ──
 # raw    : claude -p <prompt> --output-format json [--model ...]
-# superx : claude --agent superx --plugin-dir <dir> -p <goal-prompt> --output-format json [--model ...]
+# heimdall : claude --agent heimdall --plugin-dir <dir> -p <goal-prompt> --output-format json [--model ...]
 build_arm_cmd() {
   local arm="$1" prompt="$2"
   ARM_CMD=(claude --output-format json --permission-mode acceptEdits)
   [ -n "$MODEL" ] && ARM_CMD+=(--model "$MODEL")
-  if [ "$arm" = "superx" ]; then
+  if [ "$arm" = "heimdall" ]; then
     local goal="/goal ${prompt} — fully implemented, all tests pass, lint clean, every line real and working
 
 ${prompt}"
-    ARM_CMD+=(--agent superx --plugin-dir "$PLUGIN_DIR" -p "$goal")
+    ARM_CMD+=(--agent heimdall --plugin-dir "$PLUGIN_DIR" -p "$goal")
   else
     ARM_CMD+=(-p "$prompt")
   fi
@@ -256,7 +256,7 @@ emit_jsonl() {
 
 # ── Header ──
 echo
-echo "superx benchmark harness"
+echo "heimdall benchmark harness"
 echo "  mode:   $MODE$([ "$MODE" = dry ] && echo "  (no API calls, nothing captured)")"
 echo "  arm(s): $(arms_to_run | tr ' ' ',')"
 echo "  tasks:  ${#SELECTED[@]} selected of ${#TASK_FILES[@]} in suite"
@@ -309,8 +309,8 @@ fi
 
 # ── LIVE: prerequisites ──
 command -v claude >/dev/null 2>&1 || { echo "error: claude CLI not found (needed for --live)" >&2; exit 1; }
-if [ "$ARM" = "superx" ] || [ "$ARM" = "both" ]; then
-  [ -x "$SUPERX_BIN" ] || echo "warning: $SUPERX_BIN not executable; superx arm uses claude --agent superx directly" >&2
+if [ "$ARM" = "heimdall" ] || [ "$ARM" = "both" ]; then
+  [ -x "$SUPERX_BIN" ] || echo "warning: $SUPERX_BIN not executable; heimdall arm uses claude --agent heimdall directly" >&2
 fi
 
 : > "$RESULTS_JSONL"
