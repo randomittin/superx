@@ -1,0 +1,440 @@
+#!/usr/bin/env python3
+"""heimdall-face — The Watchman. A block-glyph eye-pair that reacts to build state.
+
+Same renderer family as the H-5 city (city = wide shot, face = close-up). Rendered
+ENTIRELY from the hook/statusline process — NEVER from model output. Zero context
+cost (design law 3). Reads .planning/STATE.md + dispatch/gate state only.
+
+The face is six emotion frames (a 3-line block built from block glyphs) plus a
+1-line compact variant of each for the statusline. Only the middle row changes between
+emotions — that is where the eyes live.
+
+THE ONE THING MEASURED, NOT TYPED (heimdall-face.md wcwidth note):
+  The sparkle and pupil glyphs may render 1.5-2 display columns wide in some terminal
+  fonts, which would push the middle row past the top/bottom rows. The renderer MUST
+  measure each glyph's display width (wcwidth) and pad so every line's display width is
+  IDENTICAL — never pad by char count. The acceptance test (heimdall-face-test) prints
+  all six frames stacked and asserts every line's display width is equal.
+
+Usage:
+  heimdall-face                      1-line statusline form from current STATE (default)
+  heimdall-face --line               same (explicit)
+  heimdall-face --eyes               just the bracketed eye-pair cluster from STATE
+                                     (what the statusline prepends to its HUD)
+  heimdall-face --frame <emotion>    render one 3-line frame (idle|watching|thinking|
+                                     suspicious|passed|gate-passed|red|denial|blink|sleep)
+  heimdall-face --all                stack all six 3-line frames (for the test harness)
+  heimdall-face [DIR]                project dir holding .planning/ (default: .)
+  --no-color                         disable ANSI (also auto-disabled when NO_COLOR set,
+                                     stdout is not a tty, or TERM=dumb)
+  --color                            force ANSI on even when stdout is piped (used by
+                                     statusline.sh, whose captured stdout is still colored)
+
+Exit 0 always (a renderer never blocks); 2 on usage error.
+"""
+import os
+import re
+import sys
+import unicodedata
+
+# ── wcwidth: the measured-not-typed core ────────────────────────────────────
+# Display width of a single character. Zero-width combiners → 0; the wide East-
+# Asian classes (W, F) → 2; everything else (incl. Ambiguous) → 1.
+#
+# The block glyphs are Ambiguous/Neutral and render at exactly ONE column in every
+# monospace terminal — that uniformity is why the face holds together where rounded
+# box-drawing shattered (face.md base-form note). The pupil glyph is Ambiguous and
+# the sparkle is Neutral; both must measure 1 here so the sparkle/pupil frames line
+# up with the plain rows. We map Ambiguous → 1 deliberately: it is the only choice
+# that keeps every frame's three rows equal-width, which is the acceptance test.
+def char_width(ch):
+    if not ch:
+        return 0
+    cat = unicodedata.category(ch)
+    if cat in ("Mn", "Me", "Cf"):  # nonspacing / enclosing marks, format chars
+        return 0
+    if ord(ch) == 0x200B:          # zero-width space
+        return 0
+    eaw = unicodedata.east_asian_width(ch)
+    if eaw in ("W", "F"):          # wide / fullwidth → two columns
+        return 2
+    return 1                        # narrow, halfwidth, ambiguous, neutral → one
+
+
+_ANSI_RE = re.compile(r"\x1b\[[0-9;]*m")
+
+
+def display_width(s):
+    """Display width of a string, ignoring ANSI SGR sequences."""
+    return sum(char_width(c) for c in _ANSI_RE.sub("", s))
+
+
+def pad_to(s, width, fill=" "):
+    """Right-pad s with `fill` (a single display column) to `width` columns.
+
+    Measures display width (never char count) so glyphs that classify oddly still
+    align. Never truncates — a renderer must not lie about its art."""
+    cur = display_width(s)
+    if cur >= width:
+        return s
+    return s + fill * (width - cur)
+
+
+# ── The six emotion frames ───────────────────────────────────────────────────
+# Exactly the art in heimdall-face.md §"The six emotion frames". Only the middle
+# (eye) row changes between emotions; top brow row and bottom cheek row are shared
+# except for `suspicious`, where one brow drops (top row differs on the right eye).
+_TOP_IDLE = "█▓▒▓█▀██▀█▄░░▄█▀██▀█▓▒▓█"
+_TOP_SUSPICIOUS = "█▓▒▓█▀██▀█▄░░▄███▀▀█▓▒▓█"  # right brow drops
+_BOTTOM = "█▓▓▒░░░░░▒▓░░▓▒░░░░░▒▓▓█"
+
+# middle (eye) rows — one per emotion
+_MID = {
+    "idle":      "█▓▒░▀▄▄▄▄▄█░░█▄▄▄▄▄▀░▒▓█",
+    "passed":    "█▓▒░▀▄✦▄▄▄█░░█▄▄▄✦▄▀░▒▓█",  # sparkle pupils — the approve beat
+    "thinking":  "█▓▒░▀▄▄▄●▄█░░█▄▄▄●▄▀░▒▓█",  # pupils drift right — scanning
+    "blink":     "█▓▒░▀▀▀▀▀▀█░░█▀▀▀▀▀▀░▒▓█",  # eyes shut to a line
+    "red":       "█▓▒░▀▄███▄█░░█▄███▄▀░▒▓█",  # wide hard stare — denial
+    "suspicious":"█▓▒░▀▄▄▄▄▄█░░█▄▄▄▄▄▀░▒▓█",  # skeptical (brow does the work)
+}
+
+# canonical emotion name ← any accepted alias
+_ALIAS = {
+    "idle": "idle", "watching": "idle", "watch": "idle",
+    "thinking": "thinking", "planning": "thinking", "wave": "thinking",
+    "suspicious": "suspicious", "corpus": "suspicious", "falsify": "suspicious",
+    "passed": "passed", "gate-passed": "passed", "gate_passed": "passed", "pass": "passed",
+    "red": "red", "denial": "red", "deny": "red", "fail": "red",
+    "blink": "blink", "sleep": "sleep", "asleep": "sleep",
+}
+
+# `sleep` shares the shut-eye middle row with `blink` but is a distinct state for
+# coloring / the 1-line label; resolve it to the blink art for the 3-line frame.
+_FRAME_ART = {
+    "idle": "idle", "thinking": "thinking", "suspicious": "suspicious",
+    "passed": "passed", "red": "red", "blink": "blink", "sleep": "blink",
+}
+
+EMOTIONS = ["idle", "thinking", "suspicious", "passed", "red", "sleep"]
+
+
+def frame_lines(emotion):
+    """The three rows of a 3-line frame for an emotion (no color, no padding)."""
+    art = _FRAME_ART.get(emotion, "idle")
+    top = _TOP_SUSPICIOUS if emotion == "suspicious" else _TOP_IDLE
+    mid = _MID[art if art in _MID else "idle"]
+    return [top, mid, _BOTTOM]
+
+
+# ── Color ────────────────────────────────────────────────────────────────────
+def make_palette(no_color):
+    if no_color:
+        return {"idle": "", "thinking": "", "suspicious": "",
+                "passed": "", "red": "", "sleep": "", "dim": "", "reset": ""}
+    return {
+        "idle":       "\033[36m",    # cyan iris band
+        "thinking":   "\033[97m",    # white — scanning
+        "suspicious": "\033[36m",    # cyan (skeptical, still watching)
+        "passed":     "\033[33m",    # gold sparkle
+        "red":        "\033[91m",    # hard red — denial (face.md exact code)
+        "sleep":      "\033[90m",    # dim — long idle
+        "dim":        "\033[90m",
+        "reset":      "\033[0m",
+    }
+
+
+def color_for(emotion, pal):
+    return pal.get(emotion, pal["idle"])
+
+
+# ── State → emotion ──────────────────────────────────────────────────────────
+def _read_state_text(planning):
+    path = os.path.join(planning, "STATE.md")
+    try:
+        with open(path, "r", encoding="utf-8", errors="replace") as fh:
+            return fh.read()
+    except OSError:
+        return ""
+
+
+def _phase_from_state(text):
+    """Phase string from STATE.md. Supports both the `current_phase:` line form
+    (this repo) and a YAML `phase:` frontmatter field (city form)."""
+    for line in text.splitlines():
+        m = re.match(r"^\s*current_phase:\s*(.*)$", line)
+        if m:
+            return m.group(1).strip()
+    in_fm = False
+    fences = 0
+    for line in text.splitlines():
+        if line.strip() == "---":
+            fences += 1
+            in_fm = fences == 1
+            continue
+        if in_fm:
+            m = re.match(r"^\s*phase:\s*(.*)$", line)
+            if m:
+                return m.group(1).strip().strip('"')
+    return ""
+
+
+def _gate_state(project, planning):
+    """none|running|pass|fail — scans oracle + spawn reports (city-compatible)."""
+    import glob
+    import json
+    state = "none"
+    patterns = [
+        os.path.join(project, "evals", "oracles", "*", "report.json"),
+        os.path.join(planning, "spawns", "reports", "*.report.json"),
+        os.path.join(planning, "spawns", "reports", "*.json"),
+    ]
+    for pat in patterns:
+        for r in glob.glob(pat):
+            try:
+                with open(r, "r", encoding="utf-8", errors="replace") as fh:
+                    status = (json.load(fh) or {}).get("status", "")
+            except (OSError, ValueError):
+                status = ""
+            if status == "fail":
+                return "fail"
+            if status == "pass" and state == "none":
+                state = "pass"
+            elif status in ("running", "partial") and state != "pass":
+                state = "running"
+    return state
+
+
+def detect_emotion(project):
+    """Resolve (emotion, wave_str) from deterministic state files.
+
+    Mapping (heimdall-face.md §State→emotion):
+      hard-gate fail / denial   → red    (held until cleared)
+      corpus / falsify running  → suspicious
+      gate passed / wave done   → passed
+      planning / wave executing → thinking
+      no active run             → idle
+      long idle                 → sleep
+    """
+    planning = os.path.join(project, ".planning")
+    text = _read_state_text(planning)
+    phase = _phase_from_state(text).lower()
+    gate = _gate_state(project, planning)
+    wave = _wave_progress(planning)
+
+    # Word-boundary matching avoids substring false-positives (e.g. the token
+    # "completion" inside "namespace-completion" must NOT read as a gate pass).
+    def has(*words):
+        return any(re.search(r"\b" + re.escape(w) + r"\b", phase) for w in words)
+
+    if gate == "fail" or has("denial", "deny", "denied", "barred"):
+        return "red", wave
+    if has("corpus", "falsify", "falsifying") or gate == "running":
+        return "suspicious", wave
+    if gate == "pass" or has("complete", "completed", "passed", "green"):
+        return "passed", wave
+    if has("plan", "planning", "wave", "build", "exec", "executing", "arc", "run"):
+        return "thinking", wave
+    if phase in ("", "idle", "init", "done"):
+        if phase in ("", "idle") and _is_long_idle(planning):
+            return "sleep", wave
+        return "idle", wave
+    return "idle", wave
+
+
+def _is_long_idle(planning):
+    """True when STATE.md has not changed in ~30 min (long idle → sleep)."""
+    import time
+    path = os.path.join(planning, "STATE.md")
+    try:
+        age = time.time() - os.path.getmtime(path)
+    except OSError:
+        return False
+    return age > 1800
+
+
+def _wave_progress(planning):
+    """`done/total` from the first PLAN-*.md + its SUMMARY waves (statusline parity)."""
+    import glob
+    plans = sorted(glob.glob(os.path.join(planning, "PLAN-*.md")))
+    for plan in plans:
+        try:
+            with open(plan, "r", encoding="utf-8", errors="replace") as fh:
+                body = fh.read()
+        except OSError:
+            continue
+        total = len(re.findall(r"^### Task:", body, re.M))
+        if total == 0:
+            continue
+        num_m = re.search(r"(\d+)", os.path.basename(plan))
+        num = num_m.group(1) if num_m else "*"
+        done = 0
+        for summary in glob.glob(os.path.join(planning, "SUMMARY-%s-wave-*.md" % num)):
+            try:
+                with open(summary, "r", encoding="utf-8", errors="replace") as fh:
+                    done += fh.read().count("| DONE |")
+            except OSError:
+                continue
+        return "%d/%d" % (done, total)
+    return ""
+
+
+# ── 1-line compact face (the always-on statusline form) ──────────────────────
+# A single statusline-fittable row per emotion. The eye-pair is a 5-glyph cluster
+# whose middle glyph carries the emotion (face.md rec 1 example shape:
+#   [ <eye> .. <eye> ] heimdall · wave 3/6 · gate ✓ ).
+_LINE_EYES = {
+    "idle":       "▀▄▄▄▀",  # calm, watching
+    "thinking":   "▀▄●▄▀",  # drifting pupil — scanning
+    "suspicious": "▀▄▄▄▀",  # brow does the work; pair stays steady but skeptical
+    "passed":     "▀▄✦▄▀",  # sparkle — the approve beat
+    "red":        "▀▄█▄▀",  # wide hard stare — denial
+    "sleep":      "▀▀▀▀▀",  # shut to a line
+}
+_LINE_TAG = {
+    "idle":       "watching",
+    "thinking":   "thinking",
+    "suspicious": "scanning",
+    "passed":     "gate ✓",
+    "red":        "GATE ✗ — barred",
+    "sleep":      "asleep",
+}
+
+
+def eyes_cluster(emotion, pal):
+    """Just the bracketed eye-pair cluster, colored — the always-on glyph the
+    statusline prepends to its existing HUD (avoids duplicating phase/wave/gate
+    text the HUD already renders). Single line, never multi-line."""
+    eyes = _LINE_EYES.get(emotion, _LINE_EYES["idle"])
+    col = color_for(emotion, pal)
+    rst = pal["reset"]
+    bridge = "░░"
+    return "%s[ %s %s %s ]%s" % (col, eyes, bridge, eyes, rst)
+
+
+def compact_line(emotion, wave, pal):
+    """One statusline-width row for an emotion, colored. Never multi-line."""
+    col = color_for(emotion, pal)
+    rst = pal["reset"]
+    dim = pal["dim"]
+    face = eyes_cluster(emotion, pal)
+    parts = [face, "%sheimdall%s" % (col, rst)]
+    if wave:
+        parts.append("%swave %s%s" % (dim, wave, rst))
+    parts.append("%s%s%s" % (col, _LINE_TAG.get(emotion, "watching"), rst))
+    sep = " %s·%s " % (dim, rst)
+    return sep.join(parts)
+
+
+# ── Renderers ────────────────────────────────────────────────────────────────
+def render_frame(emotion, pal, equalize_width=None):
+    """A 3-line frame, colored, every row padded to identical display width.
+
+    `equalize_width` lets the --all harness pad every frame to a common width so a
+    stacked column is rectangular; default pads to the frame's own widest row."""
+    lines = frame_lines(emotion)
+    target = equalize_width if equalize_width is not None else max(
+        display_width(l) for l in lines)
+    col = color_for(emotion, pal)
+    rst = pal["reset"]
+    out = []
+    for line in lines:
+        padded = pad_to(line, target, " ")
+        out.append("%s%s%s" % (col, padded, rst))
+    return "\n".join(out)
+
+
+def render_all(pal):
+    """All six frames stacked, each labelled. Every frame padded to one common
+    width so the equal-width acceptance test sees a uniform block."""
+    common = 0
+    for emo in EMOTIONS:
+        common = max(common, max(display_width(l) for l in frame_lines(emo)))
+    blocks = []
+    for emo in EMOTIONS:
+        label = "%s── %s ──%s" % (pal["dim"], emo, pal["reset"])
+        blocks.append(label + "\n" + render_frame(emo, pal, equalize_width=common))
+    return "\n\n".join(blocks)
+
+
+# ── CLI ──────────────────────────────────────────────────────────────────────
+def want_color(force_no_color, force_color):
+    if force_no_color:
+        return False
+    if os.environ.get("NO_COLOR") is not None:
+        return False
+    if os.environ.get("TERM", "") == "dumb":
+        return False
+    if force_color:                 # caller (e.g. statusline) knows the surface
+        return True                 # is colored even though our stdout is piped
+    if not sys.stdout.isatty():
+        return False
+    return True
+
+
+def main(argv):
+    mode = "line"        # default = 1-line statusline form from STATE
+    emotion_arg = None
+    project = "."
+    force_no_color = False
+    force_color = False
+
+    i = 0
+    while i < len(argv):
+        a = argv[i]
+        if a in ("-h", "--help"):
+            sys.stdout.write(__doc__)
+            return 0
+        elif a == "--line":
+            mode = "line"
+        elif a == "--eyes":
+            mode = "eyes"
+        elif a == "--all":
+            mode = "all"
+        elif a == "--frame":
+            mode = "frame"
+            if i + 1 >= len(argv):
+                sys.stderr.write("error: --frame needs an emotion\n")
+                return 2
+            emotion_arg = argv[i + 1]
+            i += 1
+        elif a == "--no-color":
+            force_no_color = True
+        elif a == "--color":
+            force_color = True
+        elif a.startswith("-"):
+            sys.stderr.write("error: unknown flag: %s\n" % a)
+            return 2
+        else:
+            project = a
+        i += 1
+
+    pal = make_palette(not want_color(force_no_color, force_color))
+
+    if mode == "all":
+        sys.stdout.write(render_all(pal) + "\n")
+        return 0
+
+    if mode == "frame":
+        canon = _ALIAS.get((emotion_arg or "").lower().strip())
+        if canon is None:
+            sys.stderr.write(
+                "error: unknown emotion: %s (known: %s)\n"
+                % (emotion_arg, ", ".join(sorted(set(_ALIAS.values())))))
+            return 2
+        sys.stdout.write(render_frame(canon, pal) + "\n")
+        return 0
+
+    # mode in (line, eyes): resolve emotion from STATE, emit the form
+    emotion, wave = detect_emotion(project)
+    if mode == "eyes":
+        sys.stdout.write(eyes_cluster(emotion, pal) + "\n")
+    else:
+        sys.stdout.write(compact_line(emotion, wave, pal) + "\n")
+    return 0
+
+
+if __name__ == "__main__":
+    try:
+        sys.exit(main(sys.argv[1:]))
+    except KeyboardInterrupt:
+        sys.exit(0)
