@@ -1,0 +1,138 @@
+#!/usr/bin/env bash
+# heimdall-who — per-agent view over the HAID registry (spec T-1).
+#
+# Read-only. Answers "who is acting in this repo, under whose human identity,
+# and is each still alive / trusted?" by summarising .planning/ledger/agents.json
+# (the registry written by `heimdall-haid register`). It NEVER mutates state.
+#
+# It also surfaces the CURRENT instance's HAID and whether it is registered yet,
+# so an operator can see at a glance if this checkout has announced itself.
+#
+# Heartbeat freshness: an entry whose last_heartbeat is older than the stale
+# window (default 1800s / 30m, override with --stale-after N) is shown as
+# "stale" even if its stored status is "active" — a derived liveness view that
+# does not write back. Stored "revoked" always wins (trust beats liveness).
+#
+# Forward ref (T-2): once the ledger lands, this view will also fold in each
+# HAID's claim/commit counts. For now it reports identity + liveness, which is
+# the attribution backbone those counts will hang off.
+#
+# Usage:
+#   heimdall-who                       table: HAID, human, role, status, heartbeat
+#   heimdall-who --json                machine-readable array of the same
+#   heimdall-who --stale-after <secs>  override the staleness window (default 1800)
+#   -h, --help
+#
+# Exit: 0 ok; 2 usage/IO error.
+set -euo pipefail
+
+SELF="$0"
+if command -v readlink >/dev/null 2>&1; then
+  SELF="$(readlink -f "$0" 2>/dev/null || readlink "$0" 2>/dev/null || echo "$0")"
+fi
+BIN_DIR="$(cd "$(dirname "$SELF")" && pwd)"
+PLUGIN_DIR="$(cd "$BIN_DIR/.." && pwd)"
+PLANNING_DIR="${HEIMDALL_PLANNING_DIR:-$PLUGIN_DIR/.planning}"
+REGISTRY_FILE="$PLANNING_DIR/ledger/agents.json"
+HAID_BIN="$BIN_DIR/heimdall-haid"
+
+command -v jq >/dev/null 2>&1 || { echo "error: jq is required" >&2; exit 2; }
+
+usage() { sed -n '2,26p' "$SELF" | sed 's/^# \{0,1\}//'; }
+
+AS_JSON=""
+STALE_AFTER=1800
+while [ $# -gt 0 ]; do
+  case "$1" in
+    -h|--help) usage; exit 0 ;;
+    --json) AS_JSON=1; shift ;;
+    --stale-after)
+      STALE_AFTER="${2:?--stale-after needs a value (seconds)}"
+      case "$STALE_AFTER" in (*[!0-9]*|'') echo "error: --stale-after must be a non-negative integer" >&2; exit 2 ;; esac
+      shift 2 ;;
+    *) echo "error: unknown argument: $1" >&2; usage >&2; exit 2 ;;
+  esac
+done
+
+# Empty/absent registry → nothing registered yet. Report it honestly.
+if [ ! -f "$REGISTRY_FILE" ]; then
+  if [ -n "$AS_JSON" ]; then
+    printf '[]\n'
+  else
+    echo "(no registry at $REGISTRY_FILE — no agents have registered yet)"
+  fi
+  exit 0
+fi
+
+NOW_EPOCH="$(date +%s)"
+
+# Current instance HAID (best-effort; the bin may not have run register yet).
+CURRENT_HAID=""
+if [ -x "$HAID_BIN" ]; then
+  CURRENT_HAID="$($HAID_BIN current 2>/dev/null || true)"
+fi
+
+# Build the derived view: fold liveness over stored status. We parse the ISO
+# heartbeat to epoch in jq via `fromdateiso8601` (GNU/macOS jq both support it).
+VIEW="$(jq \
+  --argjson now "$NOW_EPOCH" \
+  --argjson window "$STALE_AFTER" \
+  --arg current "$CURRENT_HAID" '
+  [ .agents | to_entries[] | {
+      haid: .key,
+      human: (.value.human // "unknown"),
+      role: (.value.role // "unknown"),
+      tool: (.value.tool // "unknown"),
+      tool_version: (.value.tool_version // "unknown"),
+      first_seen: (.value.first_seen // null),
+      last_heartbeat: (.value.last_heartbeat // null),
+      stored_status: (.value.status // "unknown"),
+      is_current: (.key == $current)
+    }
+    | .age = ( if .last_heartbeat == null then null
+               else ($now - (.last_heartbeat | fromdateiso8601? // $now)) end )
+    | .status = (
+        if .stored_status == "revoked" then "revoked"
+        elif (.age != null and .age > $window) then "stale"
+        else .stored_status end )
+  ]
+  | sort_by(.haid)
+' "$REGISTRY_FILE")"
+
+if [ -n "$AS_JSON" ]; then
+  printf '%s\n' "$VIEW"
+  exit 0
+fi
+
+COUNT="$(printf '%s' "$VIEW" | jq 'length')"
+if [ "$COUNT" -eq 0 ]; then
+  echo "(no agents registered yet)"
+  exit 0
+fi
+
+# Human-readable table. Marker '*' flags the current instance.
+echo "HEIMDALL AGENTS ($COUNT registered)"
+printf '%s\n' "$VIEW" | jq -r '
+  .[] |
+  ( if .is_current then "*" else " " end ) + " " +
+  .haid + "\t" +
+  .status + "\t" +
+  .human + "\t" +
+  .role + "\t" +
+  "v:" + .tool_version + "\t" +
+  "last:" + ( .last_heartbeat // "never" )
+' | column -t -s "$(printf '\t')" 2>/dev/null || printf '%s\n' "$VIEW" | jq -r '
+  .[] |
+  ( if .is_current then "*" else " " end ) + " " +
+  .haid + "  " + .status + "  " + .human + "  " + .role +
+  "  last:" + ( .last_heartbeat // "never" )'
+
+# Footnote: is THIS instance announced?
+if [ -n "$CURRENT_HAID" ]; then
+  if printf '%s' "$VIEW" | jq -e --arg c "$CURRENT_HAID" 'any(.haid == $c)' >/dev/null 2>&1; then
+    :
+  else
+    echo
+    echo "note: this instance ($CURRENT_HAID) is not yet registered — run 'heimdall-haid register'"
+  fi
+fi
