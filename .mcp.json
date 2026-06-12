@@ -1,0 +1,9 @@
+{
+  "mcpServers": {
+    "heimdall-ledger": {
+      "command": "python3",
+      "args": ["bin/heimdall-ledger-mcp"],
+      "env": {}
+    }
+  }
+}
