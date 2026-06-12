@@ -327,8 +327,16 @@ case "${1:-}" in
     # else. This is on the success card, so it must exist. No stdin prompt
     # (uninstall may run non-interactively); behavior is a confirmation print
     # of exactly what was removed.
-    plugin_dir="$PLUGIN_DIR"
+    # SAFETY: derive the plugin dir CANONICALLY ($HOME/.heimdall), never $PLUGIN_DIR.
+    # When invoked via a hardlinked entry point in ~/.local/bin, $PLUGIN_DIR
+    # resolves to ~/.local; an unguarded rm -rf would delete ~/.local. Fixed
+    # location + a plugin.json check make deleting the wrong dir impossible.
     bin_dir="$HOME/.local/bin"
+    plugin_dir="$HOME/.heimdall"
+    # Dev fallback: only if canonical absent AND $PLUGIN_DIR is itself a real plugin tree.
+    if [ ! -d "$plugin_dir" ] && [ -f "$PLUGIN_DIR/.claude-plugin/plugin.json" ]; then
+      plugin_dir="$PLUGIN_DIR"
+    fi
 
     apply_heimdall_theme 2>/dev/null || true
     D='\033[2m'; G='\033[32m'; R='\033[0m'; B='\033[1m'
@@ -341,8 +349,8 @@ case "${1:-}" in
         rm -f "$entry" && { printf "  ${D}removed${R} %s\n" "$entry"; removed_any=1; }
       fi
     done
-    # Plugin directory.
-    if [ -d "$plugin_dir" ]; then
+    # Plugin directory — ONLY if verifiably a Heimdall plugin tree (the hard guard).
+    if [ -d "$plugin_dir" ] && [ -f "$plugin_dir/.claude-plugin/plugin.json" ]; then
       rm -rf "$plugin_dir" && { printf "  ${D}removed${R} %s\n" "$plugin_dir"; removed_any=1; }
     fi
     # Best-effort plugin/marketplace deregistration (never fatal).
