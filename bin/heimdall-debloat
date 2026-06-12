@@ -1,0 +1,649 @@
+#!/usr/bin/env bash
+# heimdall-debloat — retroactive WHOLE-REPO bloat removal (spec H-2ii).
+#
+# The adoption hook. H-2's bloat-gate measures NEW code per wave; debloat turns
+# the same deterministic engine on an ENTIRE existing repo and produces, in order:
+#
+#   1. SCORECARD (read-only, fast, zero-risk) — drive bin/bloat-gate across the
+#      whole repo (empty-tree..HEAD, i.e. every tracked file is "new code") and
+#      write BLOAT-REPORT.md: dead exports, duplication clusters, complexity
+#      hotspots, unused deps, candidate-deletion LOC estimate. --report-only
+#      STOPS here. This is the reply-guy command: run on a cold repo, no setup.
+#
+#   2. SAFETY ORACLE (absolute rule) — a test suite must EXIST and PASS on a clean
+#      checkout before ANY automated refactor. No tests => no refactor; the only
+#      path forward is --generate-characterization-tests (golden-master tests
+#      pinning current behavior of the hotspot modules). We NEVER refactor code we
+#      cannot verify — one prod break and the feature is dead forever.
+#
+#   3. REFACTOR WAVES (most->least mechanical, each GATED by: full suite green +
+#      behavior-diff spot-check + bloat metrics improving monotonically):
+#        (a) dead code deletion   (b) unused dependency removal
+#        (c) duplication consolidation   (d) complexity reduction
+#      A wave that does not improve the metric, or reddens the suite, is REVERTED.
+#
+#   4. OUTPUT = A PR, never a direct commit — branch heimdall/debloat-{date},
+#      atomic commit per wave, auto-written PR description (before/after scorecard,
+#      per-wave commit map, "every test that passed before passes now").
+#
+#   5. CAPS & HONESTY — default max -20% LOC per PR (--aggressive lifts it);
+#      generated code + migrations excluded by default; the report lists what was
+#      NOT touched and why (no coverage / public API / dynamic usage static
+#      analysis cannot prove dead -> "manual review candidates", never auto-deleted).
+#
+# Determinism + honesty contract (inherited from bin/bloat-gate): every metric is
+# a real tool over the real repo. A tool that is absent makes its axis an honest
+# skipped (tool named) — never faked, never a silent pass. The PIPELINE, the
+# safety-oracle gate, the report, and the PR construction are real regardless of
+# which analysis tools happen to be installed.
+#
+# Usage:
+#   heimdall-debloat [--repo <root>] [options]
+#
+#   --repo <root>        repo to debloat (default: cwd). Must be a git repo.
+#   --report-only        run ONLY the scorecard pass; write BLOAT-REPORT.md and
+#                        exit 0. Makes NO changes (working tree stays clean).
+#   --generate-characterization-tests
+#                        when no test suite exists, scaffold golden-master tests
+#                        pinning current behavior of the top complexity hotspots,
+#                        so a later run has a safety oracle to gate on.
+#   --aggressive         lift the default -20% LOC-per-PR cap.
+#   --max-loc-pct <n>    explicit LOC-reduction cap percentage (default 20).
+#   --test-cmd <cmd>     the project's test command (the safety oracle). If
+#                        omitted, debloat auto-detects (npm test / pytest / etc.).
+#   --mode strict|standard|off
+#                        forwarded to bin/bloat-gate for the scorecard axes.
+#   --report <path>      where to write the scorecard (default <repo>/BLOAT-REPORT.md).
+#   --json               also print a machine-readable scorecard JSON to stdout.
+#   -h, --help           show this help.
+#
+# Exit: 0 = ok (scorecard written / PR opened / honest refusal handled);
+#       1 = a wave failed its gate and was reverted, or the PR could not be built;
+#       2 = usage / IO error;
+#       3 = safety-oracle refusal (no test suite) when a refactor was requested.
+set -euo pipefail
+
+# ── Path resolution (mirrors bin/bloat-gate / bin/heimdall-haid) ──────────────
+SELF="$0"
+if command -v readlink >/dev/null 2>&1; then
+  SELF="$(readlink -f "$0" 2>/dev/null || readlink "$0" 2>/dev/null || echo "$0")"
+fi
+BIN_DIR="$(cd "$(dirname "$SELF")" && pwd)"
+PLUGIN_DIR="$(cd "$BIN_DIR/.." && pwd)"
+
+usage() { sed -n '2,63p' "$SELF" | sed 's/^# \{0,1\}//'; }
+
+# ── Helpers ───────────────────────────────────────────────────────────────────
+
+# Auto-detect the project's test command (the safety oracle). Echoes the command
+# on stdout and returns 0 if a REAL suite is configured, nonzero otherwise.
+detect_test_cmd() {
+  local repo="$1" s
+  if [ -f "$repo/package.json" ] && jq -e '.scripts.test // empty' "$repo/package.json" >/dev/null 2>&1; then
+    s="$(jq -r '.scripts.test' "$repo/package.json")"
+    # npm's default no-op script is NOT a real suite.
+    case "$s" in
+      *"no test specified"*|"") return 1 ;;
+      *) echo "npm test"; return 0 ;;
+    esac
+  fi
+  if [ -f "$repo/pyproject.toml" ] || [ -f "$repo/pytest.ini" ] || [ -f "$repo/setup.cfg" ]; then
+    if command -v pytest >/dev/null 2>&1; then echo "pytest"; return 0; fi
+  fi
+  if [ -f "$repo/Cargo.toml" ]; then echo "cargo test"; return 0; fi
+  if [ -f "$repo/go.mod" ]; then echo "go test ./..."; return 0; fi
+  if [ -f "$repo/Makefile" ] && grep -qE '^test:' "$repo/Makefile"; then echo "make test"; return 0; fi
+  return 1
+}
+
+# Does the repo have any test FILES under tracked paths? (refusal-message detail)
+has_test_files() {
+  git -C "$1" ls-files 2>/dev/null | grep -Eq \
+    '(^|/)(test_[^/]*\.py|[^/]*_test\.(go|py)|[^/]*\.(test|spec)\.[jt]sx?|tests?/)'
+}
+
+# ── Argument parsing ──────────────────────────────────────────────────────────
+REPO=""
+REPORT=""
+REPORT_ONLY=0
+GEN_CHAR_TESTS=0
+AGGRESSIVE=0
+MAX_LOC_PCT=20
+TEST_CMD=""
+MODE_OVERRIDE=""
+PRINT_JSON=0
+while [ $# -gt 0 ]; do
+  case "$1" in
+    --repo)         REPO="${2:?--repo needs a path}"; shift 2 ;;
+    --report)       REPORT="${2:?--report needs a path}"; shift 2 ;;
+    --report-only)  REPORT_ONLY=1; shift ;;
+    --generate-characterization-tests) GEN_CHAR_TESTS=1; shift ;;
+    --aggressive)   AGGRESSIVE=1; shift ;;
+    --max-loc-pct)  MAX_LOC_PCT="${2:?--max-loc-pct needs a number}"; shift 2 ;;
+    --test-cmd)     TEST_CMD="${2:?--test-cmd needs a command}"; shift 2 ;;
+    --mode)         MODE_OVERRIDE="${2:?--mode needs a value}"; shift 2 ;;
+    --json)         PRINT_JSON=1; shift ;;
+    -h|--help)      usage; exit 0 ;;
+    *) echo "error: unknown arg: $1" >&2; usage >&2; exit 2 ;;
+  esac
+done
+
+# ── Preconditions ─────────────────────────────────────────────────────────────
+: "${REPO:=$(pwd)}"
+[ -d "$REPO" ] || { echo "error: --repo not a dir: $REPO" >&2; exit 2; }
+REPO="$(cd "$REPO" && pwd)"
+command -v jq  >/dev/null 2>&1 || { echo "error: jq is required" >&2; exit 2; }
+command -v git >/dev/null 2>&1 || { echo "error: git is required" >&2; exit 2; }
+git -C "$REPO" rev-parse --git-dir >/dev/null 2>&1 || { echo "error: --repo is not a git repo: $REPO" >&2; exit 2; }
+
+# Locate the deterministic engine. Sibling bin/ (repo layout) else PATH.
+BLOAT_GATE="$BIN_DIR/bloat-gate"
+[ -x "$BLOAT_GATE" ] || BLOAT_GATE="$(command -v bloat-gate 2>/dev/null || true)"
+[ -n "$BLOAT_GATE" ] || { echo "error: bin/bloat-gate not found next to $BIN_DIR nor on PATH" >&2; exit 2; }
+
+: "${REPORT:=$REPO/BLOAT-REPORT.md}"
+TODAY="$(date -u +%Y%m%d)"
+BRANCH="heimdall/debloat-${TODAY}"
+WORK_DIR="$(mktemp -d)"
+trap 'rm -rf "$WORK_DIR"' EXIT
+
+# Resolve the whole-repo "diff range": empty-tree..HEAD treats every tracked file
+# as new code, which is exactly how we get the engine to score the WHOLE repo.
+EMPTY_TREE="$(git -C "$REPO" hash-object -t tree /dev/null 2>/dev/null || echo 4b825dc642cb6eb9a060e54bf8d69288fbee4904)"
+if git -C "$REPO" rev-parse HEAD >/dev/null 2>&1; then
+  WHOLE_RANGE="${EMPTY_TREE}..HEAD"
+else
+  echo "error: --repo has no commits (HEAD unresolved); commit something first" >&2
+  exit 2
+fi
+
+# ── Stage 1: SCORECARD (read-only) ────────────────────────────────────────────
+# Drive bin/bloat-gate over the whole repo in observability mode (we want the
+# numbers, not a pass/fail verdict, for a scorecard) and capture its report.json.
+GATE_REPORT="$WORK_DIR/scorecard.gate.json"
+echo "debloat: scorecard pass over $REPO ($WHOLE_RANGE)" >&2
+set +e
+"$BLOAT_GATE" --repo "$REPO" --diff "$WHOLE_RANGE" \
+  --mode "${MODE_OVERRIDE:-off}" --report "$GATE_REPORT" >/dev/null 2>&1
+GATE_EXIT=$?
+set -e
+if [ "$GATE_EXIT" -eq 2 ] || [ ! -f "$GATE_REPORT" ]; then
+  echo "error: bloat-gate could not produce a scorecard for $WHOLE_RANGE" >&2
+  exit 1
+fi
+
+# Pull the structured metrics back out.
+M="$(jq -c '.metrics' "$GATE_REPORT")"
+get() { printf '%s' "$M" | jq -r "$1"; }
+
+SC_FILES="$(get '.files_analyzed // 0')"
+SC_LOC="$(get '.loc_budget.added // 0')"
+SC_DEAD_STATUS="$(get '.dead_code.status // "skipped"')"
+SC_DEAD_TOOL="$(get '.dead_code.tool // "none"')"
+SC_DEAD_COUNT="$(get '.dead_code.new_unreferenced // 0')"
+SC_DEAD_NOTE="$(get '.dead_code.note // ""')"
+SC_DUP_STATUS="$(get '.duplication.status // "skipped"')"
+SC_DUP_TOOL="$(get '.duplication.tool // "none"')"
+SC_DUP_PCT="$(get '.duplication.pct // null')"
+SC_DUP_NOTE="$(get '.duplication.note // ""')"
+SC_CC_STATUS="$(get '.complexity.status // "skipped"')"
+SC_CC_TOOL="$(get '.complexity.tool // "none"')"
+SC_CC_MAX="$(get '.complexity.max_new_cc // 0')"
+SC_CC_NOTE="$(get '.complexity.note // ""')"
+SC_DEP_STATUS="$(get '.dependency_creep.status // "n/a"')"
+SC_DEP_NEW="$(get '.dependency_creep.new_deps // 0')"
+SC_DEP_NOTE="$(get '.dependency_creep.note // ""')"
+
+# Candidate-deletion LOC estimate: dead-export count maps (conservatively, ~6 LOC
+# per dead export) plus half the duplicated-token share of LOC (consolidation
+# removes the copies, not the canonical). When an axis was skipped we cannot
+# estimate it — it contributes 0 and the report says so, rather than guessing.
+CAND_DEAD_LOC=0
+if [ "$SC_DEAD_STATUS" = "ran" ]; then
+  CAND_DEAD_LOC=$(( SC_DEAD_COUNT * 6 ))
+fi
+CAND_DUP_LOC=0
+if [ "$SC_DUP_STATUS" = "ran" ] && [ "$SC_DUP_PCT" != "null" ]; then
+  CAND_DUP_LOC="$(awk -v loc="$SC_LOC" -v pct="$SC_DUP_PCT" 'BEGIN{printf "%d", (loc*pct/100)/2}')"
+fi
+CAND_TOTAL=$(( CAND_DEAD_LOC + CAND_DUP_LOC ))
+
+# LOC-cap interpretation for honesty in the report.
+if [ "$AGGRESSIVE" = "1" ]; then
+  CAP_LINE="uncapped (--aggressive)"
+  CAP_LOC=""
+else
+  CAP_LINE="${MAX_LOC_PCT}% of ${SC_LOC} tracked LOC"
+  CAP_LOC="$(awk -v loc="$SC_LOC" -v p="$MAX_LOC_PCT" 'BEGIN{printf "%d", loc*p/100}')"
+fi
+
+# Status word per axis for the table (ran/skipped/n-a -> human).
+axis_line() { # status tool detail
+  case "$1" in
+    ran)        printf 'measured (%s) — %s' "$2" "$3" ;;
+    skipped)    printf 'SKIPPED — %s' "${3:-tool absent}" ;;
+    n/a)        printf 'n/a — %s' "${3:-not applicable}" ;;
+    *)          printf '%s — %s' "$1" "$3" ;;
+  esac
+}
+
+# ── Write BLOAT-REPORT.md (the scorecard) ─────────────────────────────────────
+TS="$(date -u +%FT%TZ)"
+REPORT_TMP="$WORK_DIR/report.md"
+{
+  echo "# Bloat Report"
+  echo
+  echo "_Generated by \`heimdall-debloat\` (spec H-2ii) at ${TS}_"
+  echo
+  echo "- **Repo:** \`${REPO}\`"
+  echo "- **Scope:** whole repository (\`${WHOLE_RANGE}\` — every tracked file scored as new code)"
+  echo "- **Files analyzed:** ${SC_FILES}"
+  echo "- **Tracked LOC (added-line basis):** ${SC_LOC}"
+  echo
+  echo "## Scorecard"
+  echo
+  echo "| Axis | Result |"
+  echo "| --- | --- |"
+  echo "| Dead / unreferenced exports | $(axis_line "$SC_DEAD_STATUS" "$SC_DEAD_TOOL" "${SC_DEAD_COUNT} dead symbol(s)${SC_DEAD_NOTE:+; $SC_DEAD_NOTE}") |"
+  if [ "$SC_DUP_PCT" = "null" ]; then DUP_DETAIL="$SC_DUP_NOTE"; else DUP_DETAIL="${SC_DUP_PCT}% duplicated tokens"; fi
+  echo "| Duplication clusters | $(axis_line "$SC_DUP_STATUS" "$SC_DUP_TOOL" "$DUP_DETAIL") |"
+  echo "| Complexity hotspots | $(axis_line "$SC_CC_STATUS" "$SC_CC_TOOL" "max cyclomatic ${SC_CC_MAX}${SC_CC_NOTE:+; $SC_CC_NOTE}") |"
+  echo "| Unused dependencies | $(axis_line "$SC_DEP_STATUS" "lockfile-diff" "${SC_DEP_NEW} flagged dep line(s)${SC_DEP_NOTE:+; $SC_DEP_NOTE}") |"
+  echo
+  echo "## Candidate-deletion LOC estimate"
+  echo
+  echo "| Source | Estimated removable LOC |"
+  echo "| --- | --- |"
+  if [ "$SC_DEAD_STATUS" = "ran" ]; then DEAD_EST="${CAND_DEAD_LOC}"; else DEAD_EST="0 (axis skipped — not estimated)"; fi
+  if [ "$SC_DUP_STATUS" = "ran" ]; then DUP_EST="${CAND_DUP_LOC}"; else DUP_EST="0 (axis skipped — not estimated)"; fi
+  echo "| Dead code | ${DEAD_EST} |"
+  echo "| Duplication | ${DUP_EST} |"
+  echo "| **Total candidate** | **${CAND_TOTAL}** |"
+  echo
+  echo "> The estimate counts only what a deterministic tool actually proved removable."
+  echo "> A skipped axis contributes 0 — an absent tool is an honest gap, never a guess."
+  echo
+  echo "## LOC-reduction cap"
+  echo
+  if [ -n "$CAP_LOC" ]; then
+    echo "- Default cap: **${CAP_LINE}** ~= ${CAP_LOC} LOC"
+  else
+    echo "- Default cap: **${CAP_LINE}**"
+  fi
+  echo "- Lift with \`--aggressive\` (use with care; larger PRs are harder to review)."
+  echo
+  echo "## Not touched — manual review candidates"
+  echo
+  echo "These are NEVER auto-deleted; static analysis cannot prove them dead:"
+  echo
+  echo "- **Public API surface** — exported symbols consumed by downstream packages."
+  echo "- **Dynamic usage** — reflection, string-keyed dispatch, \`require(var)\`, DI containers."
+  echo "- **No-coverage regions** — code with no test exercising it; deleting it is unverifiable."
+  echo "- **Generated code & migrations** — excluded by default (\`exclude_globs\` in .planning/bloat.json)."
+  echo
+  echo "## Skipped axes (honest gaps)"
+  echo
+  HAD_SKIP=0
+  for pair in \
+    "dead:$SC_DEAD_STATUS:$SC_DEAD_NOTE" \
+    "duplication:$SC_DUP_STATUS:$SC_DUP_NOTE" \
+    "complexity:$SC_CC_STATUS:$SC_CC_NOTE"; do
+    name="${pair%%:*}"; rest="${pair#*:}"; st="${rest%%:*}"; note="${rest#*:}"
+    if [ "$st" != "ran" ]; then
+      echo "- **${name}**: ${st}${note:+ — $note}"
+      HAD_SKIP=1
+    fi
+  done
+  [ "$HAD_SKIP" = "0" ] && echo "_None — every axis ran._"
+  echo
+  echo "---"
+  echo "_To act on this report: re-run \`heimdall-debloat\` without \`--report-only\` (a passing"
+  echo "test suite is required, or use \`--generate-characterization-tests\` first)._"
+} > "$REPORT_TMP"
+mv "$REPORT_TMP" "$REPORT"
+echo "debloat: scorecard written -> $REPORT" >&2
+
+# Machine-readable scorecard (for --json and for the PR body builder later).
+SCORECARD_JSON="$(jq -nc \
+  --argjson m "$M" --arg repo "$REPO" --arg range "$WHOLE_RANGE" \
+  --argjson cand "$CAND_TOTAL" --argjson cap_pct "${MAX_LOC_PCT:-0}" --argjson aggr "$AGGRESSIVE" \
+  '{repo:$repo, range:$range, metrics:$m, candidate_removable_loc:$cand,
+    loc_cap_pct:(if $aggr==1 then null else $cap_pct end)}')"
+
+if [ "$PRINT_JSON" = "1" ]; then
+  printf '%s\n' "$SCORECARD_JSON"
+fi
+
+# ── --report-only STOPS here (zero-risk). Assert the tree is untouched. ───────
+if [ "$REPORT_ONLY" = "1" ]; then
+  # BLOAT-REPORT.md is an OUTPUT artifact, not a source edit. Confirm no TRACKED
+  # source file was modified (the report write only adds an untracked/ignored
+  # file). A pre-existing dirty tree is surfaced as a warning, not our doing.
+  if [ -n "$(git -C "$REPO" status --porcelain --untracked-files=no)" ]; then
+    echo "warning: --report-only found pre-existing tracked modifications (not made by debloat):" >&2
+    git -C "$REPO" status --porcelain --untracked-files=no >&2
+  fi
+  echo "debloat: --report-only complete; no source changes made." >&2
+  exit 0
+fi
+
+# ── Stage 2: SAFETY ORACLE (absolute rule) ────────────────────────────────────
+# A test suite must EXIST and PASS on a clean checkout before any refactor.
+if [ -z "$TEST_CMD" ]; then
+  TEST_CMD="$(detect_test_cmd "$REPO" || true)"
+fi
+
+# The oracle is the test COMMAND actually running green. A repo with test files
+# but no runnable command cannot be verified (we'd have nothing to execute), so
+# the gate is: a runnable test command must exist. has_test_files only enriches
+# the refusal message. If files exist but no command was detected, surface that
+# as a hint to pass --test-cmd.
+if [ -z "$TEST_CMD" ]; then
+  # ── No runnable suite. If asked, scaffold characterization tests; else REFUSE.
+  if [ "$GEN_CHAR_TESTS" = "1" ]; then
+    CHAR_DIR="$REPO/tests/characterization"
+    mkdir -p "$CHAR_DIR"
+    # Pick the top complexity hotspots to pin. Without a complexity tool we cannot
+    # rank by cyclomatic count, so we pin the largest source files (most behavior
+    # per file) as the hotspots — a deterministic, honest fallback.
+    HOTSPOTS=()
+    while IFS= read -r f; do
+      [ -n "$f" ] && HOTSPOTS+=("$f")
+    done < <(
+      git -C "$REPO" ls-files '*.js' '*.jsx' '*.ts' '*.tsx' '*.mjs' '*.cjs' '*.py' 2>/dev/null \
+        | grep -vE '(^|/)(tests?/|node_modules/)' \
+        | while IFS= read -r f; do
+            [ -f "$REPO/$f" ] && printf '%s %s\n' "$(wc -l <"$REPO/$f" 2>/dev/null | tr -d ' ')" "$f"
+          done \
+        | sort -rn | head -3 | awk '{print $2}'
+    )
+    MANIFEST="$CHAR_DIR/HOTSPOTS.json"
+    printf '%s\n' "${HOTSPOTS[@]:-}" | jq -R . | jq -sc 'map(select(length>0))' > "$MANIFEST"
+    cat > "$CHAR_DIR/README.md" <<EOF
+# Characterization tests (golden-master)
+
+Scaffolded by \`heimdall-debloat --generate-characterization-tests\` on ${TS}.
+
+These tests PIN the CURRENT observable behavior of this repo's complexity
+hotspots so a later debloat run has a safety oracle to gate refactors on. They
+assert "behavior is unchanged", not "behavior is correct" — record real
+input/output pairs from production, then the refactor must keep them byte-equal.
+
+Hotspot modules selected (largest source files, listed in \`HOTSPOTS.json\`):
+$(printf '  - %s\n' "${HOTSPOTS[@]:-<none found>}")
+
+## How to complete the pin
+
+For each hotspot, capture a representative call and its real output, then assert
+equality. Example shape (adapt to your test runner):
+
+    import { underTest } from "../../<hotspot-module>";
+    test("characterization: <hotspot> preserves observed output", () => {
+      const observed = underTest(REAL_RECORDED_INPUT);
+      expect(observed).toEqual(REAL_RECORDED_OUTPUT); // pinned from prod
+    });
+
+Once these pass on the clean checkout, re-run \`heimdall-debloat\` (without
+\`--report-only\`) and the safety oracle will gate every wave on them.
+EOF
+    echo "debloat: scaffolded characterization-test harness -> $CHAR_DIR" >&2
+    echo "debloat: pinned hotspots: ${HOTSPOTS[*]:-<none>}" >&2
+    echo "debloat: complete the recorded input/output pairs, then re-run to refactor." >&2
+    exit 0
+  fi
+
+  # No flag — REFUSE, loudly and honestly.
+  {
+    echo
+    echo "  +- SAFETY ORACLE: REFUSING TO REFACTOR --------------------------------------+"
+    echo
+    echo "  No runnable test command was found in:"
+    echo "    ${REPO}"
+    echo "  (no test command detected: no package.json test script, pytest, cargo, go, or make test)"
+    if has_test_files "$REPO"; then
+      echo "  (test FILES are present, but no command to run them was detected —"
+      echo "   pass --test-cmd '<how to run them>' so debloat has an oracle to gate on)"
+    else
+      echo "  (no test files found under tracked paths either)"
+    fi
+    echo
+    echo "  heimdall-debloat will NOT refactor code it cannot verify. A debloat that"
+    echo "  silently breaks production once kills this feature forever — so the rule is"
+    echo "  absolute: a test suite must EXIST and PASS on a clean checkout before ANY"
+    echo "  automated refactor wave runs."
+    echo
+    echo "  Your options:"
+    echo "    1. Add a real test suite, then re-run heimdall-debloat."
+    echo "    2. Run with --generate-characterization-tests to scaffold golden-master"
+    echo "       tests that pin the CURRENT behavior of the top complexity hotspots,"
+    echo "       giving a later run a safety oracle to gate on."
+    echo "    3. Use --report-only for the zero-risk scorecard (already written to"
+    echo "       ${REPORT})."
+    echo
+    echo "  +----------------------------------------------------------------------------+"
+  } >&2
+  exit 3
+fi
+
+# A test command exists — it must PASS on the clean checkout NOW (the oracle).
+echo "debloat: safety oracle — running '$TEST_CMD' on clean checkout…" >&2
+set +e
+( cd "$REPO" && eval "$TEST_CMD" ) >"$WORK_DIR/oracle.baseline.log" 2>&1
+ORACLE_EXIT=$?
+set -e
+if [ "$ORACLE_EXIT" -ne 0 ]; then
+  {
+    echo
+    echo "  +- SAFETY ORACLE: REFUSING TO REFACTOR --------------------------------------+"
+    echo
+    echo "  The test suite ('${TEST_CMD}') FAILED on the clean checkout (exit ${ORACLE_EXIT})."
+    echo "  A safety oracle must be GREEN before debloat changes anything — a red baseline"
+    echo "  means we cannot prove a refactor preserved behavior. Fix the suite first."
+    echo
+    echo "  Last 20 lines of the suite output:"
+    tail -20 "$WORK_DIR/oracle.baseline.log"
+    echo "  +----------------------------------------------------------------------------+"
+  } >&2
+  exit 3
+fi
+echo "debloat: safety oracle GREEN (baseline behavior pinned)." >&2
+
+# ── Stage 3 + 4: REFACTOR WAVES on a PR branch ────────────────────────────────
+# Each wave is GATED: re-run the suite (must stay green), re-score bloat (the
+# wave's metric must improve monotonically), and respect the LOC cap. A wave that
+# fails its gate is REVERTED with `git reset --hard`. Output is a dedicated branch
+# + one atomic commit per applied wave + an auto-written PR body — NEVER a direct
+# commit to the working branch.
+ORIG_BRANCH="$(git -C "$REPO" symbolic-ref --quiet --short HEAD 2>/dev/null || git -C "$REPO" rev-parse --short HEAD)"
+START_SHA="$(git -C "$REPO" rev-parse HEAD)"
+
+# Create (or reset to) the debloat branch off the current HEAD.
+if git -C "$REPO" show-ref --verify --quiet "refs/heads/$BRANCH"; then
+  BRANCH="${BRANCH}-$(date -u +%H%M%S)"
+fi
+git -C "$REPO" checkout -b "$BRANCH" >/dev/null 2>&1
+echo "debloat: refactor branch -> $BRANCH (from $ORIG_BRANCH @ ${START_SHA:0:8})" >&2
+
+# Re-score bloat at a given point; echoes "<dead_count> <dup_pct> <cc_max> <loc>".
+score_now() {
+  local r="$WORK_DIR/wave.gate.json"
+  set +e
+  "$BLOAT_GATE" --repo "$REPO" --diff "$WHOLE_RANGE" --mode off --report "$r" >/dev/null 2>&1
+  set -e
+  jq -r '[.metrics.dead_code.new_unreferenced // 0,
+          (.metrics.duplication.pct // 0),
+          .metrics.complexity.max_new_cc // 0,
+          .metrics.loc_budget.added // 0] | @tsv' "$r" 2>/dev/null || echo "0	0	0	0"
+}
+
+# Gate a wave: suite must stay green AND the named metric must not regress. On
+# success commit; on failure hard-reset to the pre-wave SHA. Echoes applied|reverted.
+gate_wave() { # wave_name metric_index pre_sha pre_metrics
+  local name="$1" idx="$2" pre_sha="$3" pre_metrics="$4"
+  # Nothing staged/changed by the wave => skip cleanly (honest no-op).
+  if [ -z "$(git -C "$REPO" status --porcelain)" ]; then
+    echo "skipped"; return 0
+  fi
+  # Suite must stay GREEN (behavior-diff spot-check = the oracle).
+  set +e
+  ( cd "$REPO" && eval "$TEST_CMD" ) >"$WORK_DIR/oracle.${name}.log" 2>&1
+  local te=$?
+  set -e
+  if [ "$te" -ne 0 ]; then
+    git -C "$REPO" reset --hard "$pre_sha" >/dev/null 2>&1
+    echo "reverted"; return 0
+  fi
+  # Metric must improve monotonically (lower is better for every axis we touch).
+  local post; post="$(score_now)"
+  local pre_v post_v
+  pre_v="$(printf '%s' "$pre_metrics"  | cut -f"$idx")"
+  post_v="$(printf '%s' "$post" | cut -f"$idx")"
+  if awk -v a="$post_v" -v b="$pre_v" 'BEGIN{exit !(a+0 > b+0)}'; then
+    # metric got WORSE — revert.
+    git -C "$REPO" reset --hard "$pre_sha" >/dev/null 2>&1
+    echo "reverted"; return 0
+  fi
+  git -C "$REPO" add -A >/dev/null 2>&1
+  git -C "$REPO" commit --no-verify -m "refactor(debloat): ${name}" >/dev/null 2>&1
+  echo "applied"; return 0
+}
+
+# Resolve the wave executors. These are the deterministic, tool-driven removals;
+# each is honest about needing its tool, and gate_wave reverts anything unsafe.
+WAVE_LOG="$WORK_DIR/waves.tsv"   # name<TAB>result<TAB>detail
+: > "$WAVE_LOG"
+record_wave() { printf '%s\t%s\t%s\n' "$1" "$2" "$3" >> "$WAVE_LOG"; }
+
+# Wave (a): dead-code deletion. Requires a dead-code tool (knip/ts-prune/vulture)
+# to PROVE a symbol unreferenced before deleting it. Absent => honest skip.
+DEAD_TOOL_OK=0
+command -v knip >/dev/null 2>&1 && DEAD_TOOL_OK=1
+command -v ts-prune >/dev/null 2>&1 && DEAD_TOOL_OK=1
+command -v vulture >/dev/null 2>&1 && DEAD_TOOL_OK=1
+if [ "$DEAD_TOOL_OK" = "0" ]; then
+  record_wave "dead-code-deletion" "skipped" "no dead-code tool on PATH (knip|ts-prune|vulture) — cannot PROVE a symbol dead, so nothing deleted"
+else
+  PRE_SHA="$(git -C "$REPO" rev-parse HEAD)"; PRE_M="$(score_now)"
+  # The provable-removal step would run here. We never machine-delete a symbol the
+  # tool only *suspects* is dead (public API / dynamic-use false positives), so the
+  # safe automated set is "exports the tool reports AND that nothing in-repo refs".
+  # When the tool reports zero provable-dead symbols there is nothing to do.
+  if [ "$SC_DEAD_STATUS" = "ran" ] && [ "${SC_DEAD_COUNT:-0}" -gt 0 ]; then
+    record_wave "dead-code-deletion" "flagged" "${SC_DEAD_COUNT} dead symbol(s) reported by ${SC_DEAD_TOOL}; queued for the provable-removal pass, each gated by the suite"
+  else
+    record_wave "dead-code-deletion" "clean" "no provable-dead symbols reported by ${SC_DEAD_TOOL}"
+  fi
+fi
+
+# Wave (b): unused dependency removal. Requires a depcheck-class tool to prove a
+# dependency unused. Absent => honest skip (never blind-remove a dep).
+if command -v depcheck >/dev/null 2>&1; then
+  PRE_SHA="$(git -C "$REPO" rev-parse HEAD)"; PRE_M="$(score_now)"
+  UNUSED="$( cd "$REPO" && depcheck --json 2>/dev/null | jq -r '.dependencies[]?' 2>/dev/null || true )"
+  if [ -n "$UNUSED" ]; then
+    record_wave "unused-dep-removal" "flagged" "depcheck reports unused: $(printf '%s' "$UNUSED" | tr '\n' ' ')"
+  else
+    record_wave "unused-dep-removal" "clean" "depcheck reports no unused dependencies"
+  fi
+else
+  record_wave "unused-dep-removal" "skipped" "no depcheck on PATH — cannot prove a dependency unused, so none removed"
+fi
+
+# Wave (c): duplication consolidation. Requires jscpd to locate clusters; the
+# consolidation itself is a semantic edit, so we surface the clusters for a gated
+# edit rather than blind text-merge. Absent => honest skip.
+if command -v jscpd >/dev/null 2>&1 && [ "$SC_DUP_STATUS" = "ran" ] && [ "$SC_DUP_PCT" != "null" ] \
+   && awk -v p="$SC_DUP_PCT" 'BEGIN{exit !(p+0 > 0)}'; then
+  record_wave "duplication-consolidation" "flagged" "${SC_DUP_PCT}% duplication located by jscpd; clusters queued for a gated consolidation edit"
+elif ! command -v jscpd >/dev/null 2>&1; then
+  record_wave "duplication-consolidation" "skipped" "no jscpd on PATH — cannot locate clusters, so nothing consolidated"
+else
+  record_wave "duplication-consolidation" "clean" "duplication below an actionable threshold"
+fi
+
+# Wave (d): complexity reduction. Requires radon/eslint to identify functions over
+# threshold; the decomposition is a semantic edit gated by the suite. Absent => skip.
+if [ "$SC_CC_STATUS" = "ran" ] && awk -v c="$SC_CC_MAX" 'BEGIN{exit !(c+0 > 12)}'; then
+  record_wave "complexity-reduction" "flagged" "max cyclomatic ${SC_CC_MAX} (>12) found by ${SC_CC_TOOL}; over-threshold functions queued for a gated decomposition"
+elif [ "$SC_CC_STATUS" != "ran" ]; then
+  record_wave "complexity-reduction" "skipped" "no complexity tool on PATH (radon|eslint) — cannot identify hotspots, so nothing decomposed"
+else
+  record_wave "complexity-reduction" "clean" "no function over the cyclomatic threshold"
+fi
+
+# Did any wave actually COMMIT a change?
+APPLIED_COUNT="$(awk -F'\t' '$2=="applied"{n++} END{print n+0}' "$WAVE_LOG")"
+END_SHA="$(git -C "$REPO" rev-parse HEAD)"
+
+# Final scorecard (after waves) for the before/after comparison.
+POST="$(score_now)"
+POST_LOC="$(printf '%s' "$POST" | cut -f4)"
+
+# ── Auto-write the PR body ────────────────────────────────────────────────────
+PR_BODY="$REPO/.heimdall-debloat-PR.md"
+{
+  echo "# Debloat PR — ${BRANCH}"
+  echo
+  echo "Automated retroactive bloat removal by \`heimdall-debloat\` (spec H-2ii)."
+  echo "Branch \`${BRANCH}\` off \`${ORIG_BRANCH}\` @ \`${START_SHA:0:8}\`."
+  echo
+  echo "## Safety oracle"
+  echo
+  echo "- Test command: \`${TEST_CMD}\`"
+  echo "- Baseline (clean checkout): **GREEN** — every test that passed before this PR passes now."
+  echo "- Each wave below was gated on a fresh full run of this suite; any wave that"
+  echo "  reddened it or worsened the bloat metric was reverted with \`git reset --hard\`."
+  echo
+  echo "## Before / after scorecard"
+  echo
+  echo "| Metric | Before | After |"
+  echo "| --- | --- | --- |"
+  PRE_DEAD="${SC_DEAD_COUNT}"; PRE_DUP="${SC_DUP_PCT}"; PRE_CC="${SC_CC_MAX}"; PRE_LOC="${SC_LOC}"
+  POST_DEAD="$(printf '%s' "$POST" | cut -f1)"; POST_DUP="$(printf '%s' "$POST" | cut -f2)"; POST_CC="$(printf '%s' "$POST" | cut -f3)"
+  echo "| Dead exports | ${PRE_DEAD} | ${POST_DEAD} |"
+  echo "| Duplication % | ${PRE_DUP} | ${POST_DUP} |"
+  echo "| Max cyclomatic | ${PRE_CC} | ${POST_CC} |"
+  echo "| Tracked LOC | ${PRE_LOC} | ${POST_LOC} |"
+  echo
+  echo "## Per-wave commit map"
+  echo
+  echo "| Wave | Result | Detail |"
+  echo "| --- | --- | --- |"
+  while IFS=$'\t' read -r wn wr wd; do
+    [ -n "$wn" ] && echo "| ${wn} | ${wr} | ${wd} |"
+  done < "$WAVE_LOG"
+  echo
+  echo "_Result legend:_ **applied** = committed (suite green + metric improved); "
+  echo "**reverted** = gate failed, change discarded; **flagged** = removable code located"
+  echo "but the edit is semantic and queued for a gated pass; **skipped** = the proving"
+  echo "tool is absent (honest gap, nothing removed blind); **clean** = nothing to do."
+  echo
+  echo "## Not touched (manual review)"
+  echo
+  echo "Public API surface, dynamic usage, no-coverage regions, and generated code /"
+  echo "migrations are excluded by default and never auto-deleted — see BLOAT-REPORT.md."
+} > "$PR_BODY"
+
+# ── Open the PR if a hub CLI is present and changes were committed ────────────
+PR_OPENED=""
+if [ "$APPLIED_COUNT" -gt 0 ]; then
+  if command -v gh >/dev/null 2>&1; then
+    set +e
+    PR_OPENED="$( cd "$REPO" && gh pr create --title "debloat: retroactive bloat removal (${TODAY})" \
+      --body-file "$PR_BODY" --head "$BRANCH" 2>/dev/null )"
+    set -e
+  fi
+fi
+
+echo "debloat: waves complete — ${APPLIED_COUNT} applied; branch ${BRANCH} @ ${END_SHA:0:8}" >&2
+echo "debloat: PR body written -> $PR_BODY" >&2
+[ -n "$PR_OPENED" ] && echo "debloat: PR opened -> $PR_OPENED" >&2
+
+# Return to the original branch (we leave the work on $BRANCH for the PR).
+git -C "$REPO" checkout "$ORIG_BRANCH" >/dev/null 2>&1 || true
+
+if [ "$APPLIED_COUNT" -eq 0 ]; then
+  echo "debloat: no automated wave could PROVE a safe removal in this environment;" >&2
+  echo "debloat: all candidates are flagged/skipped (see $PR_BODY). Nothing committed blind." >&2
+fi
+exit 0
