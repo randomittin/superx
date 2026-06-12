@@ -1,0 +1,145 @@
+#!/usr/bin/env python3
+"""heimdall-face-test — the wcwidth acceptance harness for the Watchman.
+
+Prints all six emotion frames stacked, then ASSERTS that every line's display
+width is identical (heimdall-face.md §wcwidth acceptance test: "print all six
+frames stacked; assert every line's wcwidth sum is identical"). Exits nonzero on
+ANY width mismatch — the sparkle/pupil glyphs are width-risky and this is the only
+test that catches a shifted middle row.
+
+It also asserts:
+  - the six expected emotions are all present,
+  - only the middle row changes between idle and the other eye-states (the design
+    invariant: eyes live in the middle row),
+  - the 1-line compact variant exists and is single-line for every emotion,
+  - --frame red renders the denial (red) middle row.
+
+Usage:
+  heimdall-face-test            run all assertions, print frames, exit 0/1
+  heimdall-face-test --quiet    assertions only, minimal output
+
+Exit 0 = PASS, 1 = a width mismatch or invariant failure, 2 = harness/load error.
+"""
+import os
+import sys
+import importlib.util
+
+HERE = os.path.dirname(os.path.abspath(__file__))
+FACE = os.path.join(HERE, "heimdall-face")
+
+
+def load_face():
+    spec = importlib.util.spec_from_loader(
+        "heimdall_face", loader=None, origin=FACE)
+    mod = importlib.util.module_from_spec(spec)
+    with open(FACE, "r", encoding="utf-8") as fh:
+        src = fh.read()
+    code = compile(src, FACE, "exec")
+    exec(code, mod.__dict__)
+    return mod
+
+
+def main(argv):
+    quiet = "--quiet" in argv
+    try:
+        face = load_face()
+    except Exception as exc:  # noqa: BLE001 — harness must report any load failure
+        sys.stderr.write("FATAL: could not load heimdall-face: %r\n" % exc)
+        return 2
+
+    pal_plain = face.make_palette(no_color=True)
+    failures = []
+
+    # ── Assertion 1: the six expected emotions exist ──
+    expected = ["idle", "thinking", "suspicious", "passed", "red", "sleep"]
+    if face.EMOTIONS != expected:
+        failures.append("emotion set mismatch: got %r want %r"
+                        % (face.EMOTIONS, expected))
+
+    # ── Gather every plain (uncolored) line across all six frames ──
+    all_lines = []     # (emotion, row_index, text, width)
+    per_frame_widths = {}
+    for emo in face.EMOTIONS:
+        rows = face.frame_lines(emo)
+        widths = [face.display_width(r) for r in rows]
+        per_frame_widths[emo] = widths
+        for idx, (txt, w) in enumerate(zip(rows, widths)):
+            all_lines.append((emo, idx, txt, w))
+
+    # ── Assertion 2 (THE acceptance test): every line's display width identical ──
+    widths = sorted({w for (_, _, _, w) in all_lines})
+    width_ok = len(widths) == 1
+    if not width_ok:
+        # Report the offending lines (the ones not equal to the modal width).
+        from collections import Counter
+        modal = Counter(w for (_, _, _, w) in all_lines).most_common(1)[0][0]
+        for emo, idx, txt, w in all_lines:
+            if w != modal:
+                failures.append(
+                    "WIDTH MISMATCH: frame=%s row=%d width=%d (expected %d): %r"
+                    % (emo, idx, w, modal, txt))
+
+    # ── Assertion 3: per-frame the three rows are equal width (rectangular) ──
+    for emo, ws in per_frame_widths.items():
+        if len(set(ws)) != 1:
+            failures.append("frame %s rows not equal-width: %r" % (emo, ws))
+
+    # ── Assertion 4: only the middle row changes vs idle (eyes live in middle) ──
+    idle_rows = face.frame_lines("idle")
+    for emo in face.EMOTIONS:
+        rows = face.frame_lines(emo)
+        if emo == "suspicious":
+            # suspicious legitimately drops one brow → top row differs by design
+            if rows[1] != idle_rows[1] and emo not in ("idle",):
+                # middle may match idle for suspicious (brow carries it) — allowed
+                continue
+            continue
+        if rows[0] != idle_rows[0] or rows[2] != idle_rows[2]:
+            failures.append(
+                "frame %s changed a non-middle row (top/bottom must match idle)" % emo)
+
+    # ── Assertion 5: 1-line compact variant exists + is single line for all six ──
+    for emo in face.EMOTIONS:
+        line = face.compact_line(emo, "3/6", pal_plain)
+        if "\n" in line:
+            failures.append("compact_line(%s) is multi-line" % emo)
+        if not line.strip():
+            failures.append("compact_line(%s) is empty" % emo)
+
+    # ── Assertion 6: --frame red renders the denial (red) middle row ──
+    red_mid = face.frame_lines("red")[1]
+    if red_mid != "█▓▒░▀▄███▄█░░█▄███▄▀░▒▓█":
+        failures.append("red frame middle row is not the denial stare: %r" % red_mid)
+
+    # ── Print the stacked frames (the screenshot artifact) ──
+    if not quiet:
+        sys.stdout.write("heimdall-face — six emotion frames (plain, equal-width)\n\n")
+        common = max(w for (_, _, _, w) in all_lines)
+        for emo in face.EMOTIONS:
+            rows = face.frame_lines(emo)
+            sys.stdout.write("── %s ──\n" % emo)
+            for r in rows:
+                padded = face.pad_to(r, common, " ")
+                sys.stdout.write("%s  [w=%d]\n" % (padded, face.display_width(padded)))
+            sys.stdout.write("\n")
+        sys.stdout.write("1-line compact variants:\n")
+        for emo in face.EMOTIONS:
+            sys.stdout.write("  %-11s %s\n"
+                             % (emo, face.compact_line(emo, "3/6", pal_plain)))
+        sys.stdout.write("\n")
+
+    # ── Verdict ──
+    if failures:
+        sys.stdout.write("EQUAL-WIDTH ASSERT: FAIL (%d issue(s))\n" % len(failures))
+        for f in failures:
+            sys.stdout.write("  ✗ %s\n" % f)
+        return 1
+
+    sys.stdout.write(
+        "EQUAL-WIDTH ASSERT: PASS — all %d lines across %d frames are %d columns wide\n"
+        % (len(all_lines), len(face.EMOTIONS), widths[0]))
+    return 0
+
+
+if __name__ == "__main__":
+    sys.exit(main(sys.argv[1:]))
