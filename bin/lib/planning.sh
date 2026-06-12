@@ -1,5 +1,5 @@
 #!/usr/bin/env bash
-# planning.sh — File-based planning state management for superx
+# planning.sh — File-based planning state management for heimdall
 #
 # Manages a .planning/ directory inside any project directory.
 # Provides functions to init, read, update, lock, and query planning state.

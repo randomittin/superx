@@ -1,19 +1,19 @@
 #!/usr/bin/env bash
-# superx — autonomous superskill manager for Claude Code
+# heimdall — autonomous superskill manager for Claude Code
 #
-# superx is a program that launches Claude Code with the right settings,
+# heimdall is a program that launches Claude Code with the right settings,
 # plugins, and permissions. It bootstraps everything on first run.
 #
 # Usage:
-#   superx "build a dashboard with auth"     Run a task end-to-end
-#   superx                                    Interactive mode
-#   superx --update                           Pull latest version
-#   superx --setup                            Re-run plugin setup
+#   heimdall "build a dashboard with auth"     Run a task end-to-end
+#   heimdall                                    Interactive mode
+#   heimdall --update                           Pull latest version
+#   heimdall --setup                            Re-run plugin setup
 #
 set -euo pipefail
 
-# Resolve the plugin root (bin/superx → superx/).
-# Must follow symlinks (readlink) so brew-installed superx resolves to
+# Resolve the plugin root (bin/heimdall → heimdall/).
+# Must follow symlinks (readlink) so brew-installed heimdall resolves to
 # the actual Cellar/libexec path, not /opt/homebrew/.
 SELF="$0"
 # Follow symlinks to the real file
@@ -150,10 +150,10 @@ first_run_setup() {
     fi
   fi
 
-  # superx marketplace
-  if ! claude plugins marketplace list 2>/dev/null | grep -q "superx-marketplace"; then
-    echo "  + superx marketplace"
-    claude plugins marketplace add randomittin/superx-marketplace 2>/dev/null || true
+  # heimdall marketplace
+  if ! claude plugins marketplace list 2>/dev/null | grep -q "heimdall-marketplace"; then
+    echo "  + heimdall marketplace"
+    claude plugins marketplace add randomittin/heimdall-marketplace 2>/dev/null || true
   fi
 
   touch "$SETUP_MARKER"
@@ -164,7 +164,7 @@ first_run_setup() {
 # ── Theme, animation, and helper functions ──
 # (Must be defined before command handlers that use them)
 
-apply_superx_theme() {
+apply_heimdall_theme() {
   export COLORTERM=truecolor
   export TERM="${TERM:-xterm-256color}"
   export CLAUDE_CODE_NO_FLICKER=1
@@ -187,7 +187,7 @@ ensure_project_claude_md() {
   local project_md="$WORK_DIR/CLAUDE.md"
   [ -f "$project_md" ] && return 0
   cat > "$project_md" <<'CLAUDEMD'
-# Project Conventions (managed by superx)
+# Project Conventions (managed by heimdall)
 
 ## Rules
 - All code, configs, docs go in this project directory
@@ -257,7 +257,7 @@ print_banner() {
   printf "  ${P}${B}"
   type_text "░▒▓█" 0.04
   printf " "
-  type_text "S U P E R X" 0.05
+  type_text "H E I M D A L L" 0.05
   printf " "
   type_text "█▓▒░" 0.04
   printf "${R}  ${D}v1.1.0${R}\n"
@@ -271,7 +271,7 @@ print_banner() {
   printf "  ${V}╰─────────────────────────────────────╯${R}\n"
   local short_cwd; short_cwd=$(echo "$WORK_DIR" | sed "s|$HOME|~|")
   printf "  ${D}cwd:${R} ${C}%s${R}" "$short_cwd"
-  if [ -f "$WORK_DIR/.superx-no-autocommit" ]; then
+  if [ -f "$WORK_DIR/.heimdall-no-autocommit" ] || [ -f "$WORK_DIR/.superx-no-autocommit" ]; then
     printf "  ${D}[auto-commit: off]${R}"
   fi
   printf "\n\n"
@@ -281,7 +281,7 @@ print_banner() {
 
 # --update: pull latest via git
 if [[ "${1:-}" == "--update" ]]; then
-  apply_superx_theme 2>/dev/null || true
+  apply_heimdall_theme 2>/dev/null || true
 
   # Animated update banner
   P='\033[38;2;224;86;160m' C='\033[38;2;0;212;255m'
@@ -379,19 +379,19 @@ if [[ "${1:-}" == "--update" ]]; then
     fi
   else
     printf "  ${W}No git repo found. Reinstalling...${R}\n"
-    exec bash -c 'cd "$HOME" && curl -fsSL https://raw.githubusercontent.com/randomittin/superx/main/install.sh | bash'
+    exec bash -c 'cd "$HOME" && curl -fsSL https://raw.githubusercontent.com/randomittin/heimdall/main/install.sh | bash'
   fi
   exit 0
 fi
 
-# --reinstall: nuke and rebuild ~/.superx from scratch (fixes zombie states)
+# --reinstall: nuke and rebuild ~/.heimdall from scratch (fixes zombie states)
 # Uses the curl installer instead of doing it inline — avoids the
 # "script deletes itself mid-execution" problem.
 if [[ "${1:-}" == "--reinstall" || "${1:-}" == "--fix" ]]; then
-  apply_superx_theme 2>/dev/null || true
+  apply_heimdall_theme 2>/dev/null || true
   printf "\n  \033[38;2;224;86;160m\033[1m░▒▓█ REINSTALLING █▓▒░\033[0m\n\n"
-  printf "  This will wipe ~/.superx and re-clone from GitHub.\n"
-  printf "  Your projects are NOT affected — only the superx tool itself.\n\n"
+  printf "  This will wipe ~/.heimdall and re-clone from GitHub.\n"
+  printf "  Your projects are NOT affected — only the heimdall tool itself.\n\n"
   read -p "  Proceed? [y/N] " confirm
   if [[ "${confirm:-n}" != [yY]* ]]; then
     echo "  Cancelled."
@@ -399,15 +399,15 @@ if [[ "${1:-}" == "--reinstall" || "${1:-}" == "--fix" ]]; then
   fi
   printf "\n"
   # Remove old install and delegate to the curl installer.
-  # cd $HOME first — if user is inside ~/.superx, deleting it makes
+  # cd $HOME first — if user is inside ~/.heimdall, deleting it makes
   # the cwd invalid and bash throws "getcwd: cannot access parent directories"
-  rm -rf "$HOME/.superx"
-  exec bash -c 'cd "$HOME" && curl -fsSL https://raw.githubusercontent.com/randomittin/superx/main/install.sh | bash'
+  rm -rf "$HOME/.heimdall"
+  exec bash -c 'cd "$HOME" && curl -fsSL https://raw.githubusercontent.com/randomittin/heimdall/main/install.sh | bash'
 fi
 
-# --uninstall: remove superx completely
+# --uninstall: remove heimdall completely
 if [[ "${1:-}" == "--uninstall" ]]; then
-  apply_superx_theme 2>/dev/null || true
+  apply_heimdall_theme 2>/dev/null || true
 
   # Sad banner (reuse top-level color vars from print_banner's fallback chain)
   P='\033[38;2;224;86;160m' D='\033[38;2;100;100;120m'
@@ -427,7 +427,7 @@ if [[ "${1:-}" == "--uninstall" ]]; then
   sleep 0.05
   printf "  ${D}╰─────────────────────────────────────╯${R}\n\n"
 
-  read -p "  Remove superx from ~/.superx and PATH? [y/N] " confirm
+  read -p "  Remove heimdall from ~/.heimdall and PATH? [y/N] " confirm
   if [[ "${confirm:-n}" != [yY]* ]]; then
     printf "\n  ${P}${B}(ᵔᴥᵔ)${R}  ${D}phew! welcome back.${R}\n\n"
     exit 0
@@ -436,17 +436,17 @@ if [[ "${1:-}" == "--uninstall" ]]; then
   printf "\n"
   # Remove PATH entry from shell RC
   for rc in "$HOME/.zshrc" "$HOME/.bashrc" "$HOME/.bash_profile"; do
-    if [ -f "$rc" ] && grep -q '\.superx/bin' "$rc"; then
-      sed -i '' '/superx.*autonomous/d;/\.superx\/bin/d' "$rc" 2>/dev/null || \
-      sed -i '/superx.*autonomous/d;/\.superx\/bin/d' "$rc" 2>/dev/null || true
+    if [ -f "$rc" ] && grep -qE '\.(heimdall|superx)/bin' "$rc"; then
+      sed -i '' '/heimdall.*autonomous/d;/\.heimdall\/bin/d;/superx.*autonomous/d;/\.superx\/bin/d' "$rc" 2>/dev/null || \
+      sed -i '/heimdall.*autonomous/d;/\.heimdall\/bin/d;/superx.*autonomous/d;/\.superx\/bin/d' "$rc" 2>/dev/null || true
       printf "  ${D}×${R} PATH entry removed from $(basename "$rc")\n"
     fi
   done
   sleep 0.1
   # Remove the install directory
-  if [ -d "$HOME/.superx" ]; then
-    rm -rf "$HOME/.superx"
-    printf "  ${D}×${R} ~/.superx removed\n"
+  if [ -d "$HOME/.heimdall" ]; then
+    rm -rf "$HOME/.heimdall"
+    printf "  ${D}×${R} ~/.heimdall removed\n"
   fi
   sleep 0.1
   # Uninstall companion plugins (optional)
@@ -454,18 +454,18 @@ if [[ "${1:-}" == "--uninstall" ]]; then
   if [[ "${plugins:-n}" == [yY]* ]]; then
     claude plugins uninstall caveman 2>/dev/null && printf "  ${D}×${R} caveman removed\n" || true
     claude plugins uninstall superpowers 2>/dev/null && printf "  ${D}×${R} superpowers removed\n" || true
-    claude plugins marketplace remove superx-marketplace 2>/dev/null && printf "  ${D}×${R} marketplace removed\n" || true
+    claude plugins marketplace remove heimdall-marketplace 2>/dev/null && printf "  ${D}×${R} marketplace removed\n" || true
   fi
 
   printf "\n"
   printf "  ${D}━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━${R}\n"
   sleep 0.1
-  printf "  ${D}superx uninstalled.${R}\n"
+  printf "  ${D}heimdall uninstalled.${R}\n"
   printf "  ${D}Open a new terminal for PATH changes.${R}\n"
   sleep 0.1
   printf "\n"
   printf "  ${D}Want us back? Just run:${R}\n"
-  printf "  ${P}curl -fsSL https://raw.githubusercontent.com/randomittin/superx/main/install.sh | bash${R}\n"
+  printf "  ${P}curl -fsSL https://raw.githubusercontent.com/randomittin/heimdall/main/install.sh | bash${R}\n"
   printf "\n"
   printf "  ${D}(╥_╥)  bye bye...${R}\n\n"
   exit 0
@@ -487,24 +487,24 @@ if [[ "${1:-}" == "--resume" || "${1:-}" == "-r" ]]; then
   ensure_claude
   ensure_auth
   first_run_setup
-  apply_superx_theme 2>/dev/null || true
+  apply_heimdall_theme 2>/dev/null || true
   print_banner 2>/dev/null || true
 
   # Check for resumable state
   if [ -f "$WORK_DIR/.planning/STATE.md" ]; then
     echo "  ▸ Resuming from .planning/STATE.md"
   fi
-  if [ -f "$WORK_DIR/superx-state.json" ]; then
-    echo "  ▸ superx state loaded"
+  if [ -f "$WORK_DIR/heimdall-state.json" ]; then
+    echo "  ▸ heimdall state loaded"
   fi
 
   # Restore active goal from state or checkpoint
   GOAL_CONDITION=""
-  if [ -f "$WORK_DIR/superx-state.json" ]; then
+  if [ -f "$WORK_DIR/heimdall-state.json" ]; then
     GOAL_CONDITION=$(python3 -c "
 import json
 try:
-    with open('$WORK_DIR/superx-state.json') as f:
+    with open('$WORK_DIR/heimdall-state.json') as f:
         s = json.load(f)
     cond = s.get('goal', {}).get('condition')
     if cond: print(cond)
@@ -524,12 +524,12 @@ except: pass
   fi
 
   # Write preamble for resume
-  RESUME_PREAMBLE_FILE=$(mktemp /tmp/superx-resume-XXXXXX)
+  RESUME_PREAMBLE_FILE=$(mktemp /tmp/heimdall-resume-XXXXXX)
   if [ -n "$GOAL_CONDITION" ]; then
-    printf "superx resumed.\n\nRESTORE GOAL: A goal was active in the previous session. Restore it immediately:\n/goal %s\n\nThen read .planning/CHECKPOINT.md and continue working." "$GOAL_CONDITION" > "$RESUME_PREAMBLE_FILE"
+    printf "heimdall resumed.\n\nRESTORE GOAL: A goal was active in the previous session. Restore it immediately:\n/goal %s\n\nThen read .planning/CHECKPOINT.md and continue working." "$GOAL_CONDITION" > "$RESUME_PREAMBLE_FILE"
     printf "  \033[38;2;224;86;160m▸ Goal restored\033[0m\n"
   else
-    echo "${PREAMBLE:-superx resumed}" > "$RESUME_PREAMBLE_FILE"
+    echo "${PREAMBLE:-heimdall resumed}" > "$RESUME_PREAMBLE_FILE"
   fi
 
   # Activate project-aware skills
@@ -547,7 +547,7 @@ except: pass
   trap cleanup_resume EXIT
 
   claude --continue \
-    --agent superx \
+    --agent heimdall \
     $PERMISSION_FLAG \
     --model claude-opus-4-8 \
     --plugin-dir "$PLUGIN_DIR" \
@@ -561,7 +561,7 @@ if [[ "${1:-}" == "--team" ]]; then
   ensure_claude
   ensure_auth
   first_run_setup
-  apply_superx_theme 2>/dev/null || true
+  apply_heimdall_theme 2>/dev/null || true
   print_banner 2>/dev/null || true
 
   TEAM_SIZE="${2:-3}"
@@ -573,17 +573,17 @@ if [[ "${1:-}" == "--team" ]]; then
     exit 1
   fi
 
-  SESSION="superx-team-$$"
+  SESSION="heimdall-team-$$"
   echo "  Spawning $TEAM_SIZE workers in tmux session: $SESSION"
 
   tmux new-session -d -s "$SESSION" -n "lead"
   # Lead worker gets the task
-  tmux send-keys -t "$SESSION:lead" "cd $WORK_DIR && claude --agent superx $PERMISSION_FLAG --model claude-opus-4-8 --plugin-dir $PLUGIN_DIR" Enter
+  tmux send-keys -t "$SESSION:lead" "cd $WORK_DIR && claude --agent heimdall $PERMISSION_FLAG --model claude-opus-4-8 --plugin-dir $PLUGIN_DIR" Enter
 
   # Spawn additional worker panes
   for i in $(seq 2 "$TEAM_SIZE"); do
     tmux split-window -t "$SESSION" -h
-    tmux send-keys -t "$SESSION" "cd $WORK_DIR && claude --agent superx $PERMISSION_FLAG --model claude-opus-4-8 --plugin-dir $PLUGIN_DIR" Enter
+    tmux send-keys -t "$SESSION" "cd $WORK_DIR && claude --agent heimdall $PERMISSION_FLAG --model claude-opus-4-8 --plugin-dir $PLUGIN_DIR" Enter
     tmux select-layout -t "$SESSION" tiled
   done
 
@@ -599,29 +599,29 @@ fi
 
 # --help
 if [[ "${1:-}" == "--help" || "${1:-}" == "-h" ]]; then
-  echo "superx — autonomous superskill manager for Claude Code"
+  echo "heimdall — autonomous superskill manager for Claude Code"
   echo ""
   echo "Usage:"
-  echo "  superx \"build X\"       Run a task end-to-end in the current directory"
-  echo "  superx                  Interactive Claude session with superx powers"
-  echo "  superx --resume         Resume last session (conversation + .planning state)"
-  echo "  superx --auto           Use auto-mode (safer alternative to skip-permissions)"
-  echo "  superx --no-goal         Disable goal-driven execution for this run"
-  echo "  superx --skip-checkpoint Start fresh, ignore last checkpoint/settings"
-  echo "  superx --no-autocommit  Disable auto git commits for this project"
-  echo "  superx --autocommit     Re-enable auto git commits"
-  echo "  superx --skills         Manage skills + plugins (auto per-project)"
-  echo "  superx --update         Pull latest superx from GitHub"
-  echo "  superx --setup          Re-run first-time plugin setup"
-  echo "  superx --team N \"task\"  Spawn N parallel Claude workers in tmux"
-  echo "  superx --reinstall      Nuke and re-clone from GitHub (fixes zombie states)"
-  echo "  superx --uninstall      Remove superx completely"
-  echo "  superx --help           Show this help"
+  echo "  heimdall \"build X\"       Run a task end-to-end in the current directory"
+  echo "  heimdall                  Interactive Claude session with heimdall powers"
+  echo "  heimdall --resume         Resume last session (conversation + .planning state)"
+  echo "  heimdall --auto           Use auto-mode (safer alternative to skip-permissions)"
+  echo "  heimdall --no-goal         Disable goal-driven execution for this run"
+  echo "  heimdall --skip-checkpoint Start fresh, ignore last checkpoint/settings"
+  echo "  heimdall --no-autocommit  Disable auto git commits for this project"
+  echo "  heimdall --autocommit     Re-enable auto git commits"
+  echo "  heimdall --skills         Manage skills + plugins (auto per-project)"
+  echo "  heimdall --update         Pull latest heimdall from GitHub"
+  echo "  heimdall --setup          Re-run first-time plugin setup"
+  echo "  heimdall --team N \"task\"  Spawn N parallel Claude workers in tmux"
+  echo "  heimdall --reinstall      Nuke and re-clone from GitHub (fixes zombie states)"
+  echo "  heimdall --uninstall      Remove heimdall completely"
+  echo "  heimdall --help           Show this help"
   echo ""
-  echo "superx launches Claude Code with:"
+  echo "heimdall launches Claude Code with:"
   echo "  --dangerously-skip-permissions    full autonomy"
-  echo "  --plugin-dir <superx>            superx agents + skills"
-  echo "  --agent superx                   CTO-level orchestrator"
+  echo "  --plugin-dir <heimdall>            heimdall agents + skills"
+  echo "  --agent heimdall                   CTO-level orchestrator"
   echo "  + caveman (token compression)    ~65-75% savings"
   echo "  + superpowers (brainstorming)    design + debug skills"
   echo "  + claude-mem (persistent memory) cross-session context"
@@ -649,20 +649,20 @@ fi
 
 # --no-autocommit / --autocommit: toggle auto-commit for this project
 if [[ "${1:-}" == "--no-autocommit" ]]; then
-  touch "$WORK_DIR/.superx-no-autocommit"
+  touch "$WORK_DIR/.heimdall-no-autocommit"
   printf "  \033[38;2;255;200;80m▸ Auto-commit OFF\033[0m for %s\n" "$WORK_DIR"
-  printf "  Re-enable: superx --autocommit\n\n"
+  printf "  Re-enable: heimdall --autocommit\n\n"
   exit 0
 fi
 if [[ "${1:-}" == "--autocommit" ]]; then
-  rm -f "$WORK_DIR/.superx-no-autocommit"
+  rm -f "$WORK_DIR/.heimdall-no-autocommit" "$WORK_DIR/.superx-no-autocommit"
   printf "  \033[38;2;78;204;163m▸ Auto-commit ON\033[0m for %s\n" "$WORK_DIR"
   exit 0
 fi
 
 # --skills: list, search, or install skills from registry
 if [[ "${1:-}" == "--skills" ]]; then
-  apply_superx_theme 2>/dev/null || true
+  apply_heimdall_theme 2>/dev/null || true
   registry="$PLUGIN_DIR/skills-registry.json"
   skills_dir="$HOME/.claude/skills"
 
@@ -685,7 +685,7 @@ for s in reg.get('skills', []):
 " 2>/dev/null)
     fi
     if [ -z "$repo" ]; then
-      echo "  Skill '$name' not found in registry. Use: superx --skills install owner/repo"
+      echo "  Skill '$name' not found in registry. Use: heimdall --skills install owner/repo"
       exit 1
     fi
     skill_path="$skills_dir/$name"
@@ -773,12 +773,12 @@ for s in reg.get('skills', []):
 
   echo ""
   echo "  Commands:"
-  echo "    superx --skills                    List installed & available skills"
-  echo "    superx --skills install <name>     Install from registry"
-  echo "    superx --skills install owner/repo Install from GitHub"
-  echo "    superx --skills search <query>     Search GitHub for skills"
-  echo "    superx --skills update             Update all installed skills"
-  echo "    superx --skills remove <name>      Remove a skill"
+  echo "    heimdall --skills                    List installed & available skills"
+  echo "    heimdall --skills install <name>     Install from registry"
+  echo "    heimdall --skills install owner/repo Install from GitHub"
+  echo "    heimdall --skills search <query>     Search GitHub for skills"
+  echo "    heimdall --skills update             Update all installed skills"
+  echo "    heimdall --skills remove <name>      Remove a skill"
   echo ""
   exit 0
 fi
@@ -793,7 +793,7 @@ check_for_update() {
   local remote_hash=$(git -C "$PLUGIN_DIR" rev-parse origin/main 2>/dev/null)
   if [ "$local_hash" != "$remote_hash" ] && [ -n "$remote_hash" ]; then
     local behind=$(git -C "$PLUGIN_DIR" rev-list HEAD..origin/main --count 2>/dev/null || echo "?")
-    printf "  \033[38;2;255;200;80m⚡ Update available (%s commits behind). Run: superx --update\033[0m\n\n" "$behind"
+    printf "  \033[38;2;255;200;80m⚡ Update available (%s commits behind). Run: heimdall --update\033[0m\n\n" "$behind"
   fi
 }
 
@@ -859,7 +859,7 @@ ensure_node_path
 ensure_claude
 ensure_auth
 first_run_setup
-apply_superx_theme
+apply_heimdall_theme
 ensure_project_claude_md
 print_banner
 check_for_update
@@ -870,12 +870,12 @@ if [ ! -d "$WORK_DIR/.git" ] && ! git -C "$WORK_DIR" rev-parse --git-dir &>/dev/
   printf "  \033[38;2;0;212;255m▸ Initializing git repo\033[0m (required for agent worktree isolation)\n"
   git -C "$WORK_DIR" init -q
   git -C "$WORK_DIR" add -A 2>/dev/null
-  git -C "$WORK_DIR" commit -q -m "initial commit (auto-created by superx)" --allow-empty --no-verify 2>/dev/null || true
+  git -C "$WORK_DIR" commit -q -m "initial commit (auto-created by heimdall)" --allow-empty --no-verify 2>/dev/null || true
 fi
 
 # Terse system preamble (caveman style to save tokens)
 PREAMBLE="PROJECT: $WORK_DIR
-Write ALL files here. Plans → docs/superpowers/plans/, specs → docs/superpowers/specs/, research → docs/analysis/. NEVER write to superx plugin dir.
+Write ALL files here. Plans → docs/superpowers/plans/, specs → docs/superpowers/specs/, research → docs/analysis/. NEVER write to heimdall plugin dir.
 
 INPUT: Need user input? End response with literal \`?\`. No input needed? Complete task, end with statement (no \`?\`).
 
@@ -899,7 +899,7 @@ MODEL ROUTING — when spawning subagents, select model per task:
 On failure → escalate: haiku→sonnet→opus. Never retry same tier.
 Check .planning/settings.json for project-specific overrides before spawning.
 
-CONTINUATION: NEVER exit with tasks remaining. Run acceptance criteria before marking done. Run /superx:save every 30 min or after each milestone — do NOT wait until context is full.
+CONTINUATION: NEVER exit with tasks remaining. Run acceptance criteria before marking done. Run /heimdall:save every 30 min or after each milestone — do NOT wait until context is full.
 
 TIMELINES: NEVER estimate work in weeks or months. You are AI with parallel agents — human work-week cadence is meaningless. When presenting plans or phases:
 1. First optimize plan for MAXIMUM parallelism (what can run simultaneously?)
@@ -908,7 +908,7 @@ TIMELINES: NEVER estimate work in weeks or months. You are AI with parallel agen
 4. If phases have no dependency → they run simultaneously, not sequentially
 \"Phase 0: Weeks 1-2\" is WRONG. \"Wave 0: ~90 min (4 parallel agents)\" is RIGHT.
 
-GOAL-DRIVEN EXECUTION: After planning, ALWAYS set /goal with synthesized acceptance criteria. The /goal evaluator (Haiku) checks completion each turn — you keep working until it says done. After evaluator says done, spawn verifier agent for deep filesystem check. Two-tier: cheap evaluator + expensive verifier. Only one goal active at a time. Track via \`superx-state goal-set\`. On resume, restore with /goal. Use \`/goal clear\` to cancel. Fallback to manual loop if /goal unavailable.
+GOAL-DRIVEN EXECUTION: After planning, ALWAYS set /goal with synthesized acceptance criteria. The /goal evaluator (Haiku) checks completion each turn — you keep working until it says done. After evaluator says done, spawn verifier agent for deep filesystem check. Two-tier: cheap evaluator + expensive verifier. Only one goal active at a time. Track via \`heimdall-state goal-set\`. On resume, restore with /goal. Use \`/goal clear\` to cancel. Fallback to manual loop if /goal unavailable.
 
 SKILLS & PLUGINS — mid-session gap detection:
 BEFORE starting work: run \`$PLUGIN_DIR/bin/discover-skills detect\` to check if task needs skills not yet installed.
@@ -933,10 +933,10 @@ IMAGES: When user attaches images, classify EACH one:
 - Terminal output/docs/API response → EXTRACT text, drop image. Text is cheaper than pixels.
 Bug images cost ~1000+ tokens each. Extract the info, drop the image. Only design references stay.
 
-AGENT NAMESPACING (critical): all superx agents are namespaced — spawn with subagent_type \`superx:<name>\`, NEVER the bare name. \`superx:coder\` works; \`coder\` fails with \"Agent type 'coder' not found\".
+AGENT NAMESPACING (critical): all heimdall agents are namespaced — spawn with subagent_type \`heimdall:<name>\`, NEVER the bare name. \`heimdall:coder\` works; \`coder\` fails with \"Agent type 'coder' not found\".
 
 YOUR CAPABILITIES (use all of these aggressively):
-- 15 agents (spawn as superx:<name>): superx:architect, superx:planner, superx:wave-executor, superx:verifier, superx:coder, superx:design, superx:security-auditor, superx:database-architect, superx:incident-responder, superx:reviewer, superx:test-runner, superx:docs-writer, superx:lint-quality, superx:seeker, superx:fixer
+- 15 agents (spawn as heimdall:<name>): heimdall:architect, heimdall:planner, heimdall:wave-executor, heimdall:verifier, heimdall:coder, heimdall:design, heimdall:security-auditor, heimdall:database-architect, heimdall:incident-responder, heimdall:reviewer, heimdall:test-runner, heimdall:docs-writer, heimdall:lint-quality, heimdall:seeker, heimdall:fixer
 - Wave execution: group tasks into dependency waves, max 10 parallel per wave, fresh context per wave
 - Work-stealing: agent finishes early → steals dependency-free tasks from next wave
 - Idle nudging: agent silent 60s → send continuation prompt
@@ -951,8 +951,8 @@ YOUR CAPABILITIES (use all of these aggressively):
 - Magic keywords: ultrawork=max parallel, quick=skip planning, secure=security-first, incident=emergency, plan=plan-only, ship=end-to-end
 - Seeker: pull pod logs → raise GitHub issues. Fixer: pick up issues → fix branch → PR
 - /goal: set completion condition → Haiku evaluator checks each turn → autonomous until done. Use after planning.
-- /superx:save: checkpoint state for next session. /superx:maintain: seek+fix pipeline
-- /superx:autocommit: toggle auto git commits
+- /heimdall:save: checkpoint state for next session. /heimdall:maintain: seek+fix pipeline
+- /heimdall:autocommit: toggle auto git commits
 - Session forking: \`session-fork run <waves.json>\` spawns parallel \`claude -p\` processes, dependency-ordered waves, auto-collects results
 - Shared memory: \`shared-memory set/get/lock/publish\` — SQLite WAL-mode store for cross-agent coordination (keys, locks, pub/sub)
 - Agent pool: \`agent-pool init/acquire/release/should-scale\` — concurrency limiter with utilization-based scaling decisions
@@ -960,13 +960,13 @@ YOUR CAPABILITIES (use all of these aggressively):
 
 CODE QUALITY: NEVER write stub, dummy, placeholder, mock, TODO, or skeleton code. Every line must be real, working, production-ready. No \`// TODO: implement\`, no \`pass\`, no \`throw new Error('not implemented')\`, no empty function bodies, no fake data. If you can't implement something fully, say so — don't fake it.
 
-AUTO-COMMIT (contextual): After completing ANY task that modifies files, auto-commit immediately unless \`.superx-no-autocommit\` exists. Do NOT ask — just commit. Rules:
+AUTO-COMMIT (contextual): After completing ANY task that modifies files, auto-commit immediately unless \`.heimdall-no-autocommit\` exists. Do NOT ask — just commit. Rules:
 - Write a real commit message describing WHAT changed and WHY (e.g. \"fix: OTP origin changed from authapp to acme\")
 - Use conventional commits: feat/fix/refactor/docs/chore prefix
 - One commit per completed task (not per file)
 - Stage only the files you changed (git add <specific files>, NOT git add -A)
 - Use --no-verify to skip hooks (the hook-based checkpoint is a safety net, not the primary commit mechanism)
-- Check for .superx-no-autocommit FIRST: \`[ -f .superx-no-autocommit ] && skip\`
+- Check for .heimdall-no-autocommit FIRST: \`[ -f .heimdall-no-autocommit ] && skip\`
 - NEVER ask \"want me to commit?\" — just do it. The user enabled autocommit because they want it automatic.
 - After committing, mention the commit hash in your response (one line, not a ceremony)
 
@@ -1102,7 +1102,7 @@ discover_skills "$@"
 
 # Write preamble to temp file for --append-system-prompt-file
 # (more reliable than inline for large preambles with special chars)
-PREAMBLE_FILE=$(mktemp /tmp/superx-preamble-XXXXXX)
+PREAMBLE_FILE=$(mktemp /tmp/heimdall-preamble-XXXXXX)
 echo "$PREAMBLE" > "$PREAMBLE_FILE"
 
 # Activate project-aware skill management (enable needed plugins, pause rest)
@@ -1132,7 +1132,7 @@ ${USER_TASK}"
   fi
 
   claude \
-    --agent superx \
+    --agent heimdall \
     $PERMISSION_FLAG \
     $MODEL_FLAG \
     --plugin-dir "$PLUGIN_DIR" \
@@ -1141,7 +1141,7 @@ ${USER_TASK}"
 else
   # Interactive mode: preamble injected via system prompt file, Claude stays interactive
   claude \
-    --agent superx \
+    --agent heimdall \
     $PERMISSION_FLAG \
     $MODEL_FLAG \
     --plugin-dir "$PLUGIN_DIR" \

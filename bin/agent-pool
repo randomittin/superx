@@ -1,5 +1,5 @@
 #!/usr/bin/env python3
-"""agent-pool — Auto-scaling agent pool manager for superx.
+"""agent-pool — Auto-scaling agent pool manager for heimdall.
 
 Tracks active agents, enforces concurrency limits, provides scaling
 decisions based on utilization.
@@ -19,7 +19,16 @@ import sys, os, json, time, fcntl, argparse
 from pathlib import Path
 from datetime import datetime, timezone
 
-POOL_FILE = Path.home() / ".superx" / "agent-pool.json"
+def _resolve_pool_file():
+    # Default to ~/.heimdall; adopt a pre-existing ~/.superx pool file for back-compat.
+    new = Path.home() / ".heimdall" / "agent-pool.json"
+    legacy = Path.home() / ".superx" / "agent-pool.json"
+    if not new.exists() and legacy.exists():
+        return legacy
+    return new
+
+
+POOL_FILE = _resolve_pool_file()
 DEFAULTS = {
     "max_agents": 10, "min_agents": 1,
     "scale_up_threshold": 0.8, "scale_down_threshold": 0.2,

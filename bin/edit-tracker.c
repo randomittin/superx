@@ -7,7 +7,7 @@
  *   summary                 — print human-readable summary (file count, paths).
  *   clear                   — wipe session ledger.
  *
- * State: line-based ledger at $TMPDIR/superx-edits/$SESSION_ID.log
+ * State: line-based ledger at $TMPDIR/heimdall-edits/$SESSION_ID.log
  * Each line: timestamp_ms|tool|filepath
  *
  * Cold start: ~1ms (static binary, no interpreter).
@@ -54,7 +54,7 @@ static void ledger_dir(char *out, size_t cap) {
     if (!tmpdir || !*tmpdir) tmpdir = "/tmp";
     size_t tlen = strlen(tmpdir);
     int needs_slash = (tlen > 0 && tmpdir[tlen - 1] != '/');
-    snprintf(out, cap, "%s%ssuperx-edits", tmpdir, needs_slash ? "/" : "");
+    snprintf(out, cap, "%s%sheimdall-edits", tmpdir, needs_slash ? "/" : "");
 }
 
 static void ledger_path(char *out, size_t cap) {
@@ -188,7 +188,7 @@ static int do_summary(void) {
     int total_ops = 0;
     for (int i = 0; i < n; i++) total_ops += counts[i];
 
-    printf("[superx] edit tracker: %d files, %d operations\n", n, total_ops);
+    printf("[heimdall] edit tracker: %d files, %d operations\n", n, total_ops);
     for (int i = 0; i < n; i++) {
         /* Check if file exists */
         struct stat st;

@@ -1,18 +1,18 @@
 #!/usr/bin/env bash
-# superx installer — one command from zero to running.
+# Heimdall installer — one command from zero to running.
 #
 # Usage:
-#   curl -fsSL https://raw.githubusercontent.com/randomittin/superx/main/install.sh | bash
+#   curl -fsSL https://raw.githubusercontent.com/randomittin/heimdall/main/install.sh | bash
 #
 set -euo pipefail
 
-# Ensure cwd exists — if running after --reinstall deleted ~/.superx
+# Ensure cwd exists — if running after --reinstall deleted ~/.heimdall
 # while user was inside it, cwd is invalid and bash throws
 # "getcwd: cannot access parent directories"
 cd "$HOME" 2>/dev/null || true
 
-INSTALL_DIR="$HOME/.superx"
-REPO="https://github.com/randomittin/superx.git"
+INSTALL_DIR="$HOME/.heimdall"
+REPO="https://github.com/randomittin/heimdall.git"
 
 # ── Colors (24-bit with fallback) ──
 
@@ -82,10 +82,11 @@ printf "\n"
 printf "  ${P}${B}"
 type_text "░▒▓█" 0.03
 printf " "
-type_text "S U P E R X   I N S T A L L E R" 0.03
+type_text "H E I M D A L L   I N S T A L L E R" 0.03
 printf " "
 type_text "█▓▒░" 0.03
 printf "${R}\n"
+printf "  ${D}Nothing ships unproven.${R}\n"
 printf "  ${V}━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━${R}\n"
 printf "\n"
 
@@ -149,20 +150,20 @@ if [ ! -f "$HOME/.claude.json" ] && [ ! -f "$HOME/.claude/credentials.json" ] &&
   echo -e "  ${D}  Run: claude login (if you haven't already)${R}"
 fi
 
-# ── Step 3: superx ──
+# ── Step 3: Heimdall ──
 
-printf "\n  ${D}[3/5]${R} ${B}superx${R}\n"
+printf "\n  ${D}[3/5]${R} ${B}Heimdall${R}\n"
 if [ -d "$INSTALL_DIR/.git" ]; then
   spin_cmd "Pulling latest" git -C "$INSTALL_DIR" pull --ff-only origin main
 else
-  spin_cmd "Cloning superx" git clone "$REPO" "$INSTALL_DIR"
+  spin_cmd "Cloning Heimdall" git clone "$REPO" "$INSTALL_DIR"
 fi
 chmod +x "$INSTALL_DIR/bin/"* 2>/dev/null || true
 # Create update marker so --update can show "last update included" on first run
 # Points to 10 commits back (or first commit) to give a meaningful changelog
 first_marker=$(git -C "$INSTALL_DIR" log --oneline -10 2>/dev/null | tail -1 | cut -d' ' -f1)
 [ -n "$first_marker" ] && echo "$first_marker" > "$INSTALL_DIR/.last-update-from"
-step_ok "superx at ${C}~/.superx${R}"
+step_ok "Heimdall at ${C}~/.heimdall${R}"
 
 # ── Step 4: PATH ──
 
@@ -177,17 +178,17 @@ elif [ -f "$HOME/.bash_profile" ]; then
 fi
 
 if [ -n "$SHELL_RC" ]; then
-  if ! grep -q '\.superx/bin' "$SHELL_RC" 2>/dev/null; then
+  if ! grep -q '\.heimdall/bin' "$SHELL_RC" 2>/dev/null; then
     echo '' >> "$SHELL_RC"
-    echo '# superx — autonomous superskill manager for Claude Code' >> "$SHELL_RC"
-    echo 'export PATH="$PATH:$HOME/.superx/bin"' >> "$SHELL_RC"
+    echo '# heimdall — autonomous superskill manager for Claude Code' >> "$SHELL_RC"
+    echo 'export PATH="$PATH:$HOME/.heimdall/bin"' >> "$SHELL_RC"
     step_ok "Added to PATH in ${C}$(basename "$SHELL_RC")${R}"
   else
     step_ok "PATH already configured"
   fi
-  export PATH="$PATH:$HOME/.superx/bin"
+  export PATH="$PATH:$HOME/.heimdall/bin"
 else
-  printf "  ${W}⚠${R} Add to your shell profile: export PATH=\"\$PATH:\$HOME/.superx/bin\"\n"
+  printf "  ${W}⚠${R} Add to your shell profile: export PATH=\"\$PATH:\$HOME/.heimdall/bin\"\n"
 fi
 
 # ── Step 5: Companion plugins ──
@@ -217,26 +218,26 @@ else
   step_ok "claude-mem"
 fi
 
-# superx marketplace
-if ! claude plugins marketplace list 2>/dev/null | grep -q "superx-marketplace"; then
-  spin_cmd "superx marketplace" claude plugins marketplace add randomittin/superx-marketplace || true
+# heimdall marketplace
+if ! claude plugins marketplace list 2>/dev/null | grep -q "heimdall-marketplace"; then
+  spin_cmd "heimdall marketplace" claude plugins marketplace add randomittin/heimdall-marketplace || true
 else
-  step_ok "superx marketplace"
+  step_ok "heimdall marketplace"
 fi
 
 # ── Done ──
 
 printf "\n"
 printf "  ${V}━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━${R}\n"
-printf "  ${G}${B}✔ superx ready${R}\n"
+printf "  ${G}${B}✔ Heimdall ready${R}\n"
 printf "  ${V}━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━${R}\n"
 printf "\n"
 printf "  ${B}Usage${R} ${D}(from any project directory):${R}\n"
 printf "\n"
-printf "  ${C}superx \"build a dashboard\"${R}    ${D}end-to-end task${R}\n"
-printf "  ${C}superx${R}                        ${D}interactive mode${R}\n"
-printf "  ${C}superx --dashboard${R}            ${D}pixel art web UI${R}\n"
-printf "  ${C}superx --update${R}               ${D}pull latest version${R}\n"
+printf "  ${C}heimdall \"build a dashboard\"${R}  ${D}end-to-end task${R}\n"
+printf "  ${C}heimdall${R}                      ${D}interactive mode${R}\n"
+printf "  ${C}heimdall --dashboard${R}          ${D}pixel art web UI${R}\n"
+printf "  ${C}heimdall --update${R}             ${D}pull latest version${R}\n"
 printf "\n"
 if [ -n "$SHELL_RC" ]; then
   printf "  ${W}▸${R} Run ${UL}source ~/${SHELL_RC##*/}${R} or open a new terminal to start.\n"

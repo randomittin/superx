@@ -9,10 +9,10 @@ if command -v readlink &>/dev/null; then
   SELF="$(readlink -f "$0" 2>/dev/null || readlink "$0" 2>/dev/null || echo "$0")"
 fi
 PLUGIN_DIR="$(cd "$(dirname "$SELF")/.." && pwd)"
-WORK_DIR="${SUPERX_WORK_DIR:-$(pwd)}"
-MODEL="${SUPERX_MODEL:-claude-sonnet-4-6}"
-RESULTS_DIR="${SUPERX_FORK_DIR:-/tmp/superx-forks-$$}"
-MAX_PARALLEL="${SUPERX_MAX_PARALLEL:-10}"
+WORK_DIR="${HEIMDALL_WORK_DIR:-${SUPERX_WORK_DIR:-$(pwd)}}"
+MODEL="${HEIMDALL_MODEL:-${SUPERX_MODEL:-claude-sonnet-4-6}}"
+RESULTS_DIR="${HEIMDALL_FORK_DIR:-${SUPERX_FORK_DIR:-/tmp/heimdall-forks-$$}}"
+MAX_PARALLEL="${HEIMDALL_MAX_PARALLEL:-${SUPERX_MAX_PARALLEL:-10}}"
 SM="$PLUGIN_DIR/bin/shared-memory"
 AP="$PLUGIN_DIR/bin/agent-pool"
 
