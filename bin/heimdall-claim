@@ -1,0 +1,441 @@
+#!/usr/bin/env bash
+# heimdall-claim — the Coordination Ledger's collision-prevention primitive (spec T-2).
+#
+# Git-native, zero-infra surface coordination for concurrent Heimdall instances.
+# Before an agent edits code it CLAIMS the surfaces it intends to touch (file
+# globs + symbol refs). A second agent that tries to claim — or merely check —
+# an OVERLAPPING surface is told who holds it, so the collision is caught BEFORE
+# two agents stomp the same lines. This is R1: the dogfooded failure class
+# (parallel agents editing the same surface) made enforceable.
+#
+# One file per instance: .planning/ledger/claims/{haid-slug}.json. One writer
+# per file -> conflict-free git merges; agents never contend on a shared blob.
+#
+# Claim schema (jq-valid, one object):
+#   { "haid", "human", "claimed_surfaces": [globs + "file#symbol" refs],
+#     "task_ref", "claimed_at", "ttl_minutes": 90, "heartbeat" }
+# A claim is ACTIVE while now < heartbeat + ttl_minutes. Past that it is
+# TTL-expired and auto-released (a note is appended to decisions.md). A long
+# task stays alive by bumping `heartbeat`.
+#
+# HONEST SCOPE: this ledger governs AGENTS — cooperating Heimdall instances that
+# agree to consult it. It is NOT a security boundary. Humans (and a hostile or
+# buggy process) are governed by GitHub branch protection + CODEOWNERS, not by
+# this file. Never represent a claim as a lock that can stop a determined writer.
+#
+# Identity comes from heimdall-haid (T-1); claims, like commits, are HAID-attributed.
+#
+# Usage:
+#   heimdall-claim claim <surface>... --task <ref> [--ttl <min>]
+#                                         claim surfaces for THIS haid (default ttl 90)
+#   heimdall-claim release [--haid <h>]   drop this (or named) haid's claim
+#   heimdall-claim check <surface>...     exit nonzero + name the holder if any
+#                                         surface overlaps a DIFFERENT haid's
+#                                         ACTIVE claim (the collision primitive)
+#   heimdall-claim heartbeat [--haid <h>] bump this (or named) claim's heartbeat
+#   heimdall-claim list [--json]          active claims across all haids
+#   heimdall-claim show [--haid <h>] [--json]   this (or named) haid's claim
+#   heimdall-claim reap                   auto-release every TTL-expired claim now
+#   -h, --help
+#
+# Conventions (match bin/heimdall-haid — pure bash + jq + coreutils, bash 3.2):
+#   - jq required; absence is a hard exit 2
+#   - all writes atomic (mktemp + mv) under an mkdir-based lock
+#   - deterministic, human-readable output for auditability
+#
+# Surface overlap: two surfaces collide when their FILE parts overlap. A glob
+# matches another surface if either matches the other's literal path, or their
+# directory prefixes nest (src/a/** vs src/a/b.ts). A "file#symbol" ref collides
+# with another ref on the SAME file only when the symbols match (or either side
+# claims the whole file / a glob over it) — so two agents can claim distinct
+# symbols in one file without a false collision.
+#
+# Exit: 0 ok / no collision; 2 usage/IO error; 3 collision detected.
+set -euo pipefail
+
+# ── Path resolution (mirrors bin/heimdall-haid) ──────────────────────────────
+SELF="$0"
+if command -v readlink >/dev/null 2>&1; then
+  SELF="$(readlink -f "$0" 2>/dev/null || readlink "$0" 2>/dev/null || echo "$0")"
+fi
+BIN_DIR="$(cd "$(dirname "$SELF")" && pwd)"
+PLUGIN_DIR="$(cd "$BIN_DIR/.." && pwd)"
+PLANNING_DIR="${HEIMDALL_PLANNING_DIR:-$PLUGIN_DIR/.planning}"
+LEDGER_DIR="$PLANNING_DIR/ledger"
+CLAIMS_DIR="$LEDGER_DIR/claims"
+DECISIONS_FILE="$LEDGER_DIR/decisions.md"
+LOCK_FILE="$CLAIMS_DIR.lock"
+LOCK_TIMEOUT=10
+HAID_BIN="$BIN_DIR/heimdall-haid"
+DEFAULT_TTL=90
+
+command -v jq >/dev/null 2>&1 || { echo "error: jq is required" >&2; exit 2; }
+
+usage() { sed -n '2,62p' "$SELF" | sed 's/^# \{0,1\}//'; }
+ts() { date -u +%FT%TZ; }
+now_epoch() { date +%s; }
+
+# Parse an ISO8601 UTC timestamp to epoch seconds (portable: GNU date, BSD date).
+iso_to_epoch() {
+  local iso="$1" e
+  e="$(date -u -d "$iso" +%s 2>/dev/null || true)"
+  [ -n "$e" ] && { printf '%s' "$e"; return 0; }
+  e="$(date -u -j -f '%Y-%m-%dT%H:%M:%SZ' "$iso" +%s 2>/dev/null || true)"
+  [ -n "$e" ] && { printf '%s' "$e"; return 0; }
+  # Fall back to jq's ISO parser, which both GNU and macOS jq ship.
+  jq -rn --arg t "$iso" '($t | fromdateiso8601?) // empty' 2>/dev/null || true
+}
+
+# ── Locking (mkdir-based; atomic, no flock dependency) ───────────────────────
+acquire_lock() {
+  local attempts=0
+  while ! mkdir "$LOCK_FILE" 2>/dev/null; do
+    attempts=$((attempts + 1))
+    if [ "$attempts" -ge "$LOCK_TIMEOUT" ]; then
+      if [ -d "$LOCK_FILE" ]; then
+        local age
+        age=$(( $(date +%s) - $(stat -f %m "$LOCK_FILE" 2>/dev/null || stat -c %Y "$LOCK_FILE" 2>/dev/null || echo 0) ))
+        if [ "$age" -gt 30 ]; then
+          echo "Breaking stale lock (${age}s old)" >&2
+          rmdir "$LOCK_FILE" 2>/dev/null || true
+          mkdir "$LOCK_FILE" 2>/dev/null && return 0
+        fi
+      fi
+      echo "error: could not acquire lock on $CLAIMS_DIR after ${LOCK_TIMEOUT}s" >&2
+      exit 2
+    fi
+    sleep 1
+  done
+}
+release_lock() { rmdir "$LOCK_FILE" 2>/dev/null || true; }
+
+ensure_dirs() { mkdir -p "$CLAIMS_DIR"; }
+
+# Atomic write: render stdin to a temp file then mv into place. Caller holds lock.
+atomic_write() {
+  local dest="$1" tmp template
+  template="${TMPDIR:-/tmp}/claim.$(printf 'X%.0s' 1 2 3 4 5 6)"
+  tmp="$(mktemp "$template")"
+  cat > "$tmp"
+  mv -f "$tmp" "$dest"
+}
+
+# ── Identity ─────────────────────────────────────────────────────────────────
+current_haid() {
+  [ -x "$HAID_BIN" ] || { echo "error: heimdall-haid not found at $HAID_BIN" >&2; exit 2; }
+  "$HAID_BIN" current
+}
+haid_human() { printf '%s' "$1" | sed -E 's/^haid:([a-z0-9-]+)\..*/\1/'; }
+
+# Filesystem-safe slug for a HAID (the '/' in spawn HAIDs is illegal in a
+# filename). Reversible enough for humans; the file's haid field is canonical.
+haid_slug() { printf '%s' "$1" | tr '/:' '__'; }
+
+claim_path() { printf '%s/%s.json' "$CLAIMS_DIR" "$(haid_slug "$1")"; }
+
+# ── Surface overlap detection ────────────────────────────────────────────────
+# A surface is "file" or "file#symbol". Split into file + symbol parts.
+surface_file()   { printf '%s' "${1%%#*}"; }
+surface_symbol() { case "$1" in *'#'*) printf '%s' "${1#*#}" ;; *) printf '' ;; esac; }
+
+# Normalize a file glob to a directory prefix for nesting comparison:
+#   src/a/**  -> src/a    ;  src/a/*.ts -> src/a  ;  src/a/b.ts -> src/a/b.ts
+glob_prefix() {
+  local g="$1"
+  case "$g" in
+    */\*\*)   printf '%s' "${g%/\*\*}" ;;          # trailing /**
+    \*\*)     printf '%s' "" ;;                      # bare **
+    *\**)     printf '%s' "${g%/*}" ;;               # any other glob: dir part
+    *)        printf '%s' "$g" ;;                     # literal path
+  esac
+}
+
+# files_overlap A B → 0 if their file parts overlap.
+# Overlap when: identical; one is a glob whose prefix is an ancestor-or-equal of
+# the other's path (or prefix); i.e. prefixes nest in either direction.
+files_overlap() {
+  local a="$1" b="$2" pa pb
+  [ "$a" = "$b" ] && return 0
+  pa="$(glob_prefix "$a")"
+  pb="$(glob_prefix "$b")"
+  # empty prefix == repo-root glob (**), overlaps everything.
+  [ -z "$pa" ] && return 0
+  [ -z "$pb" ] && return 0
+  case "$b" in "$pa"/*|"$pa") return 0 ;; esac      # b under a's prefix
+  case "$a" in "$pb"/*|"$pb") return 0 ;; esac      # a under b's prefix
+  case "$pb" in "$pa"/*|"$pa") return 0 ;; esac     # b's prefix under a's
+  case "$pa" in "$pb"/*|"$pb") return 0 ;; esac     # a's prefix under b's
+  return 1
+}
+
+# surfaces_overlap A B → 0 if the two full surfaces collide.
+# Files must overlap first. If BOTH carry a concrete symbol AND the file parts
+# are the SAME literal file (no glob), the symbols must match to collide —
+# distinct symbols in one file do NOT collide. Any glob, or a whole-file claim
+# on either side, makes the file-level overlap decisive.
+surfaces_overlap() {
+  local a="$1" b="$2" fa fb sa sb
+  fa="$(surface_file "$a")"; fb="$(surface_file "$b")"
+  files_overlap "$fa" "$fb" || return 1
+  sa="$(surface_symbol "$a")"; sb="$(surface_symbol "$b")"
+  if [ -n "$sa" ] && [ -n "$sb" ] && [ "$fa" = "$fb" ]; then
+    case "$fa" in *'*'*) return 0 ;; esac          # globbed file → decisive
+    [ "$sa" = "$sb" ] && return 0
+    return 1
+  fi
+  return 0
+}
+
+# ── Liveness ─────────────────────────────────────────────────────────────────
+# claim_active <claim-file> → 0 if now < heartbeat + ttl_minutes*60.
+claim_active() {
+  local f="$1" hb ttl hb_e exp now
+  [ -f "$f" ] || return 1
+  hb="$(jq -r '.heartbeat // .claimed_at // empty' "$f" 2>/dev/null || true)"
+  ttl="$(jq -r '.ttl_minutes // 90' "$f" 2>/dev/null || echo 90)"
+  [ -n "$hb" ] || return 1
+  hb_e="$(iso_to_epoch "$hb")"
+  [ -n "$hb_e" ] || return 1
+  exp=$(( hb_e + ttl * 60 ))
+  now="$(now_epoch)"
+  [ "$now" -lt "$exp" ]
+}
+
+# Append an auto-release note to decisions.md (ADR-lite, HAID-attributed).
+note_decision() {
+  local title="$1" body="$2"
+  mkdir -p "$LEDGER_DIR"
+  {
+    printf '\n## %s — %s\n\n' "$(ts)" "$title"
+    printf '%s\n' "$body"
+  } >> "$DECISIONS_FILE"
+}
+
+# Reap TTL-expired claims; note each in decisions.md. Caller holds the lock.
+reap_expired() {
+  local f haid task reaped=0
+  [ -d "$CLAIMS_DIR" ] || return 0
+  for f in "$CLAIMS_DIR"/*.json; do
+    [ -e "$f" ] || continue
+    if ! claim_active "$f"; then
+      haid="$(jq -r '.haid // "unknown"' "$f" 2>/dev/null || echo unknown)"
+      task="$(jq -r '.task_ref // "unknown"' "$f" 2>/dev/null || echo unknown)"
+      rm -f "$f"
+      note_decision "auto-release (TTL/heartbeat expired)" \
+        "Claim by \`$haid\` (task \`$task\`) exceeded its TTL / heartbeat window and was auto-released by \`heimdall-claim reap\`. Surfaces are free to re-claim."
+      reaped=$((reaped + 1))
+    fi
+  done
+  return 0
+}
+
+# ── Subcommands ──────────────────────────────────────────────────────────────
+[ $# -ge 1 ] || { echo "error: a subcommand is required" >&2; usage >&2; exit 2; }
+cmd="$1"; shift || true
+
+case "$cmd" in
+  -h|--help)
+    usage; exit 0 ;;
+
+  claim)
+    task=""; ttl="$DEFAULT_TTL"; surfaces=()
+    while [ $# -gt 0 ]; do
+      case "$1" in
+        --task) task="${2:?--task needs a value}"; shift 2 ;;
+        --ttl)  ttl="${2:?--ttl needs a value}"; shift 2 ;;
+        --) shift; while [ $# -gt 0 ]; do surfaces+=("$1"); shift; done ;;
+        -*) echo "error: unknown flag: $1" >&2; exit 2 ;;
+        *) surfaces+=("$1"); shift ;;
+      esac
+    done
+    [ -n "$task" ] || { echo "error: claim needs --task <ref>" >&2; exit 2; }
+    [ "${#surfaces[@]}" -ge 1 ] || { echo "error: claim needs at least one <surface>" >&2; exit 2; }
+    case "$ttl" in (*[!0-9]*|'') echo "error: --ttl must be a positive integer (minutes)" >&2; exit 2 ;; esac
+    [ "$ttl" -ge 1 ] || { echo "error: --ttl must be >= 1" >&2; exit 2; }
+
+    haid="$(current_haid)"
+    human="$(haid_human "$haid")"
+    ensure_dirs
+    acquire_lock; trap release_lock EXIT
+    reap_expired
+
+    # Collision gate: refuse if any requested surface overlaps a DIFFERENT
+    # haid's active claim.
+    collision=0
+    holder_report=""
+    for f in "$CLAIMS_DIR"/*.json; do
+      [ -e "$f" ] || continue
+      other_haid="$(jq -r '.haid // empty' "$f" 2>/dev/null || true)"
+      [ -n "$other_haid" ] || continue
+      [ "$other_haid" = "$haid" ] && continue       # our own prior claim: replace it
+      claim_active "$f" || continue
+      while IFS= read -r osurf; do
+        [ -n "$osurf" ] || continue
+        for s in "${surfaces[@]}"; do
+          if surfaces_overlap "$s" "$osurf"; then
+            collision=1
+            holder_report="${holder_report}  '$s' overlaps '$osurf' held by $other_haid (task $(jq -r '.task_ref // "?"' "$f"))"$'\n'
+          fi
+        done
+      done < <(jq -r '.claimed_surfaces[]?' "$f" 2>/dev/null)
+    done
+    if [ "$collision" -eq 1 ]; then
+      release_lock; trap - EXIT
+      echo "COLLISION: cannot claim — surfaces overlap active claims:" >&2
+      printf '%s' "$holder_report" >&2
+      echo "resolve via the governance override flow or sequence the work; do NOT force." >&2
+      exit 3
+    fi
+
+    now="$(ts)"
+    surfaces_json="$(printf '%s\n' "${surfaces[@]}" | jq -R . | jq -s .)"
+    jq -n \
+      --arg haid "$haid" --arg human "$human" \
+      --argjson surfaces "$surfaces_json" \
+      --arg task "$task" --arg now "$now" \
+      --argjson ttl "$ttl" \
+      '{haid:$haid, human:$human, claimed_surfaces:$surfaces, task_ref:$task, claimed_at:$now, ttl_minutes:$ttl, heartbeat:$now}' \
+      | atomic_write "$(claim_path "$haid")"
+    release_lock; trap - EXIT
+    echo "claimed ${#surfaces[@]} surface(s) for $haid (task $task, ttl ${ttl}m)"
+    printf '  %s\n' "${surfaces[@]}"
+    ;;
+
+  release)
+    haid=""
+    while [ $# -gt 0 ]; do
+      case "$1" in
+        --haid) haid="${2:?--haid needs a value}"; shift 2 ;;
+        *) echo "error: unknown flag: $1" >&2; exit 2 ;;
+      esac
+    done
+    [ -n "$haid" ] || haid="$(current_haid)"
+    ensure_dirs
+    acquire_lock; trap release_lock EXIT
+    f="$(claim_path "$haid")"
+    if [ -f "$f" ]; then
+      rm -f "$f"
+      release_lock; trap - EXIT
+      echo "released claim for $haid"
+    else
+      release_lock; trap - EXIT
+      echo "no active claim for $haid"
+    fi
+    ;;
+
+  check)
+    surfaces=()
+    while [ $# -gt 0 ]; do
+      case "$1" in
+        --) shift; while [ $# -gt 0 ]; do surfaces+=("$1"); shift; done ;;
+        -*) echo "error: unknown flag: $1" >&2; exit 2 ;;
+        *) surfaces+=("$1"); shift ;;
+      esac
+    done
+    [ "${#surfaces[@]}" -ge 1 ] || { echo "error: check needs at least one <surface>" >&2; exit 2; }
+    ensure_dirs
+    haid="$(current_haid)"
+    collision=0
+    report=""
+    for f in "$CLAIMS_DIR"/*.json; do
+      [ -e "$f" ] || continue
+      other_haid="$(jq -r '.haid // empty' "$f" 2>/dev/null || true)"
+      [ -n "$other_haid" ] || continue
+      [ "$other_haid" = "$haid" ] && continue       # own claim never collides with self
+      claim_active "$f" || continue
+      while IFS= read -r osurf; do
+        [ -n "$osurf" ] || continue
+        for s in "${surfaces[@]}"; do
+          if surfaces_overlap "$s" "$osurf"; then
+            collision=1
+            report="${report}  '$s' overlaps '$osurf' held by $other_haid (human $(jq -r '.human // "?"' "$f"), task $(jq -r '.task_ref // "?"' "$f"))"$'\n'
+          fi
+        done
+      done < <(jq -r '.claimed_surfaces[]?' "$f" 2>/dev/null)
+    done
+    if [ "$collision" -eq 1 ]; then
+      echo "COLLISION: requested surfaces overlap ACTIVE claims by other agents:" >&2
+      printf '%s' "$report" >&2
+      exit 3
+    fi
+    echo "clear: no requested surface overlaps an active claim by another agent"
+    exit 0
+    ;;
+
+  heartbeat)
+    haid=""
+    while [ $# -gt 0 ]; do
+      case "$1" in
+        --haid) haid="${2:?--haid needs a value}"; shift 2 ;;
+        *) echo "error: unknown flag: $1" >&2; exit 2 ;;
+      esac
+    done
+    [ -n "$haid" ] || haid="$(current_haid)"
+    ensure_dirs
+    acquire_lock; trap release_lock EXIT
+    f="$(claim_path "$haid")"
+    if [ ! -f "$f" ]; then
+      release_lock; trap - EXIT
+      echo "error: no active claim for $haid (claim first)" >&2; exit 2
+    fi
+    jq --arg now "$(ts)" '.heartbeat = $now' "$f" | atomic_write "$f"
+    release_lock; trap - EXIT
+    echo "heartbeat bumped for $haid"
+    ;;
+
+  list)
+    as_json=""
+    [ "${1:-}" = "--json" ] && as_json=1
+    ensure_dirs
+    files=()
+    for f in "$CLAIMS_DIR"/*.json; do
+      [ -e "$f" ] || continue
+      claim_active "$f" && files+=("$f")
+    done
+    if [ -n "$as_json" ]; then
+      if [ "${#files[@]}" -eq 0 ]; then echo '[]'; else jq -s '.' "${files[@]}"; fi
+      exit 0
+    fi
+    if [ "${#files[@]}" -eq 0 ]; then echo "(no active claims)"; exit 0; fi
+    echo "ACTIVE CLAIMS (${#files[@]})"
+    jq -r '"  \(.haid)\t\(.task_ref)\tttl:\(.ttl_minutes)m\thb:\(.heartbeat)\n    surfaces: \(.claimed_surfaces | join(", "))"' "${files[@]}"
+    ;;
+
+  show)
+    haid=""; as_json=""
+    while [ $# -gt 0 ]; do
+      case "$1" in
+        --haid) haid="${2:?--haid needs a value}"; shift 2 ;;
+        --json) as_json=1; shift ;;
+        *) echo "error: unknown flag: $1" >&2; exit 2 ;;
+      esac
+    done
+    [ -n "$haid" ] || haid="$(current_haid)"
+    ensure_dirs
+    f="$(claim_path "$haid")"
+    if [ ! -f "$f" ]; then
+      [ -n "$as_json" ] && echo 'null' || echo "no claim for $haid"
+      exit 0
+    fi
+    if [ -n "$as_json" ]; then jq '.' "$f"; else
+      jq -r '"haid: \(.haid)\nhuman: \(.human)\ntask: \(.task_ref)\nttl: \(.ttl_minutes)m\nclaimed: \(.claimed_at)\nheartbeat: \(.heartbeat)\nsurfaces:\n" + (.claimed_surfaces | map("  - " + .) | join("\n"))' "$f"
+    fi
+    ;;
+
+  reap)
+    ensure_dirs
+    acquire_lock; trap release_lock EXIT
+    before=0
+    for f in "$CLAIMS_DIR"/*.json; do [ -e "$f" ] && before=$((before + 1)); done
+    reap_expired
+    after=0
+    for f in "$CLAIMS_DIR"/*.json; do [ -e "$f" ] && after=$((after + 1)); done
+    release_lock; trap - EXIT
+    echo "reaped $((before - after)) expired claim(s); $after active claim(s) remain"
+    ;;
+
+  *)
+    echo "error: unknown subcommand: $cmd" >&2
+    usage >&2
+    exit 2 ;;
+esac

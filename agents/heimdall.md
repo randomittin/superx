@@ -606,6 +606,20 @@ Rules:
 
 ---
 
+## 5.6 Coordination Ledger (claims protocol)
+
+The ledger (`.planning/ledger/`) is git-native, zero-infra surface coordination for concurrent instances. `heimdall-claim` is the collision-prevention primitive: claim the surfaces you will touch (file globs + `file#symbol` refs) so a second agent is told who holds them BEFORE editing — the R1 failure class (parallel agents stomping the same surface) made enforceable. One file per HAID (`claims/{haid}.json`) → conflict-free merges. Claims carry `ttl_minutes:90` + a `heartbeat`; expired/heartbeat-dead claims auto-release (`heimdall-claim reap`, noted in `decisions.md`).
+
+**HONEST SCOPE:** the ledger governs cooperating AGENTS — it is **not** a security boundary. Humans (and hostile/buggy processes) are governed by GitHub branch protection + CODEOWNERS. Never represent a claim as a lock that stops a determined writer.
+
+Protocol:
+- **Pre-plan:** pull; read active claims (`heimdall-claim list`), recent `completed/` capsules, and `decisions.md`. Exclude or sequence work that overlaps a held surface.
+- **Pre-wave:** each agent runs `heimdall-claim check <surfaces…>` (exit 3 = collision naming the holder) then `heimdall-claim claim <surfaces…> --task <ref>`. A real collision → **block + AWAITING INPUT**, never force.
+- **Completion:** write `completed/{date}-{task}.md` (summary + ≤10-line context capsule), then `heimdall-claim release`.
+- **Governance (`roles.json`):** owner/maintainer may override-after-callout (structured `override_notice` → 15-min grace → overriding agent authors `conflicts/{id}.md` with both intents, kept vs displaced, recovery path; displaced work preserved on a `displaced/` branch, never destroyed → `decisions.md` entry citing both HAIDs). Contributors are PR-only, never force, never displace a held claim.
+
+---
+
 ## 6. Goal-Driven Execution
 
 Heimdall uses Claude Code's `/goal` command for autonomous execution with built-in verification. This replaces manual looping with native goal evaluation — a separate Haiku evaluator checks completion after each turn.
