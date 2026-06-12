@@ -22,10 +22,10 @@ system is to convert ⚠️ into either ✅ (falsifiable + passing) or ❌ (fals
 
 | Domain | Gate | Mutants caught / total | Falsifiable? |
 |---|---|---|---|
-| exchange-lob | differential + interleave | **5/5** (`bin/falsify exchange-lob` = 1.0); C2 live arm: racy RED @ seed 1 idx 0, locked GREEN ×200 | ✅ 1.0 |
-| emulator-gb | trace-diff + verdict | pending `bin/falsify` | required 1.0 |
+| exchange-lob | differential + interleave | **6/6** (`bin/falsify exchange-lob` = 1.0, incl. 2 tautology guards); C2 live arm: racy RED @ seed 1 idx 0, locked GREEN ×200 | ✅ 1.0 |
+| emulator-gb | trace-diff + verdict | **3/3** (`bin/falsify emulator-gb` = 1.0) | ✅ 1.0 |
 
-Corpus: **11/11 caught (100%)** at v0.1 (`bin/corpus run`), incl. the two live-style C2 cases
+Corpus: **13/13 caught (100%)** at v0.1 (`bin/corpus run`), incl. the two live-style C2 cases
 `exchange-c2-racy` (caught fail @ trade index 0) and `exchange-c2-locked` (expected pass, no
 false-RED).
 
