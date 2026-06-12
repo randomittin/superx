@@ -1,12 +1,64 @@
 # Heimdall
 
-**Nothing ships unproven.**
-
-> Heimdall's claim is not "makes weak models strong" — it converts raw model capability into production reliability. One-shotting greenfield code is a model problem that each generation erodes; not bloating, respecting existing infra, coordinating with other devs' agents, and *proving* correctness are permanent problems of trust and coordination. Models raise the floor; Heimdall keeps the bar honest — and the bar rises with every model.
+**Nothing ships unproven.** Verification gates for coding agents — catches what the model misses, proves it did.
 
 [![Claude Code](https://img.shields.io/badge/Claude%20Code-plugin-e056a0?style=flat-square)](https://code.claude.com)
 [![License: MIT](https://img.shields.io/badge/License-MIT-9b59b6?style=flat-square)](LICENSE)
 [![Version](https://img.shields.io/badge/version-1.1.0-00d4ff?style=flat-square)](CHANGELOG.md)
+
+## Install
+
+Lead path — one command, zero to running:
+
+```bash
+curl -fsSL https://raw.githubusercontent.com/randomittin/heimdall/v1.1.0/install.sh | bash
+```
+
+> The branded one-liner `curl -fsSL https://runheimdall.dev/install | bash` is **coming** — it is a 302 to the pinned release tag on GitHub (brand on the line, verifiability intact). Until the redirect is live, the raw GitHub pinned-tag URL above is the working, byte-identical path.
+
+**Prefer to read it first?** (recommended)
+
+```bash
+curl -fsSL https://raw.githubusercontent.com/randomittin/heimdall/v1.1.0/install.sh -o install.sh
+less install.sh        # short, function-wrapped, no sudo, no prompts, no telemetry —
+                       # resolves to a pinned tag, so what you read is what runs
+bash install.sh
+```
+
+**npm-native?**
+
+```bash
+npx runheimdall        # coming — thin wrapper, fetches and runs the same pinned script
+```
+
+**Already in the Claude Code plugin ecosystem?**
+
+```bash
+claude plugins marketplace add randomittin/heimdall
+claude plugins install hmd@heimdall
+```
+
+## Then
+
+```bash
+hmd demo               # `heimdall demo` works too — hmd is the short form, same binary
+```
+
+## Inside Claude Code
+
+```
+/hmd:verify   /hmd:save   /hmd:debloat     # all commands live under the hmd: namespace
+```
+
+## What Heimdall will never do — and how to undo it
+
+No telemetry. No network calls home. No sudo. No writes outside its own dir. MIT. Read the source.
+
+```bash
+hmd uninstall          # remove completely: deletes the plugin dir; nothing else was touched
+```
+
+Reversibility is the point — `hmd uninstall` is the trust line that lowers the activation energy of a curl-pipe install.
 
 ---
 
@@ -23,17 +75,17 @@ The delta Heimdall sells is verification, not generation. With the model held co
 Each of these runs on a fresh machine with only the documented prerequisites. Doors marked *coming* are specified but not yet shipped.
 
 ```bash
-heimdall-demo                     # scaffold a real full-stack task; --run builds it and ends in a summary card + reel + a follow-up prompt
+hmd demo                          # scaffold a real full-stack task; --run builds it and ends in a summary card + reel + a follow-up prompt
 heimdall-debloat --report-only    # zero-risk: point it at any repo, get a bloat scorecard, change nothing
 heimdall-bench                    # reproduce the public benchmark table on your own machine (dry by default, zero API spend)
 heimdall spec                     # coming — turn a spec into a wave-planned, gate-verified build
 ```
 
-`heimdall-demo` and `heimdall-bench` are **safe to run sight-unseen**: the demo
+`hmd demo` (or `heimdall demo`) and `heimdall-bench` are **safe to run sight-unseen**: the demo
 defaults to dry (it scaffolds the task + prints the paste-ready command and
 executes nothing), and `heimdall-bench` defaults to a dry pass that validates the
 suite and prints the capture plan **without spending a single API token**. Opt in
-to the real thing with `heimdall-demo --run` and `heimdall-bench --live`.
+to the real thing with `hmd demo --run` and `heimdall-bench --live`.
 
 The deeper proofs already in the tree are runnable today too:
 
@@ -58,20 +110,7 @@ The live flagship status table is at [`evals/flagship/STATUS.md`](evals/flagship
 
 ---
 
-## Install
-
-One command, from zero to running. It installs Node + Claude Code if missing, clones Heimdall to `~/.heimdall`, registers the plugin with Claude Code, and puts `heimdall` on your PATH — with a banner the whole way:
-
-```bash
-curl -fsSL https://raw.githubusercontent.com/randomittin/heimdall/main/install.sh | bash
-```
-
-Then see Heimdall build a real full-stack app — dry by default, zero API spend:
-
-```bash
-heimdall-demo            # scaffolds the demo task + prints the paste-ready command
-heimdall-demo --run      # actually build it end-to-end
-```
+## Running it on your own work
 
 Once installed, run Heimdall over your own task in auto mode (the default — a background safety classifier blocks prompt injection and risky escalation while still letting Heimdall work autonomously):
 
@@ -82,8 +121,6 @@ heimdall --auto "build a real-time dashboard with auth and charts"
 
 The installer is idempotent — re-run it any time to update.
 
-> A published Claude Code plugin marketplace (`claude plugins install heimdall@…`) is **coming**. Until then the curl installer above is the supported path; it registers the same plugin locally from your clone.
-
 > **`--dangerously-skip-permissions`** exists as a flag but is **not** the default. It hands an agent full autonomy with no safety classifier in the loop; prefer `--auto`. Only reach for skip-permissions in a throwaway sandbox you are willing to lose.
 
 ### Prerequisites
@@ -91,16 +128,6 @@ The installer is idempotent — re-run it any time to update.
 - **Claude Code** 1.0+ with valid auth ([install guide](https://docs.claude.com/en/docs/claude-code/setup))
 - **Git**
 - **`jq`** (for the gate + state helpers): `brew install jq`
-
----
-
-## What Heimdall will never do
-
-These are constitution-level boundaries, not roadmap items:
-
-- **No telemetry. No network calls home.** Heimdall does not phone anywhere. The only network access is the Claude API call you already make by using Claude Code.
-- **MIT licensed — read the source.** Every gate, every oracle, every byte of the harness is in this repo. If a claim isn't reproducible from the source, it isn't a claim.
-- **Publishing is always human-gated.** The agent never holds publishing credentials — npm, GitHub-publish, registrar, social. A human authorizes every release, every time.
 
 ---
 
