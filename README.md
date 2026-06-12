@@ -25,11 +25,7 @@ less install.sh        # short, function-wrapped, no sudo, no prompts, no teleme
 bash install.sh
 ```
 
-**npm-native?**
-
-```bash
-npx runheimdall        # coming — thin wrapper, fetches and runs the same pinned script
-```
+**npm-native?** `npx runheimdall` is **coming** — a thin wrapper that fetches and runs the same pinned script. Until it is published, use the raw pinned-tag curl one-liner above.
 
 **Already in the Claude Code plugin ecosystem?**
 
@@ -78,8 +74,9 @@ Each of these runs on a fresh machine with only the documented prerequisites. Do
 hmd demo                          # scaffold a real full-stack task; --run builds it and ends in a summary card + reel + a follow-up prompt
 heimdall-debloat --report-only    # zero-risk: point it at any repo, get a bloat scorecard, change nothing
 heimdall-bench                    # reproduce the public benchmark table on your own machine (dry by default, zero API spend)
-heimdall spec                     # coming — turn a spec into a wave-planned, gate-verified build
 ```
+
+A fourth door — `heimdall spec`, which turns a spec into a wave-planned, gate-verified build — is **coming**; it is specified but not yet a shipped subcommand, so it is not listed as a runnable command above.
 
 `hmd demo` (or `heimdall demo`) and `heimdall-bench` are **safe to run sight-unseen**: the demo
 defaults to dry (it scaffolds the task + prints the paste-ready command and
