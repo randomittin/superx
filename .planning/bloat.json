@@ -1,0 +1,24 @@
+{
+  "_doc": "H-2 Bloat Gate config. bin/bloat-gate reads this; CLI flags override these; these override built-in defaults. mode: strict|standard|off. In strict every hard axis (dead code, duplication, complexity) AND the LOC ratio block the wave. In standard (default) dead/dup/complexity are hard; LOC ratio + dependency creep are advisory (reported + flagged, not fatal). In off all metrics are still computed and reported but status is always pass (observability-only — use during adoption ramp-in). dependency_creep NEVER auto-fails in any mode: a changed lockfile is FLAGGED for plan-time approval. An axis whose tool is absent is reported status:skipped and is NOT treated as a pass.",
+  "mode": "standard",
+  "thresholds": {
+    "_doc": "max_new_dead_exports: count of NEW unreferenced exports/symbols allowed in the wave (knip|ts-prune|vulture). max_duplication_pct: % duplicated tokens in NEW code, fail at >= this (jscpd). max_cyclomatic_complexity: no NEW function may exceed this (radon|eslint complexity). max_loc_ratio: new added LOC / plan estimate; enforced only in strict mode.",
+    "max_new_dead_exports": 0,
+    "max_duplication_pct": 3,
+    "max_cyclomatic_complexity": 12,
+    "max_loc_ratio": 1.8
+  },
+  "exclude_globs": [
+    "**/*.test.*",
+    "**/*.spec.*",
+    "**/__tests__/**",
+    "**/node_modules/**",
+    "**/dist/**",
+    "**/build/**",
+    "**/*.min.js",
+    "**/vendor/**",
+    "**/.planning/**",
+    "evals/**/golden/**",
+    "evals/**/fixtures/**"
+  ]
+}
