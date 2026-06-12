@@ -5,12 +5,12 @@
 | Task | Arm | Tokens | Wall (s) | Tests | Human | Cost (USD) |
 | --- | --- | ---: | ---: | :---: | ---: | ---: |
 | 01-multifile-feature | raw | 0 | 0.00 | 0/7 | 0 | 0 |
-| 01-multifile-feature | superx | 0 | 0.00 | 0/7 | 0 | 0 |
+| 01-multifile-feature | heimdall | 0 | 0.00 | 0/7 | 0 | 0 |
 | 02-bugfix-with-tests | raw | 0 | 0.00 | 0/4 | 0 | 0 |
-| 02-bugfix-with-tests | superx | 0 | 0.00 | 0/4 | 0 | 0 |
+| 02-bugfix-with-tests | heimdall | 0 | 0.00 | 0/4 | 0 | 0 |
 | 03-lint-refactor-batch | raw | 0 | 0.00 | 0/3 | 0 | 0 |
-| 03-lint-refactor-batch | superx | 0 | 0.00 | 0/3 | 0 | 0 |
+| 03-lint-refactor-batch | heimdall | 0 | 0.00 | 0/3 | 0 | 0 |
 | 04-fullstack-scaffold | raw | 0 | 0.00 | 0/9 | 0 | 0 |
-| 04-fullstack-scaffold | superx | 0 | 0.00 | 0/9 | 0 | 0 |
+| 04-fullstack-scaffold | heimdall | 0 | 0.00 | 0/9 | 0 | 0 |
 | 05-docs-and-tests | raw | 0 | 0.00 | 0/7 | 0 | 0 |
-| 05-docs-and-tests | superx | 0 | 0.00 | 0/7 | 0 | 0 |
+| 05-docs-and-tests | heimdall | 0 | 0.00 | 0/7 | 0 | 0 |

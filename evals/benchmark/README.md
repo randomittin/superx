@@ -1,6 +1,6 @@
-# superx benchmark harness
+# heimdall benchmark harness
 
-Honest receipts: **superx** vs **raw Claude Code**, measured on a fixed suite of
+Honest receipts: **heimdall** vs **raw Claude Code**, measured on a fixed suite of
 representative coding tasks. The harness lives in [`bin/benchmark`](../../bin/benchmark)
 and the task definitions in [`tasks/`](./tasks/).
 
@@ -8,7 +8,7 @@ and the task definitions in [`tasks/`](./tasks/).
 
 This harness exists to produce numbers we can stand behind, not marketing.
 
-- **Publish everything we measure** — including tasks where superx *loses* on
+- **Publish everything we measure** — including tasks where heimdall *loses* on
   tokens, wall time, or cost. A slower/pricier arm that produces more passing
   tests is a real trade-off; hiding it would make the whole table untrustworthy.
 - **Real mechanisms, no fabricated numbers.** Tokens come from the Claude CLI's
@@ -16,15 +16,15 @@ This harness exists to produce numbers we can stand behind, not marketing.
   clock; "tests passing" is the result of actually running each task's
   verification commands. Nothing is hand-tuned.
 - **Same task, same prompt, same workspace seed for both arms.** The only
-  difference between arms is *how Claude is driven* (raw vs the superx
-  agent + plugin + goal preamble), so any delta is attributable to superx.
+  difference between arms is *how Claude is driven* (raw vs the heimdall
+  agent + plugin + goal preamble), so any delta is attributable to heimdall.
 
-If superx is not worth it on a task, the table should say so. That credibility
+If heimdall is not worth it on a task, the table should say so. That credibility
 is the differentiator.
 
 ## What the suite measures
 
-Five fixed tasks, each chosen to exercise a different superx strength:
+Five fixed tasks, each chosen to exercise a different heimdall strength:
 
 | ID | Category | Why it is here |
 | --- | --- | --- |
@@ -57,7 +57,7 @@ bin/benchmark --task 03-lint-refactor-batch --dry
 bin/benchmark --live
 
 # Live, one task, one arm.
-bin/benchmark --task 02-bugfix-with-tests --arm superx --live
+bin/benchmark --task 02-bugfix-with-tests --arm heimdall --live
 
 # Live, recording that a human stepped in twice during this manual run.
 bin/benchmark --task 01-multifile-feature --arm raw --live --interventions 2
@@ -71,7 +71,7 @@ bin/benchmark --live --model claude-opus-4-8
 | Flag | Meaning |
 | --- | --- |
 | `--task <id>` | run a single task by id (default: all 5) |
-| `--arm raw\|superx\|both` | which arm(s) to run (default: `both`) |
+| `--arm raw\|heimdall\|both` | which arm(s) to run (default: `both`) |
 | `--dry` | validate + print plan, capture nothing (**default**) |
 | `--live` | actually invoke Claude and measure |
 | `--interventions N` | human-intervention count to record for this run (default `0`) |
@@ -86,8 +86,8 @@ For every task × arm in a `--live` run:
    (so `git diff`-based verify steps work). Workspaces are deleted on exit.
 2. The arm's Claude command is built:
    - **raw**: `claude -p <prompt> --output-format json --permission-mode acceptEdits`
-   - **superx**: the same, plus `--agent superx --plugin-dir <repo>` and the
-     prompt wrapped in superx's `/goal …` preamble.
+   - **heimdall**: the same, plus `--agent heimdall --plugin-dir <repo>` and the
+     prompt wrapped in heimdall's `/goal …` preamble.
 3. Wall-clock time is measured with `date +%s%N` immediately around the
    invocation (nanoseconds → seconds, 2 d.p.).
 4. Token usage and cost are parsed from the CLI's JSON result:
@@ -113,7 +113,7 @@ A `--live` run writes three things:
 TASK                        ARM         TOKENS   WALL(s)      TESTS    TURNS   HUMAN  COST($)
 --------------------------  -------  ----------  --------  ---------  -------  ------  -------
 01-multifile-feature        raw           41230     92.41        5/7        8       0  0.182
-01-multifile-feature        superx        58910    141.07        7/7       14       0  0.274
+01-multifile-feature        heimdall        58910    141.07        7/7       14       0  0.274
 ```
 
 ### 2. `results.jsonl` — machine-readable, one line per task × arm
@@ -124,7 +124,7 @@ Schema (one JSON object per line):
 | --- | --- | --- |
 | `ts` | string (ISO-8601 UTC) | when this record was written |
 | `task` | string | task id (matches a file in `tasks/`) |
-| `arm` | string | `raw` or `superx` |
+| `arm` | string | `raw` or `heimdall` |
 | `mode` | string | always `live` for emitted records |
 | `tokens.input` | int | input + cache-read + cache-creation tokens |
 | `tokens.output` | int | output tokens |
@@ -140,7 +140,7 @@ Schema (one JSON object per line):
 Example line:
 
 ```json
-{"ts":"2026-06-11T12:00:00Z","task":"02-bugfix-with-tests","arm":"superx","mode":"live","tokens":{"input":38110,"output":9044,"total":47154},"wall_seconds":78.22,"cost_usd":0.211,"turns":11,"tests":{"passed":4,"total":4},"human_interventions":0,"claude_error":false}
+{"ts":"2026-06-11T12:00:00Z","task":"02-bugfix-with-tests","arm":"heimdall","mode":"live","tokens":{"input":38110,"output":9044,"total":47154},"wall_seconds":78.22,"cost_usd":0.211,"turns":11,"tests":{"passed":4,"total":4},"human_interventions":0,"claude_error":false}
 ```
 
 ### 3. `results.md` — markdown table fragment
@@ -152,10 +152,10 @@ real measurements and must not be published.
 
 ## Interpreting results
 
-- **Tokens / cost**: superx typically spends *more* on a given task (it plans,
+- **Tokens / cost**: heimdall typically spends *more* on a given task (it plans,
   spawns sub-agents, runs quality gates). The interesting question is whether
   that buys a better `tests.passed/total` and fewer `human_interventions`.
-- **Wall time**: parallel decomposition can make superx faster on multi-file
+- **Wall time**: parallel decomposition can make heimdall faster on multi-file
   tasks and slower on trivial ones (orchestration overhead). Expect the sign of
   the delta to flip across task categories — and report it honestly.
 - **Tests passing** is the quality axis. A cheaper arm that ships `3/7` is not
