@@ -277,6 +277,99 @@ print_banner() {
   printf "\n\n"
 }
 
+# ── Reserved subcommands (Part C/D) ──
+#
+# `hmd <word>` and `heimdall <word>` are the SAME binary (hardlinked at install),
+# so routing is written once here and shared by both entry points. A small set
+# of reserved words — demo, uninstall, version, help — are routed as real
+# subcommands (the space form: `hmd demo`) BEFORE the task-prompt fallthrough.
+# Everything else falls through to task-prompt behavior (`hmd "build X"`), which
+# is the everyday two-letter invocation the short name exists for.
+
+ENTRY_NAME="$(basename "$0")"   # hmd or heimdall — for self-referential help
+
+case "${1:-}" in
+  version|--version|-v|-V)
+    ver="?"
+    if [ -f "$PLUGIN_DIR/.claude-plugin/plugin.json" ]; then
+      if command -v jq >/dev/null 2>&1; then
+        ver="$(jq -r '.version // "?"' "$PLUGIN_DIR/.claude-plugin/plugin.json" 2>/dev/null || echo '?')"
+      else
+        ver="$(grep -oE '"version"[[:space:]]*:[[:space:]]*"[^"]+"' "$PLUGIN_DIR/.claude-plugin/plugin.json" 2>/dev/null | head -1 | sed -E 's/.*"([^"]+)".*/\1/')"
+        [ -n "$ver" ] || ver="?"
+      fi
+    fi
+    echo "Heimdall v$ver"
+    if [ -d "$PLUGIN_DIR/.git" ]; then
+      sha="$(git -C "$PLUGIN_DIR" rev-parse --short HEAD 2>/dev/null || echo '')"
+      [ -n "$sha" ] && echo "  commit $sha"
+    fi
+    exit 0
+    ;;
+  help)
+    # Route the bare `help` subcommand into the existing --help handler below.
+    set -- --help
+    ;;
+  demo)
+    # Real subcommand on both entry points. Delegate to the demo runner,
+    # passing through any remaining args (e.g. target dir, --run, --dry).
+    shift
+    DEMO_BIN="$PLUGIN_DIR/bin/heimdall-demo"
+    if [ ! -x "$DEMO_BIN" ]; then
+      echo "  Error: demo runner not found at $DEMO_BIN" >&2
+      echo "  Reinstall: curl -fsSL https://runheimdall.dev/install | bash" >&2
+      exit 1
+    fi
+    exec "$DEMO_BIN" "$@"
+    ;;
+  uninstall)
+    # Remove the plugin dir + BOTH entry points (hmd, heimdall) and nothing
+    # else. This is on the success card, so it must exist. No stdin prompt
+    # (uninstall may run non-interactively); behavior is a confirmation print
+    # of exactly what was removed.
+    # SAFETY: derive the plugin dir CANONICALLY ($HOME/.heimdall), never $PLUGIN_DIR.
+    # When invoked via a hardlinked entry point in ~/.local/bin, $PLUGIN_DIR
+    # resolves to ~/.local; an unguarded rm -rf would delete ~/.local. Fixed
+    # location + a plugin.json check make deleting the wrong dir impossible.
+    bin_dir="$HOME/.local/bin"
+    plugin_dir="$HOME/.heimdall"
+    # Dev fallback: only if canonical absent AND $PLUGIN_DIR is itself a real plugin tree.
+    if [ ! -d "$plugin_dir" ] && [ -f "$PLUGIN_DIR/.claude-plugin/plugin.json" ]; then
+      plugin_dir="$PLUGIN_DIR"
+    fi
+
+    apply_heimdall_theme 2>/dev/null || true
+    D='\033[2m'; G='\033[32m'; R='\033[0m'; B='\033[1m'
+    printf "\n  ${B}Uninstalling Heimdall${R}\n\n"
+
+    removed_any=0
+    # Both entry points — unlink each hardlink/copy independently.
+    for entry in "$bin_dir/hmd" "$bin_dir/heimdall"; do
+      if [ -e "$entry" ] || [ -L "$entry" ]; then
+        rm -f "$entry" && { printf "  ${D}removed${R} %s\n" "$entry"; removed_any=1; }
+      fi
+    done
+    # Plugin directory — ONLY if verifiably a Heimdall plugin tree (the hard guard).
+    if [ -d "$plugin_dir" ] && [ -f "$plugin_dir/.claude-plugin/plugin.json" ]; then
+      rm -rf "$plugin_dir" && { printf "  ${D}removed${R} %s\n" "$plugin_dir"; removed_any=1; }
+    fi
+    # Best-effort plugin/marketplace deregistration (never fatal).
+    if command -v claude >/dev/null 2>&1; then
+      claude plugins uninstall hmd@heimdall >/dev/null 2>&1 || true
+      claude plugins marketplace remove heimdall >/dev/null 2>&1 || true
+    fi
+
+    printf "\n"
+    if [ "$removed_any" -eq 1 ]; then
+      printf "  ${G}✓${R} Heimdall removed. Nothing else was touched.\n"
+    else
+      printf "  ${D}Nothing to remove — Heimdall was not installed here.${R}\n"
+    fi
+    printf "  ${D}Reinstall anytime: curl -fsSL https://runheimdall.dev/install | bash${R}\n\n"
+    exit 0
+    ;;
+esac
+
 # ── Command handlers ──
 
 # --update: pull latest via git

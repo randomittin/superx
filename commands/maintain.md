@@ -9,10 +9,10 @@ Two-phase maintenance: **seek** then **fix**.
 
 ## Usage
 
-`/heimdall:maintain` — run once (seek + fix)
-`/heimdall:maintain seek` — only find bugs, raise issues
-`/heimdall:maintain fix` — only fix existing issues
-`/heimdall:maintain auto` — schedule recurring via /routine
+`/hmd:maintain` — run once (seek + fix)
+`/hmd:maintain seek` — only find bugs, raise issues
+`/hmd:maintain fix` — only fix existing issues
+`/hmd:maintain auto` — schedule recurring via /routine
 
 ## Phase 1: Seek
 
@@ -37,12 +37,12 @@ Spawn a **fixer agent** to:
 
 Set up recurring maintenance:
 ```
-/routine "run /heimdall:maintain" --every 6h
+/routine "run /hmd:maintain" --every 6h
 ```
 
 Or manually schedule:
 ```
-/schedule "/heimdall:maintain" --cron "0 */6 * * *"
+/schedule "/hmd:maintain" --cron "0 */6 * * *"
 ```
 
 This runs seeker first, waits for issues to be created, then runs fixer on the new + existing issues.

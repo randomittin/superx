@@ -3,7 +3,7 @@ name: demo
 description: The first-five-minutes wow. Scaffolds a fully-specified canned task (a real Todo REST API + single-page frontend + tests + README) into a fresh project dir and hands you the exact command to watch Heimdall build it end-to-end. Safe by default (dry mode) — never auto-executes without --run. Use when demoing Heimdall to someone new, or when you want a zero-thought way to see Heimdall build a real full-stack app.
 ---
 
-# /heimdall:demo — watch Heimdall build a real app in one command
+# /hmd:demo — watch Heimdall build a real app in one command
 
 ## What this command does
 
@@ -102,7 +102,7 @@ then point them at the printed paste-ready command. Default to dry mode; only pa
 - The user already has a specific real task in mind → just run
   `heimdall "<their task>"`; the demo on-ramp adds nothing.
 - You want to bootstrap a React Native visual-parity workflow → use
-  `/heimdall:designmatch` instead.
+  `/hmd:designmatch` instead.
 
 ## Related
 
