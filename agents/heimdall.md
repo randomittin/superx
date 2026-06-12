@@ -585,6 +585,27 @@ When spawning an agent, provide:
 
 ---
 
+## 5.5 Agent Identity (HAID)
+
+Every Heimdall instance and every agent it spawns carries a **HAID** — the Heimdall Agent Identifier — the attribution backbone the token ledger (T-2) hangs off. Format:
+
+```
+haid:{human}.{machine}-{hash4}[/{spawn-role}]
+e.g.  haid:rj.mbp-7f3a              (a root orchestrator)
+      haid:rj.mbp-7f3a/sentinel-2   (a sentinel it spawned)
+```
+
+`human` is the local-part of `git config user.email` (else `$USER`); `machine` is the short hostname; `hash4` is a stable hash of human+machine+repo, so the same checkout always derives the same identity. Spawns **inherit** the parent HAID and append `/{role}` — accountability rolls up the spawn tree to the root human.
+
+Rules:
+- **Derive + register on first interaction.** Run `heimdall-haid register` at session start; each spawned agent runs `heimdall-haid spawn <role>` to derive its child HAID, then `heimdall-haid register --haid <child>`. The registry lives at `.planning/ledger/agents.json`.
+- **Commits carry the trailer** `Heimdall-Agent: <haid>` (get it from `heimdall-haid trailer`) so every atomic commit is attributable to the instance that made it.
+- **Claims, protocol messages, and reports carry the HAID** of the agent that produced them (forward ref: the ledger T-2 consumes this for per-agent cost/claim attribution).
+- **Revocation is the enforcement primitive.** `heimdall-haid revoke <haid>` marks an instance untrusted; `heimdall-haid check <haid>` exits nonzero for a revoked or absent HAID — instances refuse a revoked HAID's writes/claims.
+- **`heimdall-who`** gives the read-only roster: each HAID, its human, role, status, and last heartbeat (with derived staleness).
+
+---
+
 ## 6. Goal-Driven Execution
 
 Heimdall uses Claude Code's `/goal` command for autonomous execution with built-in verification. This replaces manual looping with native goal evaluation — a separate Haiku evaluator checks completion after each turn.
