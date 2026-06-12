@@ -1,33 +1,56 @@
 #!/usr/bin/env bash
-# heimdall-selfscan — gitleaks secret-scanning gate over Heimdall's OWN FULL HISTORY.
+# heimdall-selfscan — the SHARED push-integrity gate over Heimdall's OWN history.
+#
+# Two checks, ONE implementation (the single source of truth invoked by BOTH the
+# native git pre-push hook installed by `hmd guard install` AND the Claude Code
+# PreToolUse pre-push gate in hooks/hooks.json):
+#
+#   1. SECRETS — gitleaks over the FULL history (`--log-opts=--all`, every ref
+#      incl. tags). A push can publish tags (`git push --force --tags`), so a
+#      secret on any ref must block. Zero findings required.
+#   2. IDENTITIES — the author AND committer email of every commit on every ref
+#      (`git log --all --format='%ae%n%ce'`) must be a subset of the allowlist
+#      {rj@runheimdall.dev, noreply@anthropic.com}. Any third identity is a hard
+#      fail: an unrecognized author/committer in history must not leave the box.
 #
 # Why this exists: the existing bin/secret-scan guards the STAGED diff at commit
-# time and the push RANGE — but agents commit with `--no-verify`, which bypasses
-# the pre-commit hook entirely. A planted demo secret reached this repo's history
-# exactly that way. The pre-commit gate is therefore not the backstop; THIS is.
-# heimdall-selfscan scans the repo's ENTIRE history (`--log-opts=--all`) as a
-# blocking pre-push gate, so a secret that slipped past commit-time cannot leave
-# the machine. The tool that proves your code holds itself to the same bar: it
-# scans its own history before every push (see conventions.md R10).
+# time and the push RANGE — but agents (and humans) commit with `--no-verify`,
+# which bypasses the pre-commit hook entirely. A planted demo secret reached this
+# repo's history exactly that way. The pre-commit gate is therefore not the
+# backstop; THIS is. heimdall-selfscan scans the repo's ENTIRE history as a
+# blocking pre-push gate, so a secret or an unknown identity cannot leave the
+# machine (see conventions.md R10).
 #
 # Scope: this repo's FULL git history (all refs, all commits) — not just the
 # staged diff (that is bin/secret-scan's job) and not just the push range.
 #
 # Contract — no escape hatches:
-#   - No .gitleaksignore, no allowlist, no --redact-suppression. The history must
-#     scan clean NATIVELY. If you need to suppress a finding, scrub the history.
+#   - No .gitleaksignore, no allowlist file, no --redact-suppression. The history
+#     must scan clean NATIVELY. If you need to suppress a finding, scrub history.
 #   - gitleaks absent is a HARD block: a verification tool that cannot scan its
 #     own history must not certify a push. Install it or the push is refused.
+#   - The identity allowlist is intentionally hard-coded here, not configurable:
+#     a configurable allowlist is an escape hatch.
+#
+# Success signal (so a silent `--no-verify` skip is detectable by ABSENCE):
+#   on full success this prints ONE line to stderr:
+#       guard: gitleaks=0 · identities=N/N allowlisted
+#   The absence of that line on a push means the gate did not run.
 #
 # Exit codes:
-#   0  clean — no secret anywhere in history
-#   1  finding — a secret was detected in history (the finding is printed)
+#   0  clean — no secret anywhere in history AND every identity allowlisted
+#   1  finding — a secret was detected in history, OR a non-allowlisted identity
 #   2  gitleaks is absent (hard block; install message printed)
 #
 # Usage:
 #   heimdall-selfscan        scan this repo's full history; nonzero on leak/absence
 
 set -euo pipefail
+
+# The ONLY allowed author/committer identities in Heimdall's history. Hard-coded
+# on purpose — a configurable allowlist would be an escape hatch.
+ALLOWED_IDENTITIES="rj@runheimdall.dev
+noreply@anthropic.com"
 
 # --- gitleaks presence check (HARD block) ---------------------------------
 if ! command -v gitleaks >/dev/null 2>&1; then
@@ -44,23 +67,57 @@ EOF
   exit 2
 fi
 
-# --- scan the FULL history ------------------------------------------------
+# --- scan the FULL history for secrets ------------------------------------
 # `gitleaks detect --log-opts=--all` walks every commit on every ref. No
 # allowlist, no .gitleaksignore — the history must be clean natively.
 SCAN_OUT=""
 SCAN_RC=0
 SCAN_OUT=$(gitleaks detect --source . --log-opts="--all" --no-banner 2>&1) && SCAN_RC=0 || SCAN_RC=$?
 
-if [ "$SCAN_RC" -eq 0 ]; then
-  echo "heimdall-selfscan: full history clean — no secrets found." >&2
-  exit 0
+if [ "$SCAN_RC" -ne 0 ]; then
+  # Nonzero from gitleaks == leak found (or a hard scan error). Show the finding.
+  echo "BLOCKED: gitleaks detected a secret in Heimdall's OWN history." >&2
+  echo "A credential anywhere in history blocks the push. Scrub it from history" >&2
+  echo "(git filter-repo / BFG) — there is no allowlist for this gate." >&2
+  echo "------------------------------------------------------------" >&2
+  printf '%s\n' "$SCAN_OUT" >&2
+  echo "------------------------------------------------------------" >&2
+  exit 1
 fi
 
-# Nonzero from gitleaks == leak found (or a hard scan error). Show the finding.
-echo "BLOCKED: gitleaks detected a secret in Heimdall's OWN history." >&2
-echo "A credential anywhere in history blocks the push. Scrub it from history" >&2
-echo "(git filter-repo / BFG) — there is no allowlist for this gate." >&2
-echo "------------------------------------------------------------" >&2
-printf '%s\n' "$SCAN_OUT" >&2
-echo "------------------------------------------------------------" >&2
-exit 1
+# --- identity allowlist over the FULL history -----------------------------
+# Author AND committer email of every commit on every ref must be allowlisted.
+# `sort -u` collapses to the DISTINCT identities present; any one not in the
+# allowlist is a hard fail.
+IDENTITIES="$(git log --all --format='%ae%n%ce' 2>/dev/null | sort -u | sed '/^$/d')"
+
+total_count=0
+allowed_count=0
+bad_identities=""
+while IFS= read -r ident; do
+  [ -n "$ident" ] || continue
+  total_count=$((total_count + 1))
+  if printf '%s\n' "$ALLOWED_IDENTITIES" | grep -Fxq -- "$ident"; then
+    allowed_count=$((allowed_count + 1))
+  else
+    bad_identities="${bad_identities}${bad_identities:+
+}${ident}"
+  fi
+done <<EOF
+$IDENTITIES
+EOF
+
+if [ -n "$bad_identities" ]; then
+  echo "BLOCKED: non-allowlisted author/committer identity in Heimdall's history." >&2
+  echo "Every commit's author AND committer email (over --all) must be one of:" >&2
+  printf '%s\n' "$ALLOWED_IDENTITIES" | sed 's/^/  - /' >&2
+  echo "Offending identities:" >&2
+  printf '%s\n' "$bad_identities" | sed 's/^/  ✗ /' >&2
+  echo "Rewrite the offending commits (git rebase / filter-repo) — there is no" >&2
+  echo "allowlist override for this gate." >&2
+  exit 1
+fi
+
+# --- success: emit the single detectable signal line ----------------------
+echo "guard: gitleaks=0 · identities=${allowed_count}/${total_count} allowlisted" >&2
+exit 0

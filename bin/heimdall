@@ -24,6 +24,47 @@ PLUGIN_DIR="$(cd "$(dirname "$SELF")/.." && pwd)"
 WORK_DIR="$(pwd)"
 SETUP_MARKER="$PLUGIN_DIR/.setup-done"
 
+# ── Shared removal path (uninstall subcommand AND legacy --uninstall) ──
+#
+# The ONE guarded removal. Both `hmd uninstall` and `heimdall --uninstall` call
+# this so there is a single rm -rf gated by the same guard — never an unguarded
+# `rm -rf "$HOME/.heimdall"` that could delete the wrong tree.
+#
+# SAFETY: derive the plugin dir CANONICALLY ($HOME/.heimdall), never $PLUGIN_DIR.
+# When invoked via a hardlinked entry point in ~/.local/bin, $PLUGIN_DIR resolves
+# to ~/.local; an unguarded rm -rf would delete ~/.local. Fixed location + a
+# plugin.json check make deleting the wrong dir impossible.
+#
+# Removes: both entry points (hmd, heimdall) + the plugin dir, and nothing else.
+# Sets $REMOVED_ANY (0/1) and prints exactly what was removed.
+_heimdall_remove_plugin() {
+  local bin_dir plugin_dir D G R entry
+  bin_dir="$HOME/.local/bin"
+  plugin_dir="$HOME/.heimdall"
+  # Dev fallback: only if canonical absent AND $PLUGIN_DIR is itself a real plugin tree.
+  if [ ! -d "$plugin_dir" ] && [ -f "$PLUGIN_DIR/.claude-plugin/plugin.json" ]; then
+    plugin_dir="$PLUGIN_DIR"
+  fi
+
+  D='\033[2m'; G='\033[32m'; R='\033[0m'
+  REMOVED_ANY=0
+  # Both entry points — unlink each hardlink/copy independently.
+  for entry in "$bin_dir/hmd" "$bin_dir/heimdall"; do
+    if [ -e "$entry" ] || [ -L "$entry" ]; then
+      rm -f "$entry" && { printf "  ${D}removed${R} %s\n" "$entry"; REMOVED_ANY=1; }
+    fi
+  done
+  # Plugin directory — ONLY if verifiably a Heimdall plugin tree (the hard guard).
+  if [ -d "$plugin_dir" ] && [ -f "$plugin_dir/.claude-plugin/plugin.json" ]; then
+    rm -rf "$plugin_dir" && { printf "  ${D}removed${R} %s\n" "$plugin_dir"; REMOVED_ANY=1; }
+  fi
+  # Best-effort plugin/marketplace deregistration (never fatal).
+  if command -v claude >/dev/null 2>&1; then
+    claude plugins uninstall hmd@heimdall >/dev/null 2>&1 || true
+    claude plugins marketplace remove heimdall >/dev/null 2>&1 || true
+  fi
+}
+
 # ── Ensure Claude Code is installed ──
 
 ensure_claude() {
@@ -322,45 +363,91 @@ case "${1:-}" in
     fi
     exec "$DEMO_BIN" "$@"
     ;;
+  guard)
+    # `hmd guard install` — wire the NATIVE git pre-push hook into the git repo
+    # at the current directory. The hook runs on EVERY push (human or agent),
+    # closing the gap left by the Claude Code PreToolUse gate (which only sees
+    # agent pushes). Maintainer gate: install.sh does NOT call this — it is not
+    # user-facing. Idempotent: re-running re-wires cleanly.
+    shift
+    sub="${1:-}"
+    case "$sub" in
+      install) ;;
+      ""|-h|--help)
+        echo "Usage: hmd guard install"
+        echo ""
+        echo "  Installs Heimdall's native git pre-push hook into the git repo at the"
+        echo "  current directory. The hook delegates to heimdall-selfscan, which runs"
+        echo "  gitleaks over the full history and enforces the author/committer identity"
+        echo "  allowlist on EVERY push (human or agent). Idempotent."
+        [ -z "$sub" ] && exit 2 || exit 0
+        ;;
+      *)
+        echo "  Error: unknown guard subcommand: $sub (expected: install)" >&2
+        exit 2
+        ;;
+    esac
+
+    # Must be inside a git work tree.
+    if ! repo_root="$(git rev-parse --show-toplevel 2>/dev/null)"; then
+      echo "  Error: not inside a git repository (run from your repo's working tree)." >&2
+      exit 1
+    fi
+
+    # Source hook + its companion heimdall-selfscan must both exist in the plugin.
+    src_hook="$PLUGIN_DIR/hooks/git/pre-push"
+    selfscan="$PLUGIN_DIR/bin/heimdall-selfscan"
+    if [ ! -f "$src_hook" ]; then
+      echo "  Error: hook template not found at $src_hook" >&2
+      echo "  Reinstall: curl -fsSL https://runheimdall.dev/install | bash" >&2
+      exit 1
+    fi
+    if [ ! -x "$selfscan" ]; then
+      echo "  Error: heimdall-selfscan not found/executable at $selfscan" >&2
+      echo "  Reinstall: curl -fsSL https://runheimdall.dev/install | bash" >&2
+      exit 1
+    fi
+
+    # Wire via core.hooksPath into a heimdall-managed dir, NOT .git/hooks — so a
+    # later `.git/hooks` clobber (or a fresh clone re-init) cannot silently
+    # disable the gate, and we never trample a user's existing hooks.
+    hooks_dir="$repo_root/.heimdall/git-hooks"
+    mkdir -p "$hooks_dir"
+    dst_hook="$hooks_dir/pre-push"
+
+    # Copy + bake the absolute selfscan path in place of the install-time anchor.
+    # sed with a path containing slashes → use a pipe delimiter.
+    sed "s|__HEIMDALL_SELFSCAN_PATH__|$selfscan|g" "$src_hook" > "$dst_hook"
+    chmod +x "$dst_hook"
+
+    git -C "$repo_root" config core.hooksPath "$hooks_dir"
+
+    apply_heimdall_theme 2>/dev/null || true
+    G='\033[32m'; D='\033[2m'; B='\033[1m'; R='\033[0m'
+    printf "\n  ${B}Heimdall push guard installed${R}\n\n"
+    printf "  ${G}✓${R} hook        %s\n" "$dst_hook"
+    printf "  ${G}✓${R} delegates   %s\n" "$selfscan"
+    printf "  ${G}✓${R} core.hooksPath = %s\n" "$hooks_dir"
+    printf "\n"
+    printf "  ${D}Runs on EVERY push (human or agent): gitleaks full-history secret scan${R}\n"
+    printf "  ${D}+ author/committer identity allowlist. A blocked push prints the reason;${R}\n"
+    printf "  ${D}a clean push prints: guard: gitleaks=0 · identities=N/N allowlisted${R}\n\n"
+    exit 0
+    ;;
   uninstall)
     # Remove the plugin dir + BOTH entry points (hmd, heimdall) and nothing
     # else. This is on the success card, so it must exist. No stdin prompt
     # (uninstall may run non-interactively); behavior is a confirmation print
-    # of exactly what was removed.
-    # SAFETY: derive the plugin dir CANONICALLY ($HOME/.heimdall), never $PLUGIN_DIR.
-    # When invoked via a hardlinked entry point in ~/.local/bin, $PLUGIN_DIR
-    # resolves to ~/.local; an unguarded rm -rf would delete ~/.local. Fixed
-    # location + a plugin.json check make deleting the wrong dir impossible.
-    bin_dir="$HOME/.local/bin"
-    plugin_dir="$HOME/.heimdall"
-    # Dev fallback: only if canonical absent AND $PLUGIN_DIR is itself a real plugin tree.
-    if [ ! -d "$plugin_dir" ] && [ -f "$PLUGIN_DIR/.claude-plugin/plugin.json" ]; then
-      plugin_dir="$PLUGIN_DIR"
-    fi
-
+    # of exactly what was removed. The guarded removal lives in the shared
+    # _heimdall_remove_plugin (so --uninstall cannot drift to an unguarded rm).
     apply_heimdall_theme 2>/dev/null || true
     D='\033[2m'; G='\033[32m'; R='\033[0m'; B='\033[1m'
     printf "\n  ${B}Uninstalling Heimdall${R}\n\n"
 
-    removed_any=0
-    # Both entry points — unlink each hardlink/copy independently.
-    for entry in "$bin_dir/hmd" "$bin_dir/heimdall"; do
-      if [ -e "$entry" ] || [ -L "$entry" ]; then
-        rm -f "$entry" && { printf "  ${D}removed${R} %s\n" "$entry"; removed_any=1; }
-      fi
-    done
-    # Plugin directory — ONLY if verifiably a Heimdall plugin tree (the hard guard).
-    if [ -d "$plugin_dir" ] && [ -f "$plugin_dir/.claude-plugin/plugin.json" ]; then
-      rm -rf "$plugin_dir" && { printf "  ${D}removed${R} %s\n" "$plugin_dir"; removed_any=1; }
-    fi
-    # Best-effort plugin/marketplace deregistration (never fatal).
-    if command -v claude >/dev/null 2>&1; then
-      claude plugins uninstall hmd@heimdall >/dev/null 2>&1 || true
-      claude plugins marketplace remove heimdall >/dev/null 2>&1 || true
-    fi
+    _heimdall_remove_plugin
 
     printf "\n"
-    if [ "$removed_any" -eq 1 ]; then
+    if [ "${REMOVED_ANY:-0}" -eq 1 ]; then
       printf "  ${G}✓${R} Heimdall removed. Nothing else was touched.\n"
     else
       printf "  ${D}Nothing to remove — Heimdall was not installed here.${R}\n"
@@ -498,8 +585,24 @@ if [[ "${1:-}" == "--reinstall" || "${1:-}" == "--fix" ]]; then
   exec bash -c 'cd "$HOME" && curl -fsSL https://raw.githubusercontent.com/randomittin/heimdall/main/install.sh | bash'
 fi
 
-# --uninstall: remove heimdall completely
+# --uninstall: remove heimdall completely (legacy flag; `hmd uninstall` is canonical)
 if [[ "${1:-}" == "--uninstall" ]]; then
+  # Zero-stdin contract: this must never block on a prompt when piped or in a
+  # non-interactive shell. Parse --yes; if stdin is NOT a TTY and --yes was not
+  # given, refuse rather than hang (exit 2 + one-line message).
+  ASSUME_YES=0
+  shift
+  while [ $# -gt 0 ]; do
+    case "$1" in
+      --yes|-y) ASSUME_YES=1; shift ;;
+      *) shift ;;
+    esac
+  done
+  if [ "$ASSUME_YES" -ne 1 ] && [ ! -t 0 ]; then
+    echo "heimdall --uninstall: non-interactive; pass --yes to confirm (refusing to prompt)." >&2
+    exit 2
+  fi
+
   apply_heimdall_theme 2>/dev/null || true
 
   # Sad banner (reuse top-level color vars from print_banner's fallback chain)
@@ -520,10 +623,13 @@ if [[ "${1:-}" == "--uninstall" ]]; then
   sleep 0.05
   printf "  ${D}╰─────────────────────────────────────╯${R}\n\n"
 
-  read -p "  Remove heimdall from ~/.heimdall and PATH? [y/N] " confirm
-  if [[ "${confirm:-n}" != [yY]* ]]; then
-    printf "\n  ${P}${B}(ᵔᴥᵔ)${R}  ${D}phew! welcome back.${R}\n\n"
-    exit 0
+  # Interactive confirm only on a TTY without --yes; --yes/non-TTY skips it.
+  if [ "$ASSUME_YES" -ne 1 ]; then
+    read -p "  Remove heimdall from ~/.heimdall and PATH? [y/N] " confirm
+    if [[ "${confirm:-n}" != [yY]* ]]; then
+      printf "\n  ${P}${B}(ᵔᴥᵔ)${R}  ${D}phew! welcome back.${R}\n\n"
+      exit 0
+    fi
   fi
 
   printf "\n"
@@ -536,18 +642,19 @@ if [[ "${1:-}" == "--uninstall" ]]; then
     fi
   done
   sleep 0.1
-  # Remove the install directory
-  if [ -d "$HOME/.heimdall" ]; then
-    rm -rf "$HOME/.heimdall"
-    printf "  ${D}×${R} ~/.heimdall removed\n"
-  fi
+  # Remove the plugin dir + entry points via the SHARED guarded path — never an
+  # unguarded `rm -rf "$HOME/.heimdall"`. Same guard as `hmd uninstall`.
+  _heimdall_remove_plugin
   sleep 0.1
-  # Uninstall companion plugins (optional)
-  read -p "  Also uninstall companion plugins (caveman, claude-mem)? [y/N] " plugins
-  if [[ "${plugins:-n}" == [yY]* ]]; then
-    claude plugins uninstall caveman 2>/dev/null && printf "  ${D}×${R} caveman removed\n" || true
-    claude plugins uninstall superpowers 2>/dev/null && printf "  ${D}×${R} superpowers removed\n" || true
-    claude plugins marketplace remove heimdall-marketplace 2>/dev/null && printf "  ${D}×${R} marketplace removed\n" || true
+  # Uninstall companion plugins — interactive only (TTY without --yes). In
+  # --yes/non-TTY mode skip silently to honor the zero-stdin contract.
+  if [ "$ASSUME_YES" -ne 1 ]; then
+    read -p "  Also uninstall companion plugins (caveman, claude-mem)? [y/N] " plugins
+    if [[ "${plugins:-n}" == [yY]* ]]; then
+      claude plugins uninstall caveman 2>/dev/null && printf "  ${D}×${R} caveman removed\n" || true
+      claude plugins uninstall superpowers 2>/dev/null && printf "  ${D}×${R} superpowers removed\n" || true
+      claude plugins marketplace remove heimdall-marketplace 2>/dev/null && printf "  ${D}×${R} marketplace removed\n" || true
+    fi
   fi
 
   printf "\n"
@@ -708,7 +815,7 @@ if [[ "${1:-}" == "--help" || "${1:-}" == "-h" ]]; then
   echo "  heimdall --setup          Re-run first-time plugin setup"
   echo "  heimdall --team N \"task\"  Spawn N parallel Claude workers in tmux"
   echo "  heimdall --reinstall      Nuke and re-clone from GitHub (fixes zombie states)"
-  echo "  heimdall --uninstall      Remove heimdall completely"
+  echo "  heimdall --uninstall      Remove heimdall completely (add --yes for non-interactive)"
   echo "  heimdall --help           Show this help"
   echo ""
   echo "heimdall launches Claude Code with:"

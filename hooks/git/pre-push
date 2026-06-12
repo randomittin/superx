@@ -1,0 +1,58 @@
+#!/usr/bin/env bash
+# Heimdall native git pre-push hook — HUMAN-PUSH PARITY GATE.
+#
+# Why this exists: the Claude Code PreToolUse pre-push gate only sees pushes that
+# an AGENT issues through the Bash tool. A human running `git push` in a terminal
+# (including the maintainer's manual pushes, and `git push --force --tags`) never
+# touches that hook. This NATIVE git hook runs on EVERY push regardless of
+# initiator, giving the two paths identical coverage.
+#
+# It does NOT reimplement the checks — it delegates to bin/heimdall-selfscan,
+# the single source of truth that runs gitleaks over the full history AND the
+# author/committer identity allowlist. Both this hook and the CC PreToolUse gate
+# call that one script; there is no duplicated logic.
+#
+# Installed by `hmd guard install`, which wires it via core.hooksPath (so a
+# bare `.git/hooks` clobber cannot silently disable it) and bakes the resolved
+# path to heimdall-selfscan into HEIMDALL_SELFSCAN below.
+#
+# git invokes pre-push as:  pre-push <remote-name> <remote-url>   (refs on stdin)
+# A nonzero exit aborts the push. The success line printed by selfscan
+# (`guard: gitleaks=0 · identities=N/N allowlisted`) means a silent --no-verify
+# skip is detectable by its ABSENCE.
+
+set -euo pipefail
+
+# HEIMDALL_SELFSCAN is rewritten in place by `hmd guard install` to the absolute
+# path of the installing plugin's bin/heimdall-selfscan. The token below is the
+# install-time anchor; if it survives unrewritten (hook copied by hand), we fall
+# back to a PATH lookup of heimdall-selfscan.
+HEIMDALL_SELFSCAN="__HEIMDALL_SELFSCAN_PATH__"
+
+resolve_selfscan() {
+  # 1. Baked-in absolute path (the normal install case). `hmd guard install`
+  #    rewrites the assignment above to an absolute path starting with `/`. The
+  #    unrewritten anchor token does NOT start with `/`, so this case-test
+  #    distinguishes them without comparing against the literal token (a literal
+  #    comparison would itself be rewritten by the installer's sed).
+  case "$HEIMDALL_SELFSCAN" in
+    /*) [ -x "$HEIMDALL_SELFSCAN" ] && { printf '%s' "$HEIMDALL_SELFSCAN"; return 0; } ;;
+  esac
+  # 2. On PATH (brew / ~/.local/bin installs).
+  if command -v heimdall-selfscan >/dev/null 2>&1; then
+    command -v heimdall-selfscan; return 0
+  fi
+  return 1
+}
+
+SELFSCAN="$(resolve_selfscan || true)"
+if [ -z "${SELFSCAN:-}" ]; then
+  echo "BLOCKED: heimdall pre-push hook cannot locate heimdall-selfscan." >&2
+  echo "Reinstall the hook with:  hmd guard install" >&2
+  exit 1
+fi
+
+# Delegate. selfscan prints its own block reason (secret / bad identity / gitleaks
+# absent) and the success signal line. Propagate its exit code verbatim so the
+# push is aborted on any nonzero (secret=1, bad identity=1, gitleaks absent=2).
+exec "$SELFSCAN"
