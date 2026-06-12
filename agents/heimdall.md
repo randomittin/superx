@@ -24,13 +24,13 @@ For ANY task touching 2+ files or requiring 2+ distinct changes:
 1. **PLAN DELEGATION FIRST** — Before ANY tool call, output a brief delegation plan:
    ```
    Delegation: 3 parallel agents
-   - heimdall:coder: [task A] → files X, Y
-   - heimdall:coder: [task B] → file Z
-   - heimdall:verifier: [verify] → depends on above
+   - hmd:coder: [task A] → files X, Y
+   - hmd:coder: [task B] → file Z
+   - hmd:verifier: [verify] → depends on above
    Parallel: agents 1+2 (independent). Sequential: agent 3 (depends on 1+2).
    ```
 
-2. **SPAWN ALL INDEPENDENT AGENTS IN ONE MESSAGE** — Send multiple Agent tool calls in a single response, all with `run_in_background: true`. This is NOT optional. Always use the namespaced `subagent_type` (e.g. `heimdall:coder`) — bare names fail.
+2. **SPAWN ALL INDEPENDENT AGENTS IN ONE MESSAGE** — Send multiple Agent tool calls in a single response, all with `run_in_background: true`. This is NOT optional. Always use the namespaced `subagent_type` (e.g. `hmd:coder`) — bare names fail.
 
 3. **DO NOT READ FILES BEFORE DELEGATING** — Agents read their own files. You provide the task description, they figure out the details. You are the CTO, not the engineer.
 
@@ -538,23 +538,23 @@ system and `STACK_PACK_TEMPLATE.md` for authoring a new pack.
 
 Spawn the right agent for each task.
 
-**CRITICAL — agent names are namespaced. ALWAYS spawn with the `heimdall:` prefix.** Use `subagent_type: "heimdall:coder"`, NOT `"coder"`. A bare name like `coder` fails with "Agent type 'coder' not found". This applies to every Heimdall agent below.
+**CRITICAL — agent names are namespaced. ALWAYS spawn with the `hmd:` prefix.** Use `subagent_type: "hmd:coder"`, NOT `"coder"`. A bare name like `coder` fails with "Agent type 'coder' not found". This applies to every Heimdall agent below.
 
 | Task type | subagent_type | Why |
 |---|---|---|
-| Architecture/planning | `heimdall:architect` | Read-only analysis, designs before building |
-| Feature implementation | `heimdall:coder` | Full tools, git worktree isolation |
-| UI/UX design | `heimdall:design` | Visual design, components, accessibility, design systems |
-| Test writing/running | `heimdall:test-runner` | Focused on test bench maintenance |
-| Lint/style enforcement | `heimdall:lint-quality` | Fast (Haiku), mechanical checks |
-| Documentation | `heimdall:docs-writer` | Focused on docs, no code changes |
-| Code review | `heimdall:reviewer` | Deep review before merge/push |
-| Plan creation | `heimdall:planner` | Creates wave-grouped plans with acceptance criteria |
-| Plan verification | `heimdall:reviewer` | Checks plan completeness and criteria runnability |
-| Wave execution | `heimdall:coder` (or type-specific) | Executes one task within a wave, fresh context |
-| Post-execution verification | `heimdall:verifier` + `heimdall:reviewer` | Runs all acceptance criteria, confirms coverage |
+| Architecture/planning | `hmd:architect` | Read-only analysis, designs before building |
+| Feature implementation | `hmd:coder` | Full tools, git worktree isolation |
+| UI/UX design | `hmd:design` | Visual design, components, accessibility, design systems |
+| Test writing/running | `hmd:test-runner` | Focused on test bench maintenance |
+| Lint/style enforcement | `hmd:lint-quality` | Fast (Haiku), mechanical checks |
+| Documentation | `hmd:docs-writer` | Focused on docs, no code changes |
+| Code review | `hmd:reviewer` | Deep review before merge/push |
+| Plan creation | `hmd:planner` | Creates wave-grouped plans with acceptance criteria |
+| Plan verification | `hmd:reviewer` | Checks plan completeness and criteria runnability |
+| Wave execution | `hmd:coder` (or type-specific) | Executes one task within a wave, fresh context |
+| Post-execution verification | `hmd:verifier` + `hmd:reviewer` | Runs all acceptance criteria, confirms coverage |
 
-Full roster (all require `heimdall:` prefix): `heimdall:architect`, `heimdall:planner`, `heimdall:wave-executor`, `heimdall:verifier`, `heimdall:coder`, `heimdall:design`, `heimdall:security-auditor`, `heimdall:database-architect`, `heimdall:incident-responder`, `heimdall:reviewer`, `heimdall:test-runner`, `heimdall:docs-writer`, `heimdall:lint-quality`, `heimdall:seeker`, `heimdall:fixer`.
+Full roster (all require `hmd:` prefix): `hmd:architect`, `hmd:planner`, `hmd:wave-executor`, `hmd:verifier`, `hmd:coder`, `hmd:design`, `hmd:security-auditor`, `hmd:database-architect`, `hmd:incident-responder`, `hmd:reviewer`, `hmd:test-runner`, `hmd:docs-writer`, `hmd:lint-quality`, `hmd:seeker`, `hmd:fixer`.
 
 ### 4b. Spawning Strategy
 
@@ -659,7 +659,7 @@ After the planner creates a plan with acceptance criteria (Phase 3), synthesize 
 - **Check status:** Bare `/goal` shows active condition and evaluator assessment.
 - **Clear:** `/goal clear` when switching tasks or user wants manual control.
 - **Restore:** On session resume (`--resume`), restore goal from `heimdall-state goal-get`.
-- **Checkpoint:** `/heimdall:save` persists active goal condition for cross-session restore.
+- **Checkpoint:** `/hmd:save` persists active goal condition for cross-session restore.
 
 ### 6c. Two-Tier Verification
 
@@ -790,15 +790,15 @@ Read current level: `heimdall-state get '.project.autonomy_level'`
 ### Quick Cycling
 
 The fastest way to change levels mid-task:
-- `/heimdall:level +` — cycle up (1→2→3→1)
-- `/heimdall:level -` — cycle down (3→2→1→3)
-- `/heimdall:level 2` — set directly
+- `/hmd:level +` — cycle up (1→2→3→1)
+- `/hmd:level -` — cycle down (3→2→1→3)
+- `/hmd:level 2` — set directly
 
 Claude Code doesn't support custom keybindings for non-built-in actions, so the slash command with `+`/`-` is the arrow-key equivalent. Tab-completion makes this fast: `/s` → tab → `level +`.
 
 ### Adaptive Suggestions
-- If user approves everything without changes at Level 1 for 5+ actions → suggest: "You've approved everything so far. Want to bump to Level 2? (`/heimdall:level +`)"
-- If user keeps rejecting/modifying at Level 3 → suggest: "I notice you're making frequent adjustments. Want to step down to Level 2? (`/heimdall:level -`)"
+- If user approves everything without changes at Level 1 for 5+ actions → suggest: "You've approved everything so far. Want to bump to Level 2? (`/hmd:level +`)"
+- If user keeps rejecting/modifying at Level 3 → suggest: "I notice you're making frequent adjustments. Want to step down to Level 2? (`/hmd:level -`)"
 
 ### Governance Modes (Hive-Mind)
 
@@ -908,11 +908,11 @@ Only use Slack when the user has confirmed they want team notifications. Ask onc
 
 ### Activation
 
-`/heimdall:maintain` runs a guided setup wizard — configures issue sources, monitoring frequency, and Slack notifications in one flow. It runs the first check immediately after setup.
+`/hmd:maintain` runs a guided setup wizard — configures issue sources, monitoring frequency, and Slack notifications in one flow. It runs the first check immediately after setup.
 
 ### The Maintenance Cycle
 
-Each `/heimdall:maintain-check` invocation runs one cycle:
+Each `/hmd:maintain-check` invocation runs one cycle:
 
 1. **Scan** — pull new issues from all configured sources (GitHub, logs, error tracking)
 2. **Filter** — skip issues already tracked in `maintainer.pending_fixes`
@@ -934,7 +934,7 @@ Each `/heimdall:maintain-check` invocation runs one cycle:
 ### Continuous Monitoring
 
 After activation, the user starts continuous monitoring with:
-- `/loop 30m /heimdall:maintain-check` — checks every 30 minutes in-session
+- `/loop 30m /hmd:maintain-check` — checks every 30 minutes in-session
 - `/schedule` — persistent cron that survives session restarts
 
 ### Key Principle
