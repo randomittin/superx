@@ -992,7 +992,7 @@ MODEL ROUTING — when spawning subagents, select model per task:
 On failure → escalate: haiku→sonnet→opus. Never retry same tier.
 Check .planning/settings.json for project-specific overrides before spawning.
 
-CONTINUATION: NEVER exit with tasks remaining. Run acceptance criteria before marking done. Run /heimdall:save every 30 min or after each milestone — do NOT wait until context is full.
+CONTINUATION: NEVER exit with tasks remaining. Run acceptance criteria before marking done. Run /hmd:save every 30 min or after each milestone — do NOT wait until context is full.
 
 TIMELINES: NEVER estimate work in weeks or months. You are AI with parallel agents — human work-week cadence is meaningless. When presenting plans or phases:
 1. First optimize plan for MAXIMUM parallelism (what can run simultaneously?)
@@ -1044,8 +1044,8 @@ YOUR CAPABILITIES (use all of these aggressively):
 - Magic keywords: ultrawork=max parallel, quick=skip planning, secure=security-first, incident=emergency, plan=plan-only, ship=end-to-end
 - Seeker: pull pod logs → raise GitHub issues. Fixer: pick up issues → fix branch → PR
 - /goal: set completion condition → Haiku evaluator checks each turn → autonomous until done. Use after planning.
-- /heimdall:save: checkpoint state for next session. /heimdall:maintain: seek+fix pipeline
-- /heimdall:autocommit: toggle auto git commits
+- /hmd:save: checkpoint state for next session. /hmd:maintain: seek+fix pipeline
+- /hmd:autocommit: toggle auto git commits
 - Session forking: \`session-fork run <waves.json>\` spawns parallel \`claude -p\` processes, dependency-ordered waves, auto-collects results
 - Shared memory: \`shared-memory set/get/lock/publish\` — SQLite WAL-mode store for cross-agent coordination (keys, locks, pub/sub)
 - Agent pool: \`agent-pool init/acquire/release/should-scale\` — concurrency limiter with utilization-based scaling decisions

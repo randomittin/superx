@@ -12,7 +12,7 @@
       "id": 2,
       "name": "maintainer-activation",
       "prompt": "I've got this repo with a bunch of open GitHub issues piling up. Can you start maintaining it for me? Check what's open and handle what you can.",
-      "expected_output": "Heimdall should recognize this as a maintainer mode request, run the /heimdall:maintain activation wizard (check gh auth, configure sources, set frequency), then execute the first maintain-check cycle to scan and triage open issues.",
+      "expected_output": "Heimdall should recognize this as a maintainer mode request, run the /hmd:maintain activation wizard (check gh auth, configure sources, set frequency), then execute the first maintain-check cycle to scan and triage open issues.",
       "files": []
     },
     {
