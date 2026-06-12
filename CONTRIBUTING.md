@@ -97,11 +97,22 @@ bin/falsify <domain>                          # falsifiability score for one ora
 bin/falsify exchange-lob --assert-score 1.0   # exit 0 ONLY IF golden green AND every mutant killed
 bin/corpus run                                # replay the whole corpus; print the per-version catch-rate
 evals/oracles/<domain>/run.test.sh            # the gate's own corrupt-and-confirm tests
+bin/heimdall-selfscan                         # gitleaks over Heimdall's OWN full history (clean = exit 0)
 ```
 
 The same gates run as a push gate in this repo: `git push` re-triggers
 `bin/falsify <domain> --assert-score 1.0` for every applicable oracle and a full
 `bin/corpus run`. A non-falsifiable gate or a corpus regression blocks the push.
+
+`bin/heimdall-selfscan` is part of the pre-push verifier surface: it runs
+gitleaks over this repo's ENTIRE git history (`--log-opts=--all`), not just the
+staged diff that `bin/secret-scan` checks at commit time. Agents commit with
+`--no-verify`, which bypasses the pre-commit secret-scan, so the full-history
+self-scan is the real backstop against a secret entering the repo. A finding
+anywhere in history — or a missing gitleaks — blocks the push (exit 2). There is
+no allowlist and no `.gitleaksignore`: the history must scan clean natively. The
+tool that proves your code holds itself to the same bar — it scans its own
+history before every push.
 
 ## The two rules that are non-negotiable
 

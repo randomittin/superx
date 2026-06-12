@@ -1,0 +1,66 @@
+#!/usr/bin/env bash
+# heimdall-selfscan — gitleaks secret-scanning gate over Heimdall's OWN FULL HISTORY.
+#
+# Why this exists: the existing bin/secret-scan guards the STAGED diff at commit
+# time and the push RANGE — but agents commit with `--no-verify`, which bypasses
+# the pre-commit hook entirely. A planted demo secret reached this repo's history
+# exactly that way. The pre-commit gate is therefore not the backstop; THIS is.
+# heimdall-selfscan scans the repo's ENTIRE history (`--log-opts=--all`) as a
+# blocking pre-push gate, so a secret that slipped past commit-time cannot leave
+# the machine. The tool that proves your code holds itself to the same bar: it
+# scans its own history before every push (see conventions.md R10).
+#
+# Scope: this repo's FULL git history (all refs, all commits) — not just the
+# staged diff (that is bin/secret-scan's job) and not just the push range.
+#
+# Contract — no escape hatches:
+#   - No .gitleaksignore, no allowlist, no --redact-suppression. The history must
+#     scan clean NATIVELY. If you need to suppress a finding, scrub the history.
+#   - gitleaks absent is a HARD block: a verification tool that cannot scan its
+#     own history must not certify a push. Install it or the push is refused.
+#
+# Exit codes:
+#   0  clean — no secret anywhere in history
+#   1  finding — a secret was detected in history (the finding is printed)
+#   2  gitleaks is absent (hard block; install message printed)
+#
+# Usage:
+#   heimdall-selfscan        scan this repo's full history; nonzero on leak/absence
+
+set -euo pipefail
+
+# --- gitleaks presence check (HARD block) ---------------------------------
+if ! command -v gitleaks >/dev/null 2>&1; then
+  cat >&2 <<'EOF'
+BLOCKED: gitleaks is not installed and this is a HARD self-scan gate.
+heimdall-selfscan scans Heimdall's OWN full history before every push; a
+verification tool that cannot scan its own history must not certify a push.
+Install it, then retry:
+
+    brew install gitleaks
+
+(or see https://github.com/gitleaks/gitleaks#installing)
+EOF
+  exit 2
+fi
+
+# --- scan the FULL history ------------------------------------------------
+# `gitleaks detect --log-opts=--all` walks every commit on every ref. No
+# allowlist, no .gitleaksignore — the history must be clean natively.
+SCAN_OUT=""
+SCAN_RC=0
+SCAN_OUT=$(gitleaks detect --source . --log-opts="--all" --no-banner 2>&1) && SCAN_RC=0 || SCAN_RC=$?
+
+if [ "$SCAN_RC" -eq 0 ]; then
+  echo "heimdall-selfscan: full history clean — no secrets found." >&2
+  exit 0
+fi
+
+# Nonzero from gitleaks == leak found (or a hard scan error). Show the finding.
+echo "BLOCKED: gitleaks detected a secret in Heimdall's OWN history." >&2
+echo "A credential anywhere in history blocks the push. Scrub it from history" >&2
+echo "(git filter-repo / BFG) — there is no allowlist for this gate." >&2
+echo "------------------------------------------------------------" >&2
+printf '%s\n' "$SCAN_OUT" >&2
+echo "------------------------------------------------------------" >&2
+exit 1
