@@ -41,7 +41,7 @@ This is useful for building trust before enabling full auto-fix.
 ```bash
 heimdall-state get '.maintainer.enabled'
 ```
-If `false`, respond: "Maintainer mode is off. Run `/heimdall:maintain` to enable." and stop.
+If `false`, respond: "Maintainer mode is off. Run `/hmd:maintain` to enable." and stop.
 
 2. Read the full maintainer guide for reference:
    Read `skills/heimdall/references/maintainer-guide.md`

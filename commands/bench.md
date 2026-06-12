@@ -4,7 +4,7 @@ description: Reproduce the public benchmark table on your own machine (spec S-5)
 disable-model-invocation: true
 ---
 
-# /heimdall:bench — reproduce the public benchmark table
+# /hmd:bench — reproduce the public benchmark table
 
 Runs `bin/heimdall-bench` — the documented entry door over the measurement
 harness (`bin/benchmark`). It does NOT invent numbers: it produces them by

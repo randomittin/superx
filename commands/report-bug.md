@@ -3,7 +3,7 @@ name: report-bug
 description: File a GitHub issue against the Heimdall plugin repo from inside a session. Use when the user reports a bug, requests a feature, or wants to flag a docs/help-text problem in Heimdall itself. Auto-fills environment (plugin SHA, OS, recent commits) and posts to randomittin/heimdall (or the plugin's origin remote). Returns the issue URL.
 ---
 
-# /heimdall:report-bug — File an Issue Against the Heimdall Plugin
+# /hmd:report-bug — File an Issue Against the Heimdall Plugin
 
 Use when the user wants to report a bug, request a feature, or flag a docs problem in the Heimdall plugin itself (NOT in the project they're working on).
 
@@ -49,7 +49,7 @@ Use when the user wants to report a bug, request a feature, or flag a docs probl
 
 4. **Compose a tight title** — under 70 chars, imperative or descriptive. Examples:
    - `bug: parallelism-tracker fails on linux-musl (no fcntl.h)`
-   - `feature: add /heimdall:rollback to revert last wave`
+   - `feature: add /hmd:rollback to revert last wave`
    - `docs: agents/coder.md doesn't mention isolation: worktree`
 
 5. **Invoke the helper**:
@@ -91,5 +91,5 @@ User: "the tracker hook fails on my Linux box, fcntl.h is missing"
 → body: include the build error verbatim, kernel/arch, and what `clang`/`gcc` they used.
 
 User: "add a way to roll back the last wave if it fails verification"
-→ kind: feature | title: "feature: add /heimdall:rollback for last failed wave"
+→ kind: feature | title: "feature: add /hmd:rollback for last failed wave"
 → body: motivation + sketch of expected UX.

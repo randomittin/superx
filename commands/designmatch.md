@@ -3,7 +3,7 @@ name: designmatch
 description: Bootstrap the designmatch skill in a React Native project from a Claude Design link. Auto-imports the Visual QA stub helper (visual-qa.ts), writes default state.vqa.json, registers the canonical source, updates .gitignore, and prints the wiring snippet. Use when starting visual-parity work on a new RN screen or when the user pastes a Claude Design URL.
 ---
 
-# /heimdall:designmatch — bootstrap designmatch in an RN app
+# /hmd:designmatch — bootstrap designmatch in an RN app
 
 ## What this command does
 
@@ -24,15 +24,15 @@ Auto-runs `designmatch init <canonical-source> --app-dir <pwd>`:
 The user types:
 
 ```
-/heimdall:designmatch <claude-design-url-or-path>
+/hmd:designmatch <claude-design-url-or-path>
 ```
 
 Examples:
 
 ```
-/heimdall:designmatch https://api.anthropic.com/v1/design/h/BwHAOZU59KCkBa9UQk015Q?open_file=Wallet+Web.html
-/heimdall:designmatch ./design-bundle/
-/heimdall:designmatch ./App.html
+/hmd:designmatch https://api.anthropic.com/v1/design/h/BwHAOZU59KCkBa9UQk015Q?open_file=Wallet+Web.html
+/hmd:designmatch ./design-bundle/
+/hmd:designmatch ./App.html
 ```
 
 Optional flags after the source:

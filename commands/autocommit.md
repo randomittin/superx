@@ -11,7 +11,7 @@ Check the current auto-commit state and toggle it:
 2. If called with no args or "status": report current state
 3. If called with "off" or "disable": `touch .heimdall-no-autocommit` and confirm
 4. If called with "on" or "enable": `rm -f .heimdall-no-autocommit` and confirm
-5. If called with no qualifier (just `/heimdall:autocommit`): TOGGLE — if on, turn off; if off, turn on
+5. If called with no qualifier (just `/hmd:autocommit`): TOGGLE — if on, turn off; if off, turn on
 
 ## Implementation
 
