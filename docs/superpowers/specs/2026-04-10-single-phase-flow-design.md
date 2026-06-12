@@ -36,7 +36,7 @@ When the user replies in `awaiting_user_input`, the server runs `claude --resume
 
 All other CLI flags are preserved on resume:
 - `--dangerously-skip-permissions`
-- `--plugin-dir <superx>`
+- `--plugin-dir <heimdall>`
 - `--output-format stream-json`
 - `--verbose`
 
