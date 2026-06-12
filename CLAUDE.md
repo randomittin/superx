@@ -1,4 +1,4 @@
-# Project Conventions (managed by superx)
+# Project Conventions (managed by heimdall)
 
 ## Parallelism (MANDATORY)
 - 2+ independent tool calls → send ALL in ONE message (batch Read, Write, Edit, Bash)

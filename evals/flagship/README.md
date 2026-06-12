@@ -1,14 +1,14 @@
-# superx flagship eval suite
+# Heimdall flagship eval suite
 
-The flagship suite demonstrates superx's **defensible** claim:
+The flagship suite demonstrates Heimdall's **defensible** claim:
 
-> **superx ships VERIFIED** — it brings and wires the canonical *external* oracle for the
+> **Heimdall ships VERIFIED** — it brings and wires the canonical *external* oracle for the
 > domain, makes every gate falsifiable (proven able to go red before trusted green), and
 > catches the bug class that emits *no local signal* — ordering races, whole-sequence
 > invariants, and missing subsystems that sail through a naive green test suite.
 
-It is **NOT** the claim "superx writes code raw Claude Code can't." The grounding spike
-(`SPIKE-FINDINGS.md`) disproves that: with opus held constant, raw and superx produced
+It is **NOT** the claim "Heimdall writes code raw Claude Code can't." The grounding spike
+(`SPIKE-FINDINGS.md`) disproves that: with opus held constant, raw and Heimdall produced
 ~equivalently correct code (raw even emitted a 512-opcode CPU core byte-exact). **The delta
 is verification, not generation.** This README, and the suite, say that honestly — same
 honesty principle as `../benchmark/README.md`.
@@ -18,11 +18,11 @@ honesty principle as `../benchmark/README.md`.
 | Target | Flagship? | Oracle | Why it is (or isn't) flagship |
 |---|---|---|---|
 | **exchange** (limit-order-book matching engine) | **YES** | independent reference-matcher + LOB-replay differential diff (+ seeded variable-latency interleave) | The concurrency race had NO local signal — every per-trade invariant passed; only the whole-output differential oracle + seeded interleaving caught it. This is the delta. |
-| **emulator** (Game Boy DMG LR35902 CPU) | **YES** | blargg cpu_instrs verdict + gameboy-doctor per-instruction trace diff | Both arms passed ONLY because the external oracle was provided. A naive user without it ships "seems to work." superx auto-wires it. The descoped timer hole is *predicted* by the coverage matrix, not discovered. |
-| **ray-tracer** | **NO — CALIBRATION ROW ONLY** | SSIM vs a reference render | Raw CC ALSO passes this. It is kept in the table on purpose: a row where superx shows no delta keeps the whole table honest. It is not where the value lives, and we do not present it as a flagship win. |
+| **emulator** (Game Boy DMG LR35902 CPU) | **YES** | blargg cpu_instrs verdict + gameboy-doctor per-instruction trace diff | Both arms passed ONLY because the external oracle was provided. A naive user without it ships "seems to work." Heimdall auto-wires it. The descoped timer hole is *predicted* by the coverage matrix, not discovered. |
+| **ray-tracer** | **NO — CALIBRATION ROW ONLY** | SSIM vs a reference render | Raw CC ALSO passes this. It is kept in the table on purpose: a row where Heimdall shows no delta keeps the whole table honest. It is not where the value lives, and we do not present it as a flagship win. |
 
 **The launch flagship is exchange + emulator.** The ray-tracer row exists to prove we publish
-rows where superx does not win — credibility is the differentiator.
+rows where Heimdall does not win — credibility is the differentiator.
 
 ## Per-target oracle definitions
 
