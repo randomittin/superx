@@ -9,7 +9,7 @@ description: Use when matching a React Native screen to a Claude Design HTML can
 
 Match RN screen → HTML canonical at ≥95% visual parity. Closed loop: VQA stub seeds redux → Playwright renders canonical PNG → adb/xcrun captures native PNG → pixelmatch + ssim.js scores diff → composite triptych for eyeball review → iterate.
 
-Origin: appco Waves 15.0–15.32. Send screen SSIM 35% → 55% over ~30 commits.
+Origin: a production React Native app. A single screen's SSIM climbed 35% → 55% over ~30 commits of eyeballed pixel-tweaking before this loop replaced it.
 
 Pass gate: **SSIM ≥ 0.95 OR pixelDiffPct ≤ 5%**.
 
@@ -56,7 +56,7 @@ Peer deps the app must have: `@react-native-async-storage/async-storage`, `react
 
 ## Build Path (port-first, mandatory)
 
-**Methodology: port the canonical source, do NOT eyeball pixels.** The HTML/JSX in the canonical bundle is the spec; the PNG is the verification gate. Eyeballing pixels re-derives layout / spacing / colors that already exist in the source — drift, token bloat, 30-wave grind (see appco case study, Waves 15.0–15.32).
+**Methodology: port the canonical source, do NOT eyeball pixels.** The HTML/JSX in the canonical bundle is the spec; the PNG is the verification gate. Eyeballing pixels re-derives layout / spacing / colors that already exist in the source — drift, token bloat, the multi-commit grind documented in the anti-patterns reference.
 
 Per-screen flow:
 
@@ -105,14 +105,14 @@ skills/designmatch/
 
 ## VQA Stub Mode (assets/visual-qa.ts)
 
-Trigger: **5× long-press AppLogo within 4s** → flip AsyncStorage `wn_visual_qa` → `RNRestart.restart()`.
+Trigger: **5× long-press AppLogo within 4s** → flip AsyncStorage `dm_visual_qa` → `RNRestart.restart()`.
 
 Boot path: `primeVisualQaFlag()` reads AsyncStorage → `applyVisualQaState(dispatch)` seeds:
 
-- **user**: `{ kycStatus: 'verified', phone_verified: true, iso: 'GBR', name: 'Visual QA' }`
-- **recipient**: 1 saved `{ id: 'vqa-r1', name: 'Test Recipient', country: 'IND', phone: '+919999900000' }` + `setSelectedRecipient('vqa-r1')`
-- **bonus**: `{ balance: 1000, ledger: [], applyCapPct: 50 }`
-- **transfer**: `{ sendingCountry: 'GBR', receivingCountry: 'IND' }`
+- **user**: `{ onboarded: true, verified: true, locale: 'en-US', name: 'Visual QA' }`
+- **items**: 1 saved `{ id: 'vqa-1', title: 'Test Item', category: 'sample', detail: 'vqa-detail' }` + `setSelectedItem('vqa-1')`
+- **wallet**: `{ balance: 1000, ledger: [], applyCapPct: 50 }`
+- **session**: `{ region: 'primary', channel: 'default' }`
 
 `overrideFeatureFlags(isFeatureEnabled)` → force-enables flag-gated UI when VQA on.
 
@@ -208,7 +208,7 @@ See `references/canonical-values.md` for fonts + spacing cheat-sheet.
 
 - Report SSIM (0–1) + pixel-diff % per screen.
 - Target: **SSIM ≥ 0.95 OR pixel-diff ≤ 5%**.
-- Baseline (appco Send): 35% → 55% over Waves 15.0–15.32.
+- Baseline (a real screen, pre-loop): 35% → 55% over ~30 eyeballed commits.
 
 ## Quick Reference
 
@@ -221,7 +221,7 @@ See `references/canonical-values.md` for fonts + spacing cheat-sheet.
 | iOS sim capture | `xcrun simctl io <id> screenshot` |
 | iOS real capture | `idevicescreenshot` |
 | VQA toggle | 5× long-press AppLogo in 4s |
-| Storage key | `wn_visual_qa` |
+| Storage key | `dm_visual_qa` |
 | Composite layout | canonical \| native \| diff (2px black sep) |
 
 ## Common Mistakes

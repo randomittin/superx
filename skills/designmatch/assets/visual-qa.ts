@@ -63,7 +63,7 @@ export function normalize(size: number): number {
 
 /* ─────────── Storage key + cached flag ─────────── */
 
-export const VQA_STORAGE_KEY = 'wn_visual_qa';
+export const VQA_STORAGE_KEY = 'dm_visual_qa';
 
 let isVqaEnabled = false;
 
@@ -71,35 +71,35 @@ let isVqaEnabled = false;
 
 export const ACTION_TYPES = {
   USER_SET: 'user/set',
-  RECIPIENT_ADD: 'recipient/add',
-  RECIPIENT_SELECT: 'recipient/setSelected',
-  BONUS_SET: 'bonus/set',
-  TRANSFER_SET_COUNTRIES: 'transfer/setCountries',
+  ITEM_ADD: 'items/add',
+  ITEM_SELECT: 'items/setSelected',
+  WALLET_SET: 'wallet/set',
+  SESSION_SET: 'session/set',
 } as const;
 
 /* ─────────── Seed payloads (override per app needs) ─────────── */
 
 export const VQA_SEED = {
   user: {
-    kycStatus: 'verified' as const,
-    phone_verified: true,
-    iso: 'GBR',
+    onboarded: true as const,
+    verified: true,
+    locale: 'en-US',
     name: 'Visual QA',
   },
-  recipient: {
-    id: 'vqa-r1',
-    name: 'Test Recipient',
-    country: 'IND',
-    phone: '+919999900000',
+  item: {
+    id: 'vqa-1',
+    title: 'Test Item',
+    category: 'sample',
+    detail: 'vqa-detail',
   },
-  bonus: {
+  wallet: {
     balance: 1000,
     ledger: [] as Array<unknown>,
     applyCapPct: 50,
   },
-  transfer: {
-    sendingCountry: 'GBR',
-    receivingCountry: 'IND',
+  session: {
+    region: 'primary',
+    channel: 'default',
   },
 };
 
@@ -166,19 +166,19 @@ export function applyVisualQaState(dispatch: AnyDispatch): void {
 
   dispatch({ type: ACTION_TYPES.USER_SET, payload: VQA_SEED.user });
 
-  dispatch({ type: ACTION_TYPES.RECIPIENT_ADD, payload: VQA_SEED.recipient });
+  dispatch({ type: ACTION_TYPES.ITEM_ADD, payload: VQA_SEED.item });
   dispatch({
-    type: ACTION_TYPES.RECIPIENT_SELECT,
-    payload: VQA_SEED.recipient.id,
+    type: ACTION_TYPES.ITEM_SELECT,
+    payload: VQA_SEED.item.id,
   });
 
-  dispatch({ type: ACTION_TYPES.BONUS_SET, payload: VQA_SEED.bonus });
+  dispatch({ type: ACTION_TYPES.WALLET_SET, payload: VQA_SEED.wallet });
 
   dispatch({
-    type: ACTION_TYPES.TRANSFER_SET_COUNTRIES,
+    type: ACTION_TYPES.SESSION_SET,
     payload: {
-      sendingCountry: VQA_SEED.transfer.sendingCountry,
-      receivingCountry: VQA_SEED.transfer.receivingCountry,
+      region: VQA_SEED.session.region,
+      channel: VQA_SEED.session.channel,
     },
   });
 }

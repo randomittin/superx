@@ -15,7 +15,7 @@ Sunk launches do not get to argue with the data.
 ## The decision
 
 **Hit all three →** a real, deliberate decision about RJ's time and commitment to Heimdall
-as a company (vs. acme / appco / other priorities).
+as a company (vs. other ventures / other commitments).
 
 **Miss →** Heimdall remains: a daily-driver tool, a public technical brand, and seed credibility
 for Mimir. That is a **win**, not a consolation prize. No emotional renegotiation of these
