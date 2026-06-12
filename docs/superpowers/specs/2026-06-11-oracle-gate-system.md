@@ -8,7 +8,7 @@
 
 ## Positioning (the defensible claim)
 
-> **superx ships VERIFIED.** It brings and auto-wires the canonical *external* oracle for the domain, makes every gate falsifiable (proven able to go red before it is trusted green), and catches the bug class that emits *no local signal* — ordering races, whole-sequence invariants, and missing subsystems that sail straight through a naive green test suite.
+> **heimdall ships VERIFIED.** It brings and auto-wires the canonical *external* oracle for the domain, makes every gate falsifiable (proven able to go red before it is trusted green), and catches the bug class that emits *no local signal* — ordering races, whole-sequence invariants, and missing subsystems that sail straight through a naive green test suite.
 
 It is **NOT** "superx writes code raw Claude Code can't." The spike disproves that claim, and we will not make it. See the honesty section below.
 
@@ -28,11 +28,11 @@ We ran four arms. The model was **opus in all four** — the only variable is PR
 ### The honest synthesis (this anchors everything below — do not soften it)
 
 1. **Our original thesis was partly wrong.** "Silent bugs accumulate across long autonomous runs; raw CC breaks" **did not reproduce.** Opus one-shots the *code* on both targets. Raw and superx produced ~equivalently correct code — raw even emitted 512 opcodes byte-exact. We will **not** over-invest in context-decay machinery the evidence does not justify. (See "What we are NOT building.")
-2. **The real delta is VERIFICATION, not generation.** superx's value is not "writes better code." It is:
-   - **(a)** it KNOWS and AUTO-WIRES the canonical external oracle per domain (blargg + gameboy-doctor for emulators; independent reference-matcher + LOB replay for exchanges). A naive user gets "seems to work." superx gets a truth source.
+2. **The real delta is VERIFICATION, not generation.** heimdall's value is not "writes better code." It is:
+   - **(a)** it KNOWS and AUTO-WIRES the canonical external oracle per domain (blargg + gameboy-doctor for emulators; independent reference-matcher + LOB replay for exchanges). A naive user gets "seems to work." heimdall gets a truth source.
    - **(b)** it builds oracles that can actually FAIL.
    - **(c)** it catches the bug class with NO LOCAL SIGNAL — ordering races, whole-sequence invariants, subsystem holes — that pass a naive green suite.
-3. **The headline danger is FALSE-GREEN oracles** (the raw-exchange tautological test): the canonical failure mode of "let the LLM write its own tests." superx must *structurally* prevent it. This is the single most important property of the whole system.
+3. **The headline danger is FALSE-GREEN oracles** (the raw-exchange tautological test): the canonical failure mode of "let the LLM write its own tests." heimdall must *structurally* prevent it. This is the single most important property of the whole system.
 
 ---
 
@@ -40,7 +40,7 @@ We ran four arms. The model was **opus in all four** — the only variable is PR
 
 | # | Upgrade | Priority | Proven by | One-line value |
 |---|---|---|---|---|
-| 1 | Oracle library + auto-wiring | **P0** | emulator (both arms passed *only because* the oracle was provided) | superx knows the canonical truth source per domain and wires it as a wave gate |
+| 1 | Oracle library + auto-wiring | **P0** | emulator (both arms passed *only because* the oracle was provided) | heimdall knows the canonical truth source per domain and wires it as a wave gate |
 | 2 | Falsifiable-gate enforcement via mutation testing | **P0** | exchange-raw (false-green tautology) | no gate is trusted green until a known injected bug has made it go red |
 | 3 | Differential / whole-output oracle as a first-class gate type | **P0** | exchange-superx (only the diff caught the race) | whole-output equality vs an independent reference beats local property checks |
 | 4 | Oracle independence | **P1** | exchange-raw (shared-author blind spot) | reference authored by a *different* agent / external dataset, never the impl's prompt |
@@ -52,7 +52,7 @@ We ran four arms. The model was **opus in all four** — the only variable is PR
 
 ## Upgrade specifications
 
-Each upgrade states: what it is, which spike arm proves its value, how it integrates with existing superx (`agents/superx.md` waves, `bin/benchmark`, `superx:verifier`, hooks), and a **runnable acceptance criterion**.
+Each upgrade states: what it is, which spike arm proves its value, how it integrates with existing heimdall (`agents/heimdall.md` waves, `bin/benchmark`, `heimdall:verifier`, hooks), and a **runnable acceptance criterion**.
 
 ### Upgrade 1 — Oracle library + auto-wiring (P0)
 
@@ -68,10 +68,10 @@ Seed entries (from the spike):
 **Proven by.** Emulator, both arms: each passed *only because* gameboy-doctor + blargg were the truth source. A naive user without that oracle ships "seems to work."
 
 **Integration.**
-- `agents/superx.md` Phase 3 (Plan): after `decompose`, the orchestrator queries the registry; if a domain matches, the matching oracle becomes a mandatory wave gate in the emitted plan.
+- `agents/heimdall.md` Phase 3 (Plan): after `decompose`, the orchestrator queries the registry; if a domain matches, the matching oracle becomes a mandatory wave gate in the emitted plan.
 - `agents/architect.md` / `agents/planner.md`: oracle selection is a required field on the final correctness wave's task.
 - `bin/benchmark`: the flagship suite (deliverable 3) consumes the same registry — **one build, two uses** (benchmark receipts *and* in-loop wave gates read the same oracle definitions).
-- `superx:verifier`: runs the wired oracle command as the task's `Verify:` step.
+- `heimdall:verifier`: runs the wired oracle command as the task's `Verify:` step.
 
 **Runnable acceptance criterion.**
 ```bash
@@ -96,9 +96,9 @@ Mutant fixtures per domain live in `evals/oracles/<domain>/fixtures/mutants/` (e
 
 **Integration.**
 - New CLI `bin/falsify <domain>`: runs the gate against `fixtures/golden/` (asserts PASS), then against every fixture in `fixtures/mutants/` (asserts REJECT), reports the score. Exit non-zero if golden fails OR any mutant survives. Operates ONLY on the gate's shipped fixtures — never on a flagship impl.
-- `agents/superx.md` Phase 4 (Verify Plan): a plan whose correctness gate ships no golden+mutant fixtures, or whose falsifiability score < 1.0, fails plan verification.
-- Hook awareness: `bin/falsify` is a candidate for a pre-push quality gate alongside `superx-state check-quality-gates` (the `git push` Bash hook). A green test suite over a non-falsifiable gate must NOT satisfy the push gate.
-- `superx:verifier`: before scoring a task PASS on its oracle, confirms `bin/falsify <domain>` reported 1.0 for that gate.
+- `agents/heimdall.md` Phase 4 (Verify Plan): a plan whose correctness gate ships no golden+mutant fixtures, or whose falsifiability score < 1.0, fails plan verification.
+- Hook awareness: `bin/falsify` is a candidate for a pre-push quality gate alongside `heimdall-state check-quality-gates` (the `git push` Bash hook). A green test suite over a non-falsifiable gate must NOT satisfy the push gate.
+- `heimdall:verifier`: before scoring a task PASS on its oracle, confirms `bin/falsify <domain>` reported 1.0 for that gate.
 
 **Runnable acceptance criterion.**
 ```bash
@@ -122,7 +122,7 @@ Gate-type ranking the planner applies (strongest first): `differential` (whole-o
 **Integration.**
 - `agents/architect.md` / `agents/planner.md`: for any stateful or sequence-producing target, the final correctness wave MUST include a `differential` or `trace-diff` gate; a plan with only `property` gates for such a target fails plan verification.
 - `evals/oracles/<domain>/`: each differential oracle ships the reference + a deterministic seeded stream generator.
-- `superx:verifier`: treats a `differential` PASS as the authoritative correctness signal; a green `property` suite alongside a missing/red `differential` gate is reported FAIL.
+- `heimdall:verifier`: treats a `differential` PASS as the authoritative correctness signal; a green `property` suite alongside a missing/red `differential` gate is reported FAIL.
 
 **Runnable acceptance criterion.**
 ```bash
@@ -142,7 +142,7 @@ Enforcement: the planner places impl and reference in **separate waves or separa
 **Proven by.** exchange-raw: engine and reference were written by the same author in the same pass, sharing the same interpretation of (a) trade-at-maker-price, (b) market-remainder-dropped, (c) FIFO-by-arrival. A *specification* error in any would be present in BOTH and the diff would still say PASS. The diff catches implementation divergence, not shared misconception.
 
 **Integration.**
-- `agents/superx.md` Phase 3/5: when a differential oracle is wired, the reference task is spawned as a SEPARATE agent in a SEPARATE wave from the impl task — disjoint file scope (`evals/oracles/<domain>/reference/` vs the impl dir), enforced by the same-wave-file-disjointness rule.
+- `agents/heimdall.md` Phase 3/5: when a differential oracle is wired, the reference task is spawned as a SEPARATE agent in a SEPARATE wave from the impl task — disjoint file scope (`evals/oracles/<domain>/reference/` vs the impl dir), enforced by the same-wave-file-disjointness rule.
 - `agents/architect.md`: plan must show impl-author ≠ reference-author for any differential gate.
 
 **Runnable acceptance criterion.**
@@ -163,7 +163,7 @@ jq -e '.oracles["exchange-lob"].reference.independent == true' evals/oracles/reg
 
 **Integration.**
 - `agents/architect.md`: emit `INVARIANTS.md` as a wave-0 artifact for any target with non-trivial semantics; list it under "Read first" for every downstream impl task.
-- `agents/superx.md` Phase 5: each wave-executor reads the ledger before writing code (the spike's "re-read INVARIANTS.md before each wave" discipline).
+- `agents/heimdall.md` Phase 5: each wave-executor reads the ledger before writing code (the spike's "re-read INVARIANTS.md before each wave" discipline).
 - Hook awareness: the ledger is committed to `.planning/` (human-readable, git-committed per CLAUDE.md rules).
 
 **Runnable acceptance criterion.**
@@ -233,7 +233,7 @@ If future evidence on *different* targets (long-horizon, weakly-specified, or mu
 
 ---
 
-## Integration summary (how it all lands in existing superx)
+## Integration summary (how it all lands in existing heimdall)
 
 | Component | Change |
 |---|---|
@@ -241,10 +241,10 @@ If future evidence on *different* targets (long-horizon, weakly-specified, or mu
 | `bin/oracle-select` (new) | resolve a domain to its gate command + type |
 | `bin/falsify` (new) | mutation-test a gate; assert falsifiability score |
 | `agents/architect.md` / `agents/planner.md` | oracle selection + gate-type ranking + ledger emission + coverage matrix become required plan fields; plan-verification rejects property-only gates for stateful targets and non-falsifiable gates |
-| `agents/superx.md` | Phase 3 auto-wires the registry oracle; Phase 4 enforces falsifiability + gate-type rules; Phase 5 spawns independent reference in a separate wave |
+| `agents/heimdall.md` | Phase 3 auto-wires the registry oracle; Phase 4 enforces falsifiability + gate-type rules; Phase 5 spawns independent reference in a separate wave |
 | `agents/verifier.md` | runs the wired oracle as the task's Verify step; requires `bin/falsify` score 1.0 before scoring a P0 gate PASS |
 | `bin/benchmark` | flagship suite reads the same registry — one build, two uses |
-| Hooks (`hooks/hooks.json`) | `bin/falsify` is a candidate pre-push gate alongside `superx-state check-quality-gates`; a green suite over a non-falsifiable gate must not pass push |
+| Hooks (`hooks/hooks.json`) | `bin/falsify` is a candidate pre-push gate alongside `heimdall-state check-quality-gates`; a green suite over a non-falsifiable gate must not pass push |
 | `evals/flagship/` (new) | the launch flagship suite + spike findings (deliverable 3) |
 
 ---
