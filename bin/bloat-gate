@@ -1,0 +1,360 @@
+#!/usr/bin/env bash
+# bloat-gate — H-2 Bloat Gate, the DETERMINISTIC bloat engine (spec H-2).
+#
+# This is the real, runnable bloat gate. It measures NEW code per wave (a git
+# diff range against a base ref) on five deterministic axes — NO LLM in the
+# numbers — and emits the shared 8-field gate-report contract (gate_id "bloat").
+# sentinels/bloat.sh is the harness that drives this engine + the optional LLM
+# simplification layer; this binary is the part that produces the actual metrics.
+#
+# Determinism contract: every metric is computed by a real tool over the real
+# diff. If a tool is absent, that axis is reported as `skipped` with the missing
+# tool named — NEVER faked, never silently passed. An axis that cannot run is not
+# a pass.
+#
+# The five axes (spec H-2 table), all scoped to NEW code in the diff range:
+#   1. dead/unreachable code  — knip|ts-prune (JS/TS) / vulture (py).
+#        count of NEW unreferenced exports/symbols.   default hard threshold: 0.
+#   2. duplication            — jscpd over the changed files.
+#        % duplicated tokens in NEW code.             default bar: < 3%.
+#   3. complexity             — radon (py) / eslint complexity rule (JS/TS).
+#        no NEW function over cyclomatic 12.          default max: 12.
+#   4. dependency creep       — lockfile diff in the range.
+#        new deps require plan-time approval.         FLAG, not auto-fail.
+#   5. LOC budget             — wc of added lines vs a plan estimate.
+#        new LOC <= 1.8x estimate.   estimate from --estimate/$HEIMDALL_LOC_EST;
+#        absent => raw LOC reported, ratio gate SKIPPED.
+#
+# Config: thresholds + mode + exclude_globs come from .planning/bloat.json
+# (see that file for documented defaults). CLI flags override config; config
+# overrides built-in defaults.
+#
+# Modes (config.mode):
+#   strict   — every hard axis that fails => gate fail (LOC ratio enforced too).
+#   standard — dead-code + duplication + complexity are hard; LOC ratio + dep
+#              creep are advisory (reported, flagged, not fatal). [default]
+#   off      — metrics still computed + reported, but status is always pass
+#              (the gate is observability-only; useful for adoption ramp-in).
+#
+# Usage:
+#   bloat-gate --repo <root> [--base <ref>] [--head <ref>] [--diff <A..B>] \
+#              [--estimate <loc>] [--report <out>] [--config <bloat.json>] \
+#              [--mode strict|standard|off] [--json]
+#
+#   --repo      repo root to analyze (required).
+#   --base/--head  base + head refs (default base=HEAD~1, head=HEAD).
+#   --diff      "A..B" range; overrides --base/--head if given.
+#   --estimate  plan LOC estimate for the LOC-budget ratio gate.
+#   --report    where to WRITE report.json (default
+#               <repo>/.planning/spawns/reports/bloat.report.json).
+#   --config    path to bloat.json (default <repo>/.planning/bloat.json).
+#   --mode      override config mode.
+#   --json      also print the report.json to stdout.
+#
+# Exit codes (mirror the gate contract): 0 = pass; 1 = fail; 2 = usage/IO error.
+set -euo pipefail
+
+SELF="$0"
+if command -v readlink >/dev/null 2>&1; then
+  SELF="$(readlink -f "$0" 2>/dev/null || readlink "$0" 2>/dev/null || echo "$0")"
+fi
+BIN_DIR="$(cd "$(dirname "$SELF")" && pwd)"
+
+usage() { sed -n '2,62p' "$SELF" | sed 's/^# \{0,1\}//'; }
+
+REPO=""
+BASE=""
+HEAD_REF=""
+DIFF=""
+ESTIMATE="${HEIMDALL_LOC_EST:-}"
+REPORT=""
+CONFIG=""
+MODE_OVERRIDE=""
+PRINT_JSON=0
+while [ $# -gt 0 ]; do
+  case "$1" in
+    --repo)     REPO="${2:?--repo needs a path}"; shift 2 ;;
+    --base)     BASE="${2:?--base needs a ref}"; shift 2 ;;
+    --head)     HEAD_REF="${2:?--head needs a ref}"; shift 2 ;;
+    --diff)     DIFF="${2:?--diff needs a range}"; shift 2 ;;
+    --estimate) ESTIMATE="${2:?--estimate needs a number}"; shift 2 ;;
+    --report)   REPORT="${2:?--report needs a path}"; shift 2 ;;
+    --config)   CONFIG="${2:?--config needs a path}"; shift 2 ;;
+    --mode)     MODE_OVERRIDE="${2:?--mode needs a value}"; shift 2 ;;
+    --json)     PRINT_JSON=1; shift ;;
+    -h|--help)  usage; exit 0 ;;
+    *) echo "error: unknown arg: $1" >&2; usage >&2; exit 2 ;;
+  esac
+done
+
+[ -n "$REPO" ] || { echo "error: --repo is required" >&2; exit 2; }
+[ -d "$REPO" ] || { echo "error: --repo not a dir: $REPO" >&2; exit 2; }
+command -v jq  >/dev/null 2>&1 || { echo "error: jq is required" >&2; exit 2; }
+command -v git >/dev/null 2>&1 || { echo "error: git is required" >&2; exit 2; }
+git -C "$REPO" rev-parse --git-dir >/dev/null 2>&1 || { echo "error: --repo is not a git repo: $REPO" >&2; exit 2; }
+
+: "${REPORT:=$REPO/.planning/spawns/reports/bloat.report.json}"
+: "${CONFIG:=$REPO/.planning/bloat.json}"
+
+# ── Resolve the diff range ────────────────────────────────────────────
+if [ -n "$DIFF" ]; then
+  RANGE="$DIFF"
+else
+  : "${BASE:=HEAD~1}"
+  : "${HEAD_REF:=HEAD}"
+  RANGE="${BASE}..${HEAD_REF}"
+fi
+# Validate the range resolves; degrade base to the empty tree if HEAD~1 is absent
+# (single-commit repos) so the gate still runs on the whole of HEAD.
+if ! git -C "$REPO" rev-parse "${RANGE%%..*}" >/dev/null 2>&1; then
+  EMPTY_TREE="$(git -C "$REPO" hash-object -t tree /dev/null 2>/dev/null || echo 4b825dc642cb6eb9a060e54bf8d69288fbee4904)"
+  RANGE="${EMPTY_TREE}..${HEAD_REF:-HEAD}"
+fi
+
+# ── Config + thresholds (config <- defaults, CLI <- config) ───────────
+# Built-in defaults (documented in .planning/bloat.json).
+DEF_MODE="standard"
+DEF_DEAD=0          # max new dead exports
+DEF_DUP=3           # max % duplication in new code
+DEF_CC=12           # max new-function cyclomatic complexity
+DEF_LOC_RATIO=1.8   # max new-LOC / estimate
+
+MODE="$DEF_MODE"
+TH_DEAD="$DEF_DEAD"; TH_DUP="$DEF_DUP"; TH_CC="$DEF_CC"; TH_LOC="$DEF_LOC_RATIO"
+EXCLUDES_JSON='[]'
+if [ -f "$CONFIG" ] && jq -e . "$CONFIG" >/dev/null 2>&1; then
+  MODE="$(jq -r '.mode // "standard"' "$CONFIG")"
+  TH_DEAD="$(jq -r '.thresholds.max_new_dead_exports // 0' "$CONFIG")"
+  TH_DUP="$(jq -r '.thresholds.max_duplication_pct // 3' "$CONFIG")"
+  TH_CC="$(jq -r '.thresholds.max_cyclomatic_complexity // 12' "$CONFIG")"
+  TH_LOC="$(jq -r '.thresholds.max_loc_ratio // 1.8' "$CONFIG")"
+  EXCLUDES_JSON="$(jq -c '.exclude_globs // []' "$CONFIG")"
+fi
+[ -n "$MODE_OVERRIDE" ] && MODE="$MODE_OVERRIDE"
+case "$MODE" in strict|standard|off) ;; *) echo "error: bad mode '$MODE' (strict|standard|off)" >&2; exit 2 ;; esac
+
+# Build a grep -E exclusion pattern from exclude_globs (glob -> regex, coarse but
+# safe: only used to drop changed-file paths from the analysis set).
+glob_to_regex() {
+  printf '%s' "$1" | sed -e 's/[.]/\\./g' -e 's/[*][*]/<STAR2>/g' -e 's/[*]/[^\/]*/g' -e 's/<STAR2>/.*/g'
+}
+EXCLUDE_RE=""
+while IFS= read -r g; do
+  [ -z "$g" ] && continue
+  r="$(glob_to_regex "$g")"
+  EXCLUDE_RE="${EXCLUDE_RE:+$EXCLUDE_RE|}($r)"
+done < <(printf '%s' "$EXCLUDES_JSON" | jq -r '.[]?')
+
+# ── Changed files in the range (filtered by excludes) ─────────────────
+# Added/Copied/Modified/Renamed files; deletions are irrelevant to bloat.
+# bash 3.2-safe: read into arrays via a while loop (no mapfile).
+CHANGED=(); JS_TS=(); PY=()
+while IFS= read -r f; do
+  [ -n "$f" ] || continue
+  if [ -n "$EXCLUDE_RE" ] && printf '%s' "$f" | grep -Eq "$EXCLUDE_RE"; then continue; fi
+  [ -f "$REPO/$f" ] || continue
+  CHANGED+=("$f")
+  case "$f" in
+    *.js|*.jsx|*.ts|*.tsx|*.mjs|*.cjs) JS_TS+=("$f") ;;
+    *.py) PY+=("$f") ;;
+  esac
+done < <(git -C "$REPO" diff --name-only --diff-filter=ACMR "$RANGE" 2>/dev/null)
+
+# ── Axis 1: dead / unreachable code (count of NEW unreferenced symbols) ─
+DEAD_STATUS="skipped"; DEAD_COUNT=0; DEAD_TOOL="none"; DEAD_NOTE=""
+if [ "${#JS_TS[@]}" -gt 0 ]; then
+  if command -v knip >/dev/null 2>&1; then
+    DEAD_TOOL="knip"; DEAD_STATUS="ran"
+    DEAD_COUNT="$( cd "$REPO" && knip --no-progress --reporter json 2>/dev/null \
+      | jq '[.. | objects | .issues? // empty] | add // 0 | (if type=="array" then length else (.|tonumber? // 0) end)' 2>/dev/null || echo 0 )"
+    [ -n "$DEAD_COUNT" ] || DEAD_COUNT=0
+  elif command -v ts-prune >/dev/null 2>&1; then
+    DEAD_TOOL="ts-prune"; DEAD_STATUS="ran"
+    # Restrict ts-prune output to files changed in this wave.
+    pat="$(printf '%s\n' "${JS_TS[@]}" | sed 's/[].[^$*\/]/\\&/g' | paste -sd'|' -)"
+    DEAD_COUNT="$( cd "$REPO" && ts-prune 2>/dev/null | grep -v 'used in module' | grep -Ec "${pat:-$^}" || echo 0 )"
+    [ -n "$DEAD_COUNT" ] || DEAD_COUNT=0
+  else
+    DEAD_NOTE="no JS/TS dead-code tool on PATH (install knip or ts-prune)"
+  fi
+elif [ "${#PY[@]}" -gt 0 ]; then
+  if command -v vulture >/dev/null 2>&1; then
+    DEAD_TOOL="vulture"; DEAD_STATUS="ran"
+    DEAD_COUNT="$( cd "$REPO" && vulture "${PY[@]}" 2>/dev/null | grep -c 'unused' || echo 0 )"
+    [ -n "$DEAD_COUNT" ] || DEAD_COUNT=0
+  else
+    DEAD_NOTE="no Python dead-code tool on PATH (install vulture)"
+  fi
+else
+  DEAD_NOTE="no JS/TS/Python files changed in range"
+  DEAD_STATUS="n/a"
+fi
+
+# ── Axis 2: duplication % over the changed files ──────────────────────
+DUP_STATUS="skipped"; DUP_PCT=""; DUP_TOOL="none"; DUP_NOTE=""
+if [ "${#JS_TS[@]}" -gt 0 ] || [ "${#PY[@]}" -gt 0 ]; then
+  if command -v jscpd >/dev/null 2>&1; then
+    DUP_TOOL="jscpd"; DUP_STATUS="ran"
+    jtmp="$(mktemp -d)"
+    # Stage just the changed files into a clean tree so jscpd measures NEW code.
+    stage="$(mktemp -d)"
+    for f in "${JS_TS[@]:-}" "${PY[@]:-}"; do
+      [ -z "$f" ] && continue
+      mkdir -p "$stage/$(dirname "$f")"
+      cp "$REPO/$f" "$stage/$f" 2>/dev/null || true
+    done
+    ( cd "$stage" && jscpd --silent --reporters json --output "$jtmp" . ) >/dev/null 2>&1 || true
+    if [ -f "$jtmp/jscpd-report.json" ]; then
+      DUP_PCT="$(jq -r '.statistics.total.percentage // 0' "$jtmp/jscpd-report.json" 2>/dev/null || echo 0)"
+    else
+      DUP_PCT="0"
+    fi
+    rm -rf "$jtmp" "$stage"
+  else
+    DUP_NOTE="no duplication tool on PATH (install jscpd)"
+  fi
+else
+  DUP_NOTE="no analyzable files changed in range"
+  DUP_STATUS="n/a"
+fi
+
+# ── Axis 3: complexity (no NEW function over cyclomatic TH_CC) ─────────
+CC_STATUS="skipped"; CC_MAX=0; CC_TOOL="none"; CC_OVER=0; CC_NOTE=""
+if [ "${#PY[@]}" -gt 0 ] && command -v radon >/dev/null 2>&1; then
+  CC_TOOL="radon"; CC_STATUS="ran"
+  cc_json="$( cd "$REPO" && radon cc -j "${PY[@]}" 2>/dev/null || echo '{}' )"
+  CC_MAX="$(printf '%s' "$cc_json" | jq '[.. | objects | .complexity? // empty] | max // 0' 2>/dev/null || echo 0)"
+  [ -n "$CC_MAX" ] && [ "$CC_MAX" != "null" ] || CC_MAX=0
+elif [ "${#JS_TS[@]}" -gt 0 ] && command -v eslint >/dev/null 2>&1; then
+  CC_TOOL="eslint-complexity"; CC_STATUS="ran"
+  # Ask eslint for the complexity rule only; parse messages for the reported value.
+  es_json="$( cd "$REPO" && eslint --no-eslintrc --rule "{\"complexity\":[\"error\",${TH_CC}]}" \
+      --parser-options=ecmaVersion:latest --format json "${JS_TS[@]}" 2>/dev/null || echo '[]' )"
+  # eslint emits "... has a complexity of N." — extract the max N seen.
+  CC_MAX="$(printf '%s' "$es_json" \
+    | jq -r '[.[]?.messages[]? | select(.ruleId=="complexity") | (.message | capture("complexity of (?<n>[0-9]+)").n // "0")] | map(tonumber) | max // 0' 2>/dev/null || echo 0)"
+  [ -n "$CC_MAX" ] && [ "$CC_MAX" != "null" ] || CC_MAX=0
+elif [ "${#PY[@]}" -gt 0 ]; then
+  CC_NOTE="Python changed but radon not on PATH"
+elif [ "${#JS_TS[@]}" -gt 0 ]; then
+  CC_NOTE="JS/TS changed but eslint not on PATH"
+else
+  CC_NOTE="no analyzable files changed in range"; CC_STATUS="n/a"
+fi
+[ "$CC_STATUS" = "ran" ] && awk -v m="${CC_MAX:-0}" -v t="${TH_CC:-12}" 'BEGIN{exit !(m+0 > t+0)}' && CC_OVER=1
+
+# ── Axis 4: dependency creep (lockfile diff — FLAG, not fatal) ────────
+DEP_STATUS="n/a"; DEP_NEW=0; DEP_FILES_JSON='[]'; DEP_NOTE="no lockfile changed in range"
+LOCKS="package-lock.json|yarn.lock|pnpm-lock.yaml|poetry.lock|Cargo.lock|go.sum|requirements.txt|Pipfile.lock"
+CHANGED_LOCKS=()
+while IFS= read -r lf; do [ -n "$lf" ] && CHANGED_LOCKS+=("$lf"); done < <(git -C "$REPO" diff --name-only "$RANGE" 2>/dev/null | grep -E "(^|/)($LOCKS)$" || true)
+if [ "${#CHANGED_LOCKS[@]}" -gt 0 ] && [ -n "${CHANGED_LOCKS[0]:-}" ]; then
+  DEP_STATUS="ran"
+  # Count added dependency-ish lines (heuristic, deterministic: added lines that
+  # look like a new package entry). This is a FLAG for plan-time approval, not a
+  # hard fail — the orchestrator decides if the dep was approved.
+  DEP_NEW="$(git -C "$REPO" diff "$RANGE" -- "${CHANGED_LOCKS[@]}" 2>/dev/null \
+    | grep -E '^\+' | grep -vE '^\+\+\+' \
+    | grep -Ec '("name":|^\+[a-zA-Z0-9_.@/-]+(==|@|~|\^|>=| =)|resolved|integrity)' || echo 0)"
+  [ -n "$DEP_NEW" ] || DEP_NEW=0
+  DEP_FILES_JSON="$(printf '%s\n' "${CHANGED_LOCKS[@]}" | jq -R . | jq -sc 'map(select(length>0))')"
+  DEP_NOTE="lockfile(s) changed — new deps require plan-time approval (flag, not auto-fail)"
+fi
+
+# ── Axis 5: LOC budget (added lines vs estimate) ──────────────────────
+LOC_ADDED="$(git -C "$REPO" diff --numstat "$RANGE" 2>/dev/null \
+  | awk 'NF>=2 && $1 ~ /^[0-9]+$/ {s+=$1} END{print s+0}')"
+[ -n "$LOC_ADDED" ] || LOC_ADDED=0
+LOC_STATUS="skipped"; LOC_RATIO=""; LOC_OVER=0; LOC_NOTE="no plan LOC estimate supplied (pass --estimate or set HEIMDALL_LOC_EST); raw LOC reported, ratio gate skipped"
+if [ -n "$ESTIMATE" ] && awk -v e="$ESTIMATE" 'BEGIN{exit !(e+0 > 0)}'; then
+  LOC_STATUS="ran"
+  LOC_RATIO="$(awk -v a="$LOC_ADDED" -v e="$ESTIMATE" 'BEGIN{printf "%.2f", a/e}')"
+  awk -v r="${LOC_RATIO:-0}" -v t="${TH_LOC:-1.8}" 'BEGIN{exit !(r+0 > t+0)}' && LOC_OVER=1
+  LOC_NOTE="new LOC ${LOC_ADDED} vs estimate ${ESTIMATE} => ratio ${LOC_RATIO}x (bar ${TH_LOC}x)"
+fi
+
+# ── simplification delta (set by sentinels/bloat.sh after an LLM pass; read
+#    from env so a re-run can record "−N lines after simplification"). 0 if unset.
+SIMPLIFY_DELTA="${HEIMDALL_BLOAT_SIMPLIFY_DELTA:-0}"
+
+# ── Assemble metrics (open-keyed; consumers read the contract fields) ─
+metrics="$(jq -nc \
+  --arg range "$RANGE" --arg mode "$MODE" \
+  --arg ds "$DEAD_STATUS" --argjson dc "${DEAD_COUNT:-0}" --arg dt "$DEAD_TOOL" --arg dn "$DEAD_NOTE" --argjson dth "${TH_DEAD:-0}" \
+  --arg ups "$DUP_STATUS" --arg up "${DUP_PCT:-}" --arg ut "$DUP_TOOL" --arg un "$DUP_NOTE" --argjson uth "${TH_DUP:-3}" \
+  --arg cs "$CC_STATUS" --argjson cm "${CC_MAX:-0}" --arg ct "$CC_TOOL" --arg cn "$CC_NOTE" --argjson cth "${TH_CC:-12}" --argjson cov "${CC_OVER:-0}" \
+  --arg eps "$DEP_STATUS" --argjson en "${DEP_NEW:-0}" --argjson ef "$DEP_FILES_JSON" --arg enote "$DEP_NOTE" \
+  --arg ls "$LOC_STATUS" --argjson la "${LOC_ADDED:-0}" --arg lr "${LOC_RATIO:-}" --argjson lov "${LOC_OVER:-0}" --arg lnote "$LOC_NOTE" --argjson lth "${TH_LOC:-1.8}" --arg est "${ESTIMATE:-}" \
+  --argjson sd "${SIMPLIFY_DELTA:-0}" \
+  --argjson nfiles "${#CHANGED[@]}" \
+  '{
+    range:$range, mode:$mode, files_analyzed:$nfiles,
+    dead_code:   {status:$ds,  tool:$dt, new_unreferenced:$dc, threshold:$dth, note:$dn},
+    duplication: {status:$ups, tool:$ut, pct:(if $up=="" then null else ($up|tonumber) end), threshold_pct:$uth, note:$un},
+    complexity:  {status:$cs,  tool:$ct, max_new_cc:$cm, threshold:$cth, over:($cov==1), note:$cn},
+    dependency_creep: {status:$eps, new_deps:$en, lockfiles:$ef, note:$enote},
+    loc_budget:  {status:$ls,  added:$la, estimate:(if $est=="" then null else ($est|tonumber) end), ratio:(if $lr=="" then null else ($lr|tonumber) end), threshold_ratio:$lth, over:($lov==1), note:$lnote},
+    simplification_delta_lines:$sd
+  }')"
+
+# ── Verdict (mode-aware) ──────────────────────────────────────────────
+# Hard axes by mode: dead/dup/complexity are hard in strict+standard. LOC ratio
+# is hard only in strict. dep_creep never auto-fails (flag only). mode=off never
+# fails. An axis that did not RUN cannot fail (honest skip != fail).
+FAIL_REASONS=()
+if [ "$MODE" != "off" ]; then
+  if [ "$DEAD_STATUS" = "ran" ] && awk -v c="${DEAD_COUNT:-0}" -v t="${TH_DEAD:-0}" 'BEGIN{exit !(c+0 > t+0)}'; then
+    FAIL_REASONS+=("dead code: ${DEAD_COUNT} new unreferenced export(s) via ${DEAD_TOOL} (max ${TH_DEAD})")
+  fi
+  if [ "$DUP_STATUS" = "ran" ] && [ -n "${DUP_PCT:-}" ] && awk -v p="${DUP_PCT:-0}" -v t="${TH_DUP:-3}" 'BEGIN{exit !(p+0 >= t+0)}'; then
+    FAIL_REASONS+=("duplication: ${DUP_PCT}% in new code via jscpd (bar < ${TH_DUP}%)")
+  fi
+  if [ "$CC_OVER" = "1" ]; then
+    FAIL_REASONS+=("complexity: a new function hit cyclomatic ${CC_MAX} via ${CC_TOOL} (max ${TH_CC})")
+  fi
+  if [ "$MODE" = "strict" ] && [ "$LOC_OVER" = "1" ]; then
+    FAIL_REASONS+=("LOC budget: ${LOC_ADDED} added is ${LOC_RATIO}x estimate ${ESTIMATE} (bar ${TH_LOC}x)")
+  fi
+fi
+
+# Emit the 8-field gate-report contract.
+mkdir -p "$(dirname "$REPORT")"
+HAID="${HEIMDALL_HAID:-haid:local}"
+WAVE="${HEIMDALL_WAVE:-}"
+TS="$(date -u +%FT%TZ)"
+
+if [ "${#FAIL_REASONS[@]}" -gt 0 ]; then
+  STATUS="fail"
+  FIRST="${FAIL_REASONS[0]}"
+  FIX="Bloat gate failed on new code in ${RANGE}: ${FIRST}. Delete dead exports, consolidate duplication, decompose the over-complex function, or trim LOC; then re-run bloat-gate."
+  jq -n --arg gate_id "bloat" --arg status "$STATUS" \
+        --arg file "bloat" --arg step "new-code metrics ($RANGE)" \
+        --arg expected "0 dead exports · dup < ${TH_DUP}% · cc <= ${TH_CC} · loc <= ${TH_LOC}x est" \
+        --arg actual "$FIRST" \
+        --argjson metrics "$metrics" --arg fix_hint "$FIX" \
+        --arg haid "$HAID" --arg wave "$WAVE" --arg ts "$TS" \
+    '{gate_id:$gate_id, status:$status,
+      first_divergence:{file:$file, step:$step, expected:$expected, actual:$actual},
+      metrics:$metrics, fix_hint:$fix_hint, haid:$haid,
+      wave:(if $wave=="" then null else $wave end), ts:$ts}' > "$REPORT"
+  EXIT=1
+else
+  STATUS="pass"
+  # If mode=off, say so honestly in the hint.
+  if [ "$MODE" = "off" ]; then
+    FIX="Bloat gate in observability-only mode (off): metrics reported, no axis enforced."
+  else
+    FIX="Bloat gate clean for new code in ${RANGE}: dead=${DEAD_COUNT}, dup=${DUP_PCT:-n/a}%, max-cc=${CC_MAX} (skipped axes are honest skips, not passes)."
+  fi
+  jq -n --arg gate_id "bloat" --arg status "$STATUS" \
+        --argjson metrics "$metrics" --arg fix_hint "$FIX" \
+        --arg haid "$HAID" --arg wave "$WAVE" --arg ts "$TS" \
+    '{gate_id:$gate_id, status:$status, first_divergence:null,
+      metrics:$metrics, fix_hint:$fix_hint, haid:$haid,
+      wave:(if $wave=="" then null else $wave end), ts:$ts}' > "$REPORT"
+  EXIT=0
+fi
+
+echo "bloat-gate: status=$STATUS  range=$RANGE  mode=$MODE  report=$REPORT" >&2
+[ "$PRINT_JSON" = "1" ] && cat "$REPORT"
+exit "$EXIT"

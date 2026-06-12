@@ -68,6 +68,44 @@ PY
 
 read -r ST_TESTS ST_LINT ST_DIRTY ST_TOTAL ST_LIMIT <<<"$(read_state_json)"
 
+# ── Bloat scorecard (H-2) — rendered PURELY from the bloat report.json ──
+# Zero model tokens: this is hooks/shell reading the deterministic gate report.
+# Format: "0 dead exports · 1.2% dup · LOC 0.9× est · −N lines after simplify".
+# Each segment honestly shows "—" when its axis was skipped (tool absent), never
+# a fake number. Returns an empty string if no bloat report exists yet.
+BLOAT_REPORT=""
+for cand in \
+  "$PLANNING/spawns/reports/bloat.report.json" \
+  "$PROJECT/.planning/spawns/reports/bloat.report.json"; do
+  [ -f "$cand" ] && { BLOAT_REPORT="$cand"; break; }
+done
+read_bloat_line() {
+  [ -n "$BLOAT_REPORT" ] && [ -f "$BLOAT_REPORT" ] || { echo ""; return; }
+  command -v jq >/dev/null 2>&1 || { echo ""; return; }
+  jq -r '
+    .metrics as $m
+    | ($m.dead_code // {})   as $d
+    | ($m.duplication // {}) as $u
+    | ($m.loc_budget // {})  as $l
+    | (if ($d.status=="ran" or $d.status=="n/a") and ($d.new_unreferenced != null)
+         then ($d.new_unreferenced|tostring) + " dead exports" else "— dead" end) as $seg_d
+    | (if $u.status=="ran" and ($u.pct != null)
+         then (($u.pct|tostring) + "% dup") else "—% dup" end) as $seg_u
+    | (if $l.status=="ran" and ($l.ratio != null)
+         then ("LOC " + ($l.ratio|tostring) + "× est")
+         elif ($l.added != null) then ("LOC " + ($l.added|tostring) + " lines")
+         else "LOC —" end) as $seg_l
+    | (($m.simplification_delta_lines // 0)) as $sd
+    | (if ($sd|tonumber) > 0 then "−" + ($sd|tostring) + " lines after simplify" else "" end) as $seg_s
+    | ([$seg_d, $seg_u, $seg_l] + (if $seg_s=="" then [] else [$seg_s] end)) | join(" · ")
+  ' "$BLOAT_REPORT" 2>/dev/null || echo ""
+}
+BLOAT_LINE="$(read_bloat_line)"
+BLOAT_STATUS=""
+if [ -n "$BLOAT_REPORT" ] && command -v jq >/dev/null 2>&1; then
+  BLOAT_STATUS="$(jq -r '.status // ""' "$BLOAT_REPORT" 2>/dev/null || echo "")"
+fi
+
 # ── Task / phase name from STATE.md ──
 TASK="$DASH"
 if [ -f "$STATE_MD" ]; then
@@ -218,5 +256,16 @@ row "commits" "$COMMITS" "${G}${COMMITS}${R}"
 printf "%b├%s┤%b\n" "$D" "$(hr "─")" "$R"
 row "gates" "$GATES_PLAIN" "$GATES_COLORED"
 row "tokens" "$TOKENS_PLAIN" "$TOKENS_COLORED"
+# ── Bloat row (H-2) — only when a bloat report exists; truncated to fit. ──
+if [ -n "$BLOAT_LINE" ]; then
+  BLOAT_T=$(trunc "$BLOAT_LINE" 44)
+  case "$BLOAT_STATUS" in
+    pass)    BLOAT_COLORED="${G}${BLOAT_T}${R}" ;;
+    fail)    BLOAT_COLORED="${RED}${BLOAT_T}${R}" ;;
+    skipped) BLOAT_COLORED="${D}${BLOAT_T}${R}" ;;
+    *)       BLOAT_COLORED="${C}${BLOAT_T}${R}" ;;
+  esac
+  row "bloat" "$BLOAT_T" "$BLOAT_COLORED"
+fi
 printf "%b└%s┘%b\n" "$D" "$(hr "─")" "$R"
 printf "\n"
