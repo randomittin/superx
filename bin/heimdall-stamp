@@ -1,0 +1,137 @@
+#!/usr/bin/env bash
+# heimdall-stamp — the branded hard-gate-block verdict (the denial stamp).
+#
+# Heimdall's "YOU SHALL NOT MERGE" — rendered the same way everywhere a hard gate
+# blocks: the terminal (the drama), the city skyline (stamped across the buildings),
+# and a PR status-check string (one line, machine-greppable). Rendered ENTIRELY by
+# shell from the gate's report.json (the 8-field H-1 contract) — never by a model.
+# Zero context cost (design law 3).
+#
+# The slang ("Bifröst closed", "passed the watchman") is product flavor — used,
+# never explained.
+#
+# Usage:
+#   heimdall-stamp --report <report.json> [--branch <name>] [--format full|line|skyline]
+#   heimdall-stamp --violation <text> [--branch <name>] [--explain <path>] [--format ...]
+#   -h | --help
+#
+# Formats:
+#   full     (default) the multi-line terminal stamp — the screenshot beat.
+#   line     the single-line PR status-check string (no ANSI):
+#            "⛔ HEIMDALL: YOU SHALL NOT MERGE — <violation> · displaced to <branch> · <path>"
+#   skyline  a compact band the city renderer overlays across the skyline.
+#
+# Reads ONLY the gate-agnostic contract fields it is allowed to depend on
+# (heimdall-gate is the only OTHER report.json reader; this is a sibling renderer,
+# not a protocol consumer): gate_id, status, first_divergence, fix_hint.
+# Exit 0 always (a renderer never blocks); 2 on usage error.
+set -uo pipefail
+
+SELF="$0"
+
+usage() { sed -n '2,30p' "$SELF" | sed 's/^# \{0,1\}//'; }
+
+REPORT=""; BRANCH=""; FORMAT="full"; VIOLATION=""; EXPLAIN=""; NOCOLOR=0
+while [ $# -gt 0 ]; do
+  case "$1" in
+    --report)    REPORT="${2:?--report needs a path}"; shift 2 ;;
+    --branch)    BRANCH="${2:?--branch needs a value}"; shift 2 ;;
+    --format)    FORMAT="${2:?--format needs a value}"; shift 2 ;;
+    --violation) VIOLATION="${2:?--violation needs text}"; shift 2 ;;
+    --explain)   EXPLAIN="${2:?--explain needs a path}"; shift 2 ;;
+    --no-color)  NOCOLOR=1; shift ;;
+    -h|--help)   usage; exit 0 ;;
+    *) echo "error: unknown flag: $1" >&2; usage >&2; exit 2 ;;
+  esac
+done
+
+# ── Color detection (mirrors summary-card) ──
+if [[ "${COLORTERM:-}" == "truecolor" || "${COLORTERM:-}" == "24bit" || "${TERM:-}" == *256color* ]]; then
+  RED='\033[38;2;255;71;87m'; W='\033[38;2;255;200;80m'; D='\033[38;2;120;120;140m'
+  C='\033[38;2;0;212;255m'
+elif [ -t 1 ] || [ -n "${TERM:-}" ]; then
+  RED='\033[31m'; W='\033[33m'; D='\033[37m'; C='\033[36m'
+else
+  RED=''; W=''; D=''; C=''
+fi
+B='\033[1m'; R='\033[0m'
+# A PR status-check string is consumed by machines / pasted into a check UI —
+# never ANSI. Force-disable color for the `line` format, or on --no-color.
+if [ "$FORMAT" = "line" ] || [ "$NOCOLOR" = 1 ]; then RED=''; W=''; D=''; C=''; B=''; R=''; fi
+
+# ── Pull the violation + locator from report.json (contract fields only) ──
+GATE_ID=""; STATUS=""; STEP=""; FIX=""
+if [ -n "$REPORT" ] && [ -f "$REPORT" ]; then
+  if command -v jq >/dev/null 2>&1; then
+    GATE_ID="$(jq -r '.gate_id // empty' "$REPORT" 2>/dev/null || true)"
+    STATUS="$(jq -r '.status // empty' "$REPORT" 2>/dev/null || true)"
+    STEP="$(jq -r '.first_divergence.step // empty' "$REPORT" 2>/dev/null || true)"
+    FIX="$(jq -r '.fix_hint // empty' "$REPORT" 2>/dev/null || true)"
+  elif command -v python3 >/dev/null 2>&1; then
+    read -r GATE_ID STATUS <<<"$(python3 - "$REPORT" <<'PY' 2>/dev/null
+import json,sys
+try: s=json.load(open(sys.argv[1]))
+except Exception: print(" "); sys.exit()
+print(s.get("gate_id","") or "_", s.get("status","") or "_")
+PY
+)"
+    [ "$GATE_ID" = "_" ] && GATE_ID=""
+    [ "$STATUS" = "_" ] && STATUS=""
+  fi
+fi
+
+# The violation text: explicit --violation wins, else build from the report.
+if [ -z "$VIOLATION" ]; then
+  if [ -n "$GATE_ID" ]; then
+    VIOLATION="gate ${GATE_ID} failed"
+    [ -n "$STEP" ] && VIOLATION="${VIOLATION} at ${STEP}"
+  else
+    VIOLATION="hard gate failed"
+  fi
+fi
+
+# The explanation path: explicit --explain wins, else point at the report itself.
+if [ -z "$EXPLAIN" ]; then
+  if [ -n "$REPORT" ]; then EXPLAIN="$REPORT"; else EXPLAIN="(see gate report)"; fi
+fi
+
+# The displaced-to branch (where blocked work is parked).
+[ -n "$BRANCH" ] || BRANCH="heimdall/blocked"
+
+# ── Renderers ──
+render_line() {
+  printf '⛔ HEIMDALL: YOU SHALL NOT MERGE — %s · displaced to %s · %s\n' \
+    "$VIOLATION" "$BRANCH" "$EXPLAIN"
+}
+
+render_skyline() {
+  # A single bold band the city overlays across its skyline row. No box.
+  printf "%b%b ⛔ YOU SHALL NOT MERGE · %s %b\n" "$B" "$RED" "$VIOLATION" "$R"
+}
+
+render_full() {
+  local hint=""
+  [ -n "$FIX" ] && hint="$FIX"
+  printf "\n"
+  printf "%b%b   ⛔  H E I M D A L L%b\n" "$B" "$RED" "$R"
+  printf "%b%b   ╓──────────────────────────────────────────────╖%b\n" "$B" "$RED" "$R"
+  printf "%b%b   ║          YOU  SHALL  NOT  MERGE               ║%b\n" "$B" "$RED" "$R"
+  printf "%b%b   ╙──────────────────────────────────────────────╜%b\n" "$B" "$RED" "$R"
+  printf "      %bviolation %b %s%b\n" "$D" "$R" "$VIOLATION" "$R"
+  printf "      %bdisplaced %b %b%s%b\n" "$D" "$R" "$W" "$BRANCH" "$R"
+  printf "      %bexplained %b %b%s%b\n" "$D" "$R" "$C" "$EXPLAIN" "$R"
+  if [ -n "$hint" ]; then
+    printf "      %bfix       %b %s\n" "$D" "$R" "$hint"
+  fi
+  printf "      %bThe Bifröst is closed. Nothing ships unproven.%b\n" "$D" "$R"
+  printf "\n"
+}
+
+case "$FORMAT" in
+  line)    render_line ;;
+  skyline) render_skyline ;;
+  full)    render_full ;;
+  *) echo "error: unknown --format: $FORMAT (use full|line|skyline)" >&2; exit 2 ;;
+esac
+
+exit 0

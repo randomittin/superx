@@ -127,13 +127,21 @@ fi
 WAVES="$DASH"
 for plan in "$PLANNING"/PLAN-*.md; do
   [ -f "$plan" ] || continue
-  phase_num=$(basename "$plan" | grep -o '[0-9]*')
-  total=$(grep -c "^### Task:" "$plan" 2>/dev/null || echo 0)
+  phase_num=$(basename "$plan" | grep -oE '[0-9]+' | head -1)
+  # Count both legacy "### Task:" headings and the structured "<task " blocks.
+  total=$(grep -cE '^### Task:|<task[ >]' "$plan" 2>/dev/null | head -1 | tr -dc '0-9')
+  [ -n "$total" ] || total=0
   done_count=0
   for summary in "$PLANNING"/SUMMARY-"$phase_num"-wave-*.md; do
     [ -f "$summary" ] || continue
-    done_count=$((done_count + $(grep -c "| DONE |" "$summary" 2>/dev/null || echo 0)))
+    d=$(grep -c "| DONE |" "$summary" 2>/dev/null | head -1 | tr -dc '0-9'); [ -n "$d" ] || d=0
+    done_count=$((done_count + d))
   done
+  # If no SUMMARY rows but the plan has <done>true</done> blocks, count those.
+  if [ "$done_count" -eq 0 ]; then
+    d=$(grep -c '<done>true</done>' "$plan" 2>/dev/null | head -1 | tr -dc '0-9'); [ -n "$d" ] || d=0
+    done_count="$d"
+  fi
   WAVES="$done_count/$total"
   break
 done
@@ -188,6 +196,47 @@ if [ "$ST_TOTAL" != "-" ]; then
 else
   SPENT="$DASH"
   EST_LBL="$DASH"
+fi
+
+# ── Token-ledger line — the PROTOCOL's own measured delta (mechanism 6). ──
+# Distinct from the budget tokens above: this is the per-run protocol message
+# cost summed from .planning/protocol/ledger.jsonl, against the v1 baseline in
+# baselines.json — the MEASURED, screenshotable savings claim. Honest "—" when
+# the ledger is empty / jq is absent. Format: "measured 12.0k vs ~41.0k v1  (−71%)".
+LEDGER_FILE="$PLANNING/protocol/ledger.jsonl"
+BASELINE_FILE="$PLANNING/protocol/baselines.json"
+LEDGER_LINE=""
+if [ -f "$LEDGER_FILE" ] && command -v jq >/dev/null 2>&1; then
+  measured=$(jq -s '[.[].tokens // 0] | add // 0' "$LEDGER_FILE" 2>/dev/null || echo 0)
+  if [ "${measured:-0}" -gt 0 ] 2>/dev/null; then
+    base=0
+    if [ -f "$BASELINE_FILE" ]; then
+      base=$(jq -r '[.baselines[]? // 0] | add // 0' "$BASELINE_FILE" 2>/dev/null || echo 0)
+    fi
+    m_lbl=$(fmt_tokens "$measured")
+    if [ "${base:-0}" -gt 0 ] 2>/dev/null && [ "$base" -ge "$measured" ]; then
+      b_lbl=$(fmt_tokens "$base")
+      pct=$(awk -v b="$base" -v m="$measured" 'BEGIN{printf "%d", (b-m)*100/b}')
+      LEDGER_LINE="measured ${m_lbl} vs ~${b_lbl} v1  (−${pct}%)"
+    else
+      LEDGER_LINE="measured ${m_lbl}  (no v1 baseline)"
+    fi
+  fi
+fi
+
+# ── Reel line — the run's shareable artifact (the distribution share-unit). ──
+# Newest artifact under .planning/reels/ (prefer mp4 > gif > cast > txt). "—" when
+# no reel was produced this run.
+REEL_LINE=""
+REEL_DIR="$PLANNING/reels"
+if [ -d "$REEL_DIR" ]; then
+  for ext in mp4 gif cast txt; do
+    newest=$(ls -t "$REEL_DIR"/*."$ext" 2>/dev/null | head -1)
+    if [ -n "$newest" ]; then
+      REEL_LINE="$newest"
+      break
+    fi
+  done
 fi
 
 # ── Box rendering ──
@@ -256,6 +305,11 @@ row "commits" "$COMMITS" "${G}${COMMITS}${R}"
 printf "%b├%s┤%b\n" "$D" "$(hr "─")" "$R"
 row "gates" "$GATES_PLAIN" "$GATES_COLORED"
 row "tokens" "$TOKENS_PLAIN" "$TOKENS_COLORED"
+# ── Token-ledger row (H-5) — protocol's own measured delta, only when present ──
+if [ -n "$LEDGER_LINE" ]; then
+  LEDGER_T=$(trunc "$LEDGER_LINE" 44)
+  row "ledger" "$LEDGER_T" "${W}${LEDGER_T}${R}"
+fi
 # ── Bloat row (H-2) — only when a bloat report exists; truncated to fit. ──
 if [ -n "$BLOAT_LINE" ]; then
   BLOAT_T=$(trunc "$BLOAT_LINE" 44)
@@ -266,6 +320,13 @@ if [ -n "$BLOAT_LINE" ]; then
     *)       BLOAT_COLORED="${C}${BLOAT_T}${R}" ;;
   esac
   row "bloat" "$BLOAT_T" "$BLOAT_COLORED"
+fi
+# ── Reel row (H-5) — the shareable artifact path, only when a reel exists ──
+if [ -n "$REEL_LINE" ]; then
+  # Show a short relative-ish path (basename under reels/) to fit the box.
+  REEL_SHORT="reels/$(basename "$REEL_LINE")"
+  REEL_T=$(trunc "$REEL_SHORT" 44)
+  row "reel" "$REEL_T" "${P}${REEL_T}${R}"
 fi
 printf "%b└%s┘%b\n" "$D" "$(hr "─")" "$R"
 printf "\n"

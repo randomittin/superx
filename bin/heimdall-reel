@@ -1,0 +1,231 @@
+#!/usr/bin/env bash
+# heimdall-reel — one run → one shareable artifact. The distribution share-unit.
+#
+# Wraps a Heimdall run: records the live city skyline (heimdall-city) with
+# asciinema, then renders that cast to a GIF/MP4 with agg. The reel is what gets
+# posted — the city building the project overnight, the gate-fail / recover beats.
+#
+# Degrades gracefully (this is a hard requirement, never fail the run):
+#   - asciinema absent → skip recording; still emit the summary-card endframe +
+#     a single city frame as a .txt "endframe reel" + a NOTE on what was missing.
+#   - agg absent       → keep the .cast (it IS shareable / replayable) + endframe
+#     + a NOTE; do not error.
+#   - both present      → full .cast → .gif (and .mp4 if ffmpeg present).
+#
+# Rendered entirely by shell + the city/summary renderers — never by a model.
+#
+# Usage:
+#   heimdall-reel record [PROJECT_DIR] [--out DIR] [--name NAME] [--fps N] [--max-secs S]
+#                 -- <command to run>      # records the city WHILE <command> runs
+#   heimdall-reel endframe [PROJECT_DIR] [--out DIR] [--name NAME]
+#                 # no recording: just the final city frame + summary card as a .txt
+#   heimdall-reel render <cast-file> [--out DIR]   # turn an existing .cast into a gif
+#   -h | --help
+#
+# Output (under --out, default .planning/reels/):
+#   <name>.cast   asciinema recording   (when asciinema present)
+#   <name>.gif    rendered animation    (when agg present)
+#   <name>.mp4    rendered video        (when agg + ffmpeg present)
+#   <name>.txt    the endframe (always — the graceful-degrade artifact)
+#   <name>.json   a small manifest: which artifacts exist + which tools were absent
+#
+# Exit 0 on success OR graceful degrade; 2 on usage error. Never nonzero for a
+# missing recorder — that defeats the purpose.
+set -uo pipefail
+
+SELF="$0"
+BIN_DIR="$(cd "$(dirname "$SELF")" && pwd)"
+CITY="$BIN_DIR/heimdall-city"
+CARD="$BIN_DIR/summary-card"
+
+usage() { sed -n '2,38p' "$SELF" | sed 's/^# \{0,1\}//'; }
+
+SUB="${1:-}"; shift || true
+case "$SUB" in -h|--help|"") usage; [ "$SUB" = "" ] && exit 2 || exit 0 ;; esac
+
+PROJECT="."; OUTDIR=""; NAME=""; FPS=3; MAX_SECS=0
+CAST_FILE=""
+CMD=()
+# Positional PROJECT_DIR for record/endframe, CAST for render.
+collect_args() {
+  while [ $# -gt 0 ]; do
+    case "$1" in
+      --out)      OUTDIR="${2:?--out needs a dir}"; shift 2 ;;
+      --name)     NAME="${2:?--name needs a value}"; shift 2 ;;
+      --fps)      FPS="${2:?--fps needs a value}"; shift 2 ;;
+      --max-secs) MAX_SECS="${2:?--max-secs needs a value}"; shift 2 ;;
+      --)         shift; CMD=("$@"); return ;;
+      -h|--help)  usage; exit 0 ;;
+      -*)         echo "error: unknown flag: $1" >&2; exit 2 ;;
+      *)
+        if [ "$SUB" = "render" ] && [ -z "$CAST_FILE" ]; then CAST_FILE="$1"
+        else PROJECT="$1"; fi
+        shift ;;
+    esac
+  done
+}
+collect_args "$@"
+
+[ -n "$OUTDIR" ] || OUTDIR="$PROJECT/.planning/reels"
+[ -n "$NAME" ] || NAME="reel-$(date +%Y%m%d-%H%M%S 2>/dev/null || echo run)"
+mkdir -p "$OUTDIR" 2>/dev/null || true
+
+CAST="$OUTDIR/$NAME.cast"
+GIF="$OUTDIR/$NAME.gif"
+MP4="$OUTDIR/$NAME.mp4"
+TXT="$OUTDIR/$NAME.txt"
+MANIFEST="$OUTDIR/$NAME.json"
+
+have() { command -v "$1" >/dev/null 2>&1; }
+
+# ── The endframe: the always-emitted graceful-degrade artifact. A plain-text
+#    capture of the final city frame + the summary card. This is what guarantees
+#    one run → one shareable artifact even with zero recording tools installed.
+write_endframe() {
+  {
+    echo "# heimdall reel — endframe ($NAME)"
+    echo "# generated $(date -u +%FT%TZ 2>/dev/null || date)"
+    echo
+    if [ -x "$CITY" ]; then
+      # Force a deterministic width so the .txt is stable / shareable.
+      "$CITY" "$PROJECT" --once --width 78 --no-color 2>/dev/null || true
+    fi
+    echo
+    if [ -x "$CARD" ]; then
+      # Strip ANSI from the card for the text artifact.
+      "$CARD" "$PROJECT" 2>/dev/null | sed -E 's/\x1b\[[0-9;]*m//g' || true
+    fi
+  } > "$TXT" 2>/dev/null || true
+}
+
+# ── Manifest: honest record of what exists + what was missing. ──
+write_manifest() {
+  local note="$1"
+  local arts="["
+  local first=1
+  for f in "$CAST" "$GIF" "$MP4" "$TXT"; do
+    [ -f "$f" ] || continue
+    [ "$first" = 1 ] || arts="$arts,"
+    arts="$arts\"$(basename "$f")\""
+    first=0
+  done
+  arts="$arts]"
+  {
+    printf '{\n'
+    printf '  "name": "%s",\n' "$NAME"
+    printf '  "ts": "%s",\n' "$(date -u +%FT%TZ 2>/dev/null || echo unknown)"
+    printf '  "artifacts": %s,\n' "$arts"
+    printf '  "has_asciinema": %s,\n' "$(have asciinema && echo true || echo false)"
+    printf '  "has_agg": %s,\n' "$(have agg && echo true || echo false)"
+    printf '  "has_ffmpeg": %s,\n' "$(have ffmpeg && echo true || echo false)"
+    printf '  "note": "%s"\n' "$note"
+    printf '}\n'
+  } > "$MANIFEST" 2>/dev/null || true
+}
+
+# ── render a .cast → .gif (+ .mp4 if ffmpeg) ──
+render_cast() {
+  local cast="$1" note_ref="$2"
+  if ! have agg; then
+    eval "$note_ref=\"agg not installed — .cast kept (replay with 'asciinema play'); install agg for GIF/MP4\""
+    return 0
+  fi
+  if agg "$cast" "$GIF" >/dev/null 2>&1; then
+    eval "$note_ref=\"rendered $NAME.gif\""
+    if have ffmpeg && [ -f "$GIF" ]; then
+      ffmpeg -y -i "$GIF" -movflags faststart -pix_fmt yuv420p \
+        -vf "scale=trunc(iw/2)*2:trunc(ih/2)*2" "$MP4" >/dev/null 2>&1 \
+        && eval "$note_ref=\"rendered $NAME.gif + $NAME.mp4\""
+    fi
+  else
+    eval "$note_ref=\"agg present but render failed — .cast kept\""
+  fi
+}
+
+case "$SUB" in
+  endframe)
+    write_endframe
+    write_manifest "endframe-only (no recording requested)"
+    echo "heimdall-reel: endframe → $TXT"
+    [ -f "$MANIFEST" ] && echo "heimdall-reel: manifest → $MANIFEST"
+    exit 0
+    ;;
+
+  render)
+    [ -n "$CAST_FILE" ] && [ -f "$CAST_FILE" ] || { echo "error: render needs an existing .cast file" >&2; exit 2; }
+    note=""
+    render_cast "$CAST_FILE" note
+    write_manifest "$note"
+    echo "heimdall-reel: $note"
+    exit 0
+    ;;
+
+  record)
+    write_endframe   # always have the fallback ready first
+    note=""
+    if ! have asciinema; then
+      note="asciinema not installed — emitted endframe ($NAME.txt) only. Install asciinema (+ agg) for an animated reel."
+      # Still run the wrapped command if one was given, so a run is not blocked.
+      if [ "${#CMD[@]}" -gt 0 ]; then "${CMD[@]}"; fi
+      write_endframe   # refresh after the run so the endframe reflects the final state
+      write_manifest "$note"
+      echo "heimdall-reel: $note"
+      echo "heimdall-reel: endframe → $TXT"
+      exit 0
+    fi
+
+    # asciinema present. Record either the wrapped command (preferred — the real
+    # run) or, if none given, a fixed-length live-city capture.
+    rec_target=""
+    if [ "${#CMD[@]}" -gt 0 ]; then
+      # Record the city live in the background WHILE the command runs is not
+      # straightforward to multiplex in one cast; instead we record the command
+      # itself (its own output IS the run), and the endframe carries the city.
+      # The richer "city overnight" reel is produced by recording the city.
+      rec_target=""  # record the command
+    fi
+
+    # Build the inner command asciinema will record. If a command was provided,
+    # record it; otherwise record a bounded live city.
+    if [ "${#CMD[@]}" -gt 0 ]; then
+      # asciinema rec -c runs the given shell command and records its tty.
+      INNER=$(printf '%q ' "${CMD[@]}")
+      if asciinema rec --overwrite -c "$INNER" "$CAST" >/dev/null 2>&1; then
+        note="recorded run ($NAME.cast)"
+      else
+        note="asciinema present but recording failed — endframe kept"
+      fi
+    else
+      # Bounded live city. Default 12s if not capped, so 'record' alone terminates.
+      [ "$MAX_SECS" -gt 0 ] 2>/dev/null || MAX_SECS=12
+      INNER="\"$CITY\" \"$PROJECT\" --fps $FPS & CPID=\$!; sleep $MAX_SECS; kill \$CPID 2>/dev/null"
+      if asciinema rec --overwrite -c "/usr/bin/env bash -c '$INNER'" "$CAST" >/dev/null 2>&1; then
+        note="recorded live city ${MAX_SECS}s ($NAME.cast)"
+      else
+        note="asciinema present but recording failed — endframe kept"
+      fi
+    fi
+
+    # Render to GIF/MP4 if the cast exists.
+    if [ -f "$CAST" ]; then
+      rnote=""
+      render_cast "$CAST" rnote
+      [ -n "$rnote" ] && note="$note; $rnote"
+    fi
+
+    write_endframe
+    write_manifest "$note"
+    echo "heimdall-reel: $note"
+    [ -f "$GIF" ] && echo "heimdall-reel: gif → $GIF"
+    [ -f "$MP4" ] && echo "heimdall-reel: mp4 → $MP4"
+    [ -f "$CAST" ] && echo "heimdall-reel: cast → $CAST"
+    echo "heimdall-reel: endframe → $TXT"
+    exit 0
+    ;;
+
+  *)
+    echo "error: unknown subcommand: $SUB (use record|endframe|render)" >&2
+    usage >&2
+    exit 2
+    ;;
+esac

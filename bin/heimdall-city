@@ -1,0 +1,417 @@
+#!/usr/bin/env bash
+# heimdall-city — the watchman's wide shot. A TUI skyline that grows as a Heimdall
+# run progresses, repainting 2–4 fps off the deterministic state files. The city =
+# wide shot; the face (heimdall-face) = close-up; same renderer family.
+#
+# Rendered ENTIRELY by shell/ANSI — never by a model. Zero context cost (design
+# law 3). Reads state files only; zero model involvement.
+#
+# Deterministic state → city mapping:
+#   planned task        →  surveyed plot      ░  (foundation outline, ground level)
+#   in-progress task    →  scaffolding + crane ╤  (a crane swings over the plot)
+#   complete task       →  building rises      █  (height ∝ task size)
+#   gate running        →  inspector glyph     ⚲  (the watchman inspects)
+#   gate FAIL           →  skyline flashes red + the denial stamp banner
+#   parallel waves      →  multiple cranes     (one per in-flight wave)
+#   commit              →  roof flag           ⚑  (planted on a finished building)
+#   debloat             →  building shrinks     (height drops vs prior frame)
+#   day → night         →  tied to run duration (dawn → noon → dusk → night)
+#
+# Data sources (all deterministic, all already written by the harness):
+#   .planning/STATE.md                         phase, current_task, metrics
+#   .planning/PLAN-<phase>.md                  <task> blocks: wave, done, name, action
+#   .planning/SUMMARY-<phase>-wave-*.md        | DONE | rows (completed tasks)
+#   evals/oracles/<domain>/report.json         gate status (the 8-field H-1 contract)
+#   .planning/spawns/reports/bloat.report.json debloat signal
+#
+# Usage:
+#   heimdall-city [PROJECT_DIR] [--once] [--fps N] [--width COLS] [--no-color]
+#
+#   --once       render a single frame and exit (the default when stdout is not a
+#                tty, e.g. piped into a recorder's endframe, or for tests).
+#   --fps N      repaint rate when live (1–4; default 3). Live mode runs until the
+#                run leaves an active phase or Ctrl-C.
+#   --width      override skyline width (default: terminal width, capped 100).
+#   --no-color   disable ANSI (still prints the glyphs).
+#
+# Exit 0 always (a renderer never blocks); 2 on usage error.
+set -uo pipefail
+
+SELF="$0"
+BIN_DIR="$(cd "$(dirname "$SELF")" && pwd)"
+STAMP="$BIN_DIR/heimdall-stamp"
+
+usage() { sed -n '2,40p' "$SELF" | sed 's/^# \{0,1\}//'; }
+
+PROJECT="."; ONCE=0; FPS=3; WIDTH_OVERRIDE=""; NOCOLOR=0
+while [ $# -gt 0 ]; do
+  case "$1" in
+    --once)     ONCE=1; shift ;;
+    --fps)      FPS="${2:?--fps needs a value}"; shift 2 ;;
+    --width)    WIDTH_OVERRIDE="${2:?--width needs a value}"; shift 2 ;;
+    --no-color) NOCOLOR=1; shift ;;
+    -h|--help)  usage; exit 0 ;;
+    -*)         echo "error: unknown flag: $1" >&2; usage >&2; exit 2 ;;
+    *)          PROJECT="$1"; shift ;;
+  esac
+done
+
+[ "$FPS" -ge 1 ] 2>/dev/null || FPS=3
+[ "$FPS" -le 4 ] 2>/dev/null || FPS=4
+
+PLANNING="$PROJECT/.planning"
+STATE_MD="$PLANNING/STATE.md"
+
+# Non-tty (pipe/recorder/test) → single frame, no live loop, unless --fps forces.
+if [ ! -t 1 ]; then ONCE=1; fi
+
+# ── Color ──  (real ESC bytes via $'…' so plain %s printing is safe everywhere)
+if [ "$NOCOLOR" = 1 ]; then
+  BLD=''; BLDLIT=''; STAR=''
+  RED=''; D=''; W=''; C=''; G=''; R=''; B=''
+elif [[ "${COLORTERM:-}" == "truecolor" || "${COLORTERM:-}" == "24bit" || "${TERM:-}" == *256color* ]]; then
+  D=$'\033[38;2;120;120;140m'
+  W=$'\033[38;2;255;200;80m'    # warm — windows / flags
+  C=$'\033[38;2;0;212;255m'     # cyan — cranes / inspector
+  G=$'\033[38;2;78;204;163m'    # green — completed
+  RED=$'\033[38;2;255;71;87m'
+  BLD=$'\033[38;2;90;104;140m'  # building body
+  BLDLIT=$'\033[38;2;150;170;210m'
+  STAR=$'\033[38;2;200;210;255m'
+  R=$'\033[0m'; B=$'\033[1m'
+else
+  D=$'\033[90m'; W=$'\033[33m'; C=$'\033[36m'; G=$'\033[32m'; RED=$'\033[31m'
+  BLD=$'\033[37m'; BLDLIT=$'\033[97m'; STAR=$'\033[97m'; R=$'\033[0m'; B=$'\033[1m'
+fi
+
+# ── Width ──
+term_width() {
+  local w=""
+  if [ -n "$WIDTH_OVERRIDE" ]; then echo "$WIDTH_OVERRIDE"; return; fi
+  w=$(tput cols 2>/dev/null || echo "")
+  [ -z "$w" ] && w="${COLUMNS:-80}"
+  [ "$w" -gt 100 ] 2>/dev/null && w=100
+  [ "$w" -ge 24 ] 2>/dev/null || w=80
+  echo "$w"
+}
+
+# ── Frontmatter / metric readers (no jq needed for STATE.md) ──
+state_field() { # field-name
+  [ -f "$STATE_MD" ] || return
+  awk -v f="$1" '
+    /^---$/ { c++; next }
+    c==1 && $0 ~ "^"f":" { sub("^"f":[[:space:]]*\"?",""); sub("\"$",""); print; exit }
+  ' "$STATE_MD"
+}
+metric_field() { # "Tasks completed"
+  [ -f "$STATE_MD" ] || return
+  grep -m1 -- "- \*\*$1:\*\*" "$STATE_MD" 2>/dev/null | sed -E 's/.*:\*\* *//'
+}
+
+PHASE="$(state_field phase)"; [ -n "$PHASE" ] || PHASE="idle"
+CURRENT_TASK="$(state_field current_task)"
+
+# ── Gather the plots: every <task> across PLAN-*.md becomes a plot. ──
+# Per task we derive: wave, done(true/false), name, and a SIZE (1..4) from the
+# action text length (deterministic: longer spec ⇒ taller building). The current
+# task (matched by name == STATE current_task, or the first not-done) is the one
+# under active construction (crane).
+#
+# Emits one line per plot:  WAVE \t SIZE \t STATE \t NAME
+#   STATE ∈ planned | building | done
+parse_plots() {
+  local plan
+  shopt -s nullglob 2>/dev/null || true
+  for plan in "$PLANNING"/PLAN-*.md; do
+    [ -f "$plan" ] || continue
+    awk -v cur="$CURRENT_TASK" '
+      function flush(   st, sz) {
+        if (!in_task) return
+        # size 1..4 from action length
+        sz = int(alen/120) + 1; if (sz>4) sz=4; if (sz<1) sz=1
+        if (done=="true") st="done"
+        else if (name==cur && cur!="") st="building"
+        else st="planned"
+        printf "%s\t%d\t%s\t%s\n", (wave==""?"1":wave), sz, st, name
+        in_task=0; wave=""; done=""; name=""; alen=0; building_seen=0
+      }
+      /<task[ >]/ { flush(); in_task=1; wave=""; done="false"; name=""; alen=0 }
+      in_task && /<wave>/   { line=$0; sub(/.*<wave>/,"",line); sub(/<\/wave>.*/,"",line); wave=line }
+      in_task && /<name>/   { line=$0; sub(/.*<name>/,"",line); sub(/<\/name>.*/,"",line); name=line }
+      in_task && /<done>/   { if ($0 ~ /<done>true<\/done>/) done="true" }
+      in_task && /<action>/ { line=$0; sub(/.*<action>/,"",line); sub(/<\/action>.*/,"",line); alen=length(line) }
+      /<\/task>/ { flush() }
+      END { flush() }
+    ' "$plan"
+  done
+}
+
+# If no PLAN tasks at all, synthesize plots from STATE metrics so an early-run
+# city still shows something honest (planned vs completed counts).
+synth_plots() {
+  local planned done i st
+  planned="$(metric_field "Tasks planned")"; done="$(metric_field "Tasks completed")"
+  [ -n "$planned" ] || planned=0
+  [ -n "$done" ] || done=0
+  [ "$planned" -gt 0 ] 2>/dev/null || return
+  for ((i=0; i<planned; i++)); do
+    if [ "$i" -lt "$done" ]; then st="done"
+    elif [ "$i" -eq "$done" ] && [ -n "$CURRENT_TASK" ]; then st="building"
+    else st="planned"; fi
+    printf "1\t2\t%s\t%s\n" "$st" "plot $((i+1))"
+  done
+}
+
+PLOTS="$(parse_plots)"
+[ -n "$PLOTS" ] || PLOTS="$(synth_plots)"
+
+# ── Gate status: scan all oracle reports + bloat report. ──
+# GATE_STATE ∈ none | running | pass | fail.  A single failing report ⇒ fail.
+GATE_STATE="none"; FAIL_REPORT=""
+scan_gates() {
+  local r status
+  shopt -s nullglob 2>/dev/null || true
+  for r in "$PROJECT"/evals/oracles/*/report.json \
+           "$PLANNING"/spawns/reports/*.report.json \
+           "$PLANNING"/spawns/reports/*.json; do
+    [ -f "$r" ] || continue
+    if command -v jq >/dev/null 2>&1; then
+      status="$(jq -r '.status // empty' "$r" 2>/dev/null || true)"
+    else
+      status="$(grep -o '"status"[[:space:]]*:[[:space:]]*"[a-z]*"' "$r" 2>/dev/null | head -1 | sed -E 's/.*"([a-z]*)"$/\1/')"
+    fi
+    case "$status" in
+      fail) GATE_STATE="fail"; FAIL_REPORT="$r"; return ;;
+      pass) [ "$GATE_STATE" = "none" ] && GATE_STATE="pass" ;;
+      running|partial) [ "$GATE_STATE" != "pass" ] && GATE_STATE="running" ;;
+    esac
+  done
+}
+scan_gates
+
+# A phase that names a verification step also implies the inspector is out.
+case "$PHASE" in
+  *gate*|*verify*|*corpus*|*falsif*|*review*) [ "$GATE_STATE" = "none" ] && GATE_STATE="running" ;;
+esac
+
+# ── Debloat signal: did a building shrink? (bloat report with negative delta) ──
+DEBLOAT_LINES=""
+BLOAT_REPORT=""
+for cand in "$PLANNING/spawns/reports/bloat.report.json" "$PROJECT/.planning/bloat.json"; do
+  [ -f "$cand" ] && { BLOAT_REPORT="$cand"; break; }
+done
+if [ -n "$BLOAT_REPORT" ] && command -v jq >/dev/null 2>&1; then
+  DEBLOAT_LINES="$(jq -r '.metrics.simplification_delta_lines // 0' "$BLOAT_REPORT" 2>/dev/null || echo 0)"
+fi
+
+# ── Day → night, tied to run duration (STATE updated_at → now). ──
+# Buckets: dawn (<5m) · noon (<20m) · dusk (<45m) · night (>=45m). Honest fallback
+# to noon when no timestamp is parseable.
+sky_phase() {
+  local started now diff
+  started="$(state_field updated_at)"
+  [ -n "$started" ] || { echo "noon"; return; }
+  # epoch parse: try GNU date then BSD date. The stored ts is UTC (…Z); parse it
+  # as UTC (-u) so it is comparable to `date +%s` (absolute epoch, tz-agnostic).
+  now=$(date +%s 2>/dev/null)
+  started_epoch=$(date -u -d "$started" +%s 2>/dev/null || date -u -j -f "%Y-%m-%dT%H:%M:%SZ" "$started" +%s 2>/dev/null || echo "")
+  [ -n "$started_epoch" ] || { echo "noon"; return; }
+  diff=$(( now - started_epoch ))
+  [ "$diff" -lt 0 ] && diff=0
+  if   [ "$diff" -lt 300 ];  then echo "dawn"
+  elif [ "$diff" -lt 1200 ]; then echo "noon"
+  elif [ "$diff" -lt 2700 ]; then echo "dusk"
+  else echo "night"; fi
+}
+
+# ── Repeat a char N times ──
+rep() { local c="$1" n="$2" out="" i; for ((i=0;i<n;i++)); do out="$out$c"; done; printf '%s' "$out"; }
+
+# ── Render one full frame to stdout. ──
+render_frame() {
+  local width; width=$(term_width)
+  local inner=$(( width - 2 ))
+  local skyp; skyp=$(sky_phase)
+
+  # Sky band glyph + color by time of day.
+  local sky_ch sky_col title_suffix
+  case "$skyp" in
+    dawn)  sky_ch="░"; sky_col="$W";    title_suffix="dawn" ;;
+    noon)  sky_ch=" "; sky_col="$C";    title_suffix="noon" ;;
+    dusk)  sky_ch="▒"; sky_col="$W";    title_suffix="dusk" ;;
+    night) sky_ch="·"; sky_col="$STAR"; title_suffix="night" ;;
+  esac
+
+  # Build column model: each plot → a column of given height/glyph.
+  # Heights: planned=1 (plot outline), building=size (scaffold to size), done=size.
+  # We render bottom-up across HMAX rows.
+  local HMAX=8
+  local -a col_h col_state col_wave
+  local n=0
+  local building_waves=" "
+  local total_done=0 total_planned=0 total_building=0
+  while IFS=$'\t' read -r wv sz st nm; do
+    [ -n "${st:-}" ] || continue
+    local h
+    case "$st" in
+      done)     h=$(( sz * 2 )); total_done=$((total_done+1)) ;;
+      building) h=$(( sz + 1 )); total_building=$((total_building+1)); building_waves="$building_waves$wv " ;;
+      planned)  h=1; total_planned=$((total_planned+1)) ;;
+      *)        h=1 ;;
+    esac
+    [ "$h" -gt "$HMAX" ] && h="$HMAX"
+    col_h[$n]="$h"; col_state[$n]="$st"; col_wave[$n]="$wv"
+    n=$((n+1))
+  done <<< "$PLOTS"
+
+  # Count distinct in-flight waves → number of cranes.
+  local distinct_waves
+  distinct_waves=$(printf '%s\n' $building_waves | grep -vc '^$' 2>/dev/null || echo 0)
+  distinct_waves=$(printf '%s\n' $building_waves | tr ' ' '\n' | grep -v '^$' | sort -u | wc -l | tr -d ' ')
+
+  # Each plot occupies COLW columns; compute how many fit.
+  local COLW=3
+  local max_cols=$(( inner / COLW ))
+  [ "$max_cols" -lt 1 ] && max_cols=1
+  local shown="$n"
+  [ "$shown" -gt "$max_cols" ] && shown="$max_cols"
+
+  # ── Row emitter: takes pre-colored CONTENT plus its VISIBLE width, frames it
+  #    between the border bars, padding the remainder with sky fill. ──
+  emit() { # content-colored  visible-width
+    local content="$1" vis="$2"
+    local pad=$(( inner - vis )); [ "$pad" -lt 0 ] && pad=0
+    printf '%s│%s%s%s%s%s│%s\n' "$D" "$R" "$content" "$sky_col" "$(rep "$sky_ch" "$pad")" "$D$R" "$D"
+  }
+
+  # ── Header ──
+  printf '%s┌%s┐%s\n' "$D" "$(rep "─" "$inner")" "$R"
+  local hdr="heimdall · the watchman builds"
+  local hcontent=" ${B}${C}${hdr}${R}"
+  local hvis=$(( 1 + ${#hdr} ))
+  local suffix="· ${title_suffix}"
+  local hpad=$(( inner - hvis - ${#suffix} - 1 ))
+  [ "$hpad" -lt 0 ] && hpad=0
+  printf '%s│%s%s%s%s %s%s │%s\n' \
+    "$D" "$R" "$hcontent" "$(rep ' ' "$hpad")" "$D" "$suffix" "$R" "$D"
+  printf '%s├%s┤%s\n' "$D" "$(rep "─" "$inner")" "$R"
+
+  # ── Sky rows (top padding) with stars at night ──
+  local row sky_rows=2
+  for ((row=0; row<sky_rows; row++)); do
+    local content="$sky_col" vis=0 cc
+    for ((cc=0; cc<inner; cc++)); do
+      if [ "$skyp" = "night" ] && [ $(( (cc*7+row*13) % 11 )) -eq 0 ]; then
+        content="$content${STAR}✦${R}${sky_col}"
+      else
+        content="$content$sky_ch"
+      fi
+      vis=$((vis+1))
+    done
+    emit "$content$R" "$vis"
+  done
+
+  # ── Crane row: one crane per distinct in-flight wave, over building plots ──
+  {
+    local content="" vis=0 placed=0 i
+    for ((i=0; i<shown; i++)); do
+      if [ "${col_state[$i]}" = "building" ] && [ "$placed" -lt "$distinct_waves" ]; then
+        content="$content${C}╤═${sky_col}${sky_ch}${R}"
+        placed=$((placed+1))
+      else
+        content="$content${sky_col}${sky_ch}${sky_ch}${sky_ch}${R}"
+      fi
+      vis=$(( vis + COLW ))
+    done
+    emit "$content" "$vis"
+  }
+
+  # ── Building rows: bottom-up, render top to bottom. ──
+  for ((row=HMAX; row>=1; row--)); do
+    local content="" vis=0 i
+    for ((i=0; i<shown; i++)); do
+      local h="${col_h[$i]}" st="${col_state[$i]}" cell
+      if [ "$row" -le "$h" ]; then
+        case "$st" in
+          done)
+            if [ "$row" -eq "$h" ]; then cell="${W}⚑${G}██${R}"          # roof flag
+            elif [ $(( (row+i) % 2 )) -eq 0 ]; then cell="${G}█${W}▪${G}█${R}"  # lit window
+            else cell="${G}███${R}"; fi ;;
+          building)
+            if [ "$row" -eq "$h" ]; then cell="${C}╤${BLD}██${R}"        # crane head
+            else cell="${BLD}▓▒▒${R}"; fi ;;                            # scaffolding
+          planned) cell="${D}░░░${R}" ;;                               # surveyed plot
+          *)       cell="${D}░░░${R}" ;;
+        esac
+      else
+        cell="${sky_col}${sky_ch}${sky_ch}${sky_ch}${R}"
+      fi
+      content="$content$cell"
+      vis=$(( vis + COLW ))
+    done
+    emit "$content" "$vis"
+  done
+
+  # ── Ground line ──
+  printf '%s│%s%s%s%s│%s\n' "$D" "$R" "$D" "$(rep "▔" "$inner")" "$D" "$R"
+
+  # ── Inspector / gate banner row ──
+  if [ "$GATE_STATE" = "fail" ]; then
+    local bannertxt=" GATE FAILED — the watchman bars the gate"
+    local bvis=${#bannertxt}
+    emit "${B}${RED}${bannertxt}${R}" "$bvis"
+    local stampline=""
+    if [ -x "$STAMP" ] && [ -n "$FAIL_REPORT" ]; then
+      stampline="$("$STAMP" --report "$FAIL_REPORT" --format skyline --no-color 2>/dev/null)"
+    fi
+    [ -n "$stampline" ] || stampline=" ⛔ YOU SHALL NOT MERGE"
+    # Strip any ANSI for width math + truncate to fit the frame, re-color red.
+    local stamp_plain; stamp_plain="$(printf '%s' "$stampline" | sed -E 's/\x1b\[[0-9;]*m//g')"
+    if [ "${#stamp_plain}" -gt "$inner" ]; then
+      stamp_plain="${stamp_plain:0:$((inner-1))}…"
+    fi
+    emit "${B}${RED}${stamp_plain}${R}" "${#stamp_plain}"
+  else
+    local status_txt status_col
+    case "$GATE_STATE" in
+      running) status_txt="⚲ inspector on site — gate running"; status_col="$C" ;;
+      pass)    status_txt="✓ gate passed — passed the watchman";  status_col="$G" ;;
+      *)       status_txt="phase: ${PHASE}"; status_col="$D" ;;
+    esac
+    local counts="plots ${total_planned}  cranes ${distinct_waves}  built ${total_done}"
+    local sline=" ${status_txt}"
+    local mid=$(( inner - ${#sline} - ${#counts} - 1 )); [ "$mid" -lt 1 ] && mid=1
+    local content="${status_col}${sline}${R}$(rep ' ' "$mid")${D}${counts} ${R}"
+    emit "$content" "$(( ${#sline} + mid + ${#counts} + 1 ))"
+  fi
+
+  # ── Debloat note (a building shrank) ──
+  if [ -n "$DEBLOAT_LINES" ] && [ "$DEBLOAT_LINES" -gt 0 ] 2>/dev/null; then
+    local dtxt=" ⌄ debloat — a tower shed ${DEBLOAT_LINES} lines"
+    emit "${W}${dtxt}${R}" "${#dtxt}"
+  fi
+
+  printf '%s└%s┘%s\n' "$D" "$(rep "─" "$inner")" "$R"
+}
+
+# ── Drive: one frame, or a live repaint loop. ──
+if [ "$ONCE" = 1 ]; then
+  render_frame
+  exit 0
+fi
+
+# Live mode: clear + repaint at FPS until the run leaves an active phase.
+trap 'printf "\033[?25h\n"; exit 0' INT TERM
+printf '\033[?25l'  # hide cursor
+delay=$(awk -v f="$FPS" 'BEGIN{printf "%.3f", 1.0/f}')
+while :; do
+  PHASE="$(state_field phase)"; [ -n "$PHASE" ] || PHASE="idle"
+  CURRENT_TASK="$(state_field current_task)"
+  PLOTS="$(parse_plots)"; [ -n "$PLOTS" ] || PLOTS="$(synth_plots)"
+  GATE_STATE="none"; FAIL_REPORT=""; scan_gates
+  case "$PHASE" in *gate*|*verify*|*corpus*|*falsif*|*review*) [ "$GATE_STATE" = "none" ] && GATE_STATE="running" ;; esac
+  printf '\033[H\033[2J'   # home + clear
+  render_frame
+  case "$PHASE" in idle|done|complete|""|init) sleep "$delay"; ;; esac
+  sleep "$delay"
+done
