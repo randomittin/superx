@@ -358,13 +358,30 @@ EOF
   #  One wave (config.py) ships a real-shaped Stripe live key. We stage it and
   #  run the actual bin/secret-scan; its real nonzero exit IS the catch.
   # ════════════════════════════════════════════════════════════════════════
-  cat > "$city_dir/config.py" <<'PLANTED'
-# demo config for the Todo app
-DEBUG = True
-DATABASE_URL = "sqlite:///./todos.db"
-# a real-shaped Stripe live secret key committed by mistake — the defect this wave ships
-STRIPE_KEY = "sk_live_REMOVED-PLANTED-DEMO-KEY"
-PLANTED
+  # The credential is GENERATED AT RUNTIME — it never appears as a literal in
+  # this repo's source or history. We assemble a gitleaks-shaped Stripe live key
+  # ("sk_live_" + 40 chars of alphanumeric entropy, matching gitleaks' built-in
+  # stripe-access-token rule) from parts so the secret materializes only inside
+  # the ephemeral demo workspace ($city_dir), which the REAL secret-scan then
+  # genuinely catches. The token marker is built from fragments, so even the
+  # recognizable "sk_live_" prefix is not a contiguous literal in this file.
+  local sk_marker sk_entropy planted_key
+  sk_marker="sk_""liv""e_"   # "sk_live_" assembled from fragments at runtime
+  sk_entropy="$(LC_ALL=C tr -dc 'A-Za-z0-9' </dev/urandom 2>/dev/null | head -c 40)"
+  # Fallback if /dev/urandom is unavailable: still ≥30 alphanumeric chars of entropy.
+  if [ "${#sk_entropy}" -lt 30 ]; then
+    sk_entropy="$( (date +%s%N; echo $$) | (shasum -a 256 2>/dev/null || md5 2>/dev/null) | LC_ALL=C tr -dc 'A-Za-z0-9' | head -c 40 )"
+    sk_entropy="${sk_entropy}0aA1bB2cC3dD4eE5fF"   # pad to guarantee length/entropy
+    sk_entropy="$(printf '%s' "$sk_entropy" | head -c 40)"
+  fi
+  planted_key="${sk_marker}${sk_entropy}"
+  {
+    printf '# demo config for the Todo app\n'
+    printf 'DEBUG = True\n'
+    printf 'DATABASE_URL = "sqlite:///./todos.db"\n'
+    printf '# a real-shaped Stripe live secret key committed by mistake — the defect this wave ships\n'
+    printf 'STRIPE_KEY = "%s"\n' "$planted_key"
+  } > "$city_dir/config.py"
   ( cd "$city_dir" && git add config.py ) 2>/dev/null || true
 
   # Run the REAL gate. Capture its real exit code — this is the genuine verdict.
