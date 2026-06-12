@@ -1,0 +1,629 @@
+#!/usr/bin/env python3
+# heimdall-ledger-mcp — MCP interop server for the Coordination Ledger (spec T-4).
+#
+# A real MCP stdio JSON-RPC 2.0 server that exposes the Heimdall Coordination
+# Ledger (T-2) so ANY MCP client — Cursor, Copilot, Claude Code, or a bespoke
+# agent — can participate in the same git-native coordination surface with full
+# HAID attribution (T-1). The ledger is the single source of truth; this server
+# is a THIN WRAPPER that shells out to bin/heimdall-claim and bin/heimdall-haid.
+# It never reimplements claim, identity, overlap, or liveness logic.
+#
+# Why a protocol, not just a binding: a coordination ledger that competitors
+# (Cursor, Copilot) can adopt over a published, versioned wire contract is a
+# *standard*, not a feature. That is the platform-absorption counter — if the
+# big editors speak this protocol, attribution and collision-prevention live in
+# the open contract, not inside one vendor's walls. The tool schema in
+# PROTOCOL.md is the first-class, semver-versioned public artifact.
+#
+# Transport: newline-delimited / Content-Length-framed JSON-RPC 2.0 over stdio.
+# Both framings are accepted on read; responses are emitted line-delimited (the
+# framing every MCP stdio client parses). Protocol: MCP 2024-11-05.
+#
+# Identity model: each connecting client declares itself (clientInfo.name at
+# initialize, or a per-call `client_identity` arg). The server derives a spawn
+# HAID `{root}/{client}` via `heimdall-haid spawn <client>` and registers it
+# with `heimdall-haid register --haid ... --role <client>`. The role suffix is
+# the durable distinguisher between claude-code / cursor / copilot in both the
+# HAID itself and the registry `role` field. Every ledger mutation this server
+# performs is attributed to that client HAID — collisions and decisions name the
+# exact non-Claude agent that acted.
+#
+# Tools (6): read_claims, make_claim, release_claim, read_capsules,
+#            append_decision, raise_conflict_pr. See PROTOCOL.md for the schema.
+#
+# Run:  bin/heimdall-ledger-mcp            (speaks JSON-RPC on stdin/stdout)
+#       HEIMDALL_PLANNING_DIR=... bin/heimdall-ledger-mcp   (test fixture tree)
+#
+# Zero third-party deps: Python 3 standard library only.
+import json
+import os
+import subprocess
+import sys
+import datetime
+
+PROTOCOL_VERSION = "2024-11-05"        # MCP protocol revision spoken on the wire
+TOOL_SCHEMA_VERSION = "1.0.0"          # semver of THIS server's tool contract
+SERVER_NAME = "heimdall-ledger-mcp"
+
+# ── Path resolution (mirror the bash bins: bin/ under the plugin root) ─────────
+SELF = os.path.realpath(__file__)
+BIN_DIR = os.path.dirname(SELF)
+PLUGIN_DIR = os.path.dirname(BIN_DIR)
+PLANNING_DIR = os.environ.get("HEIMDALL_PLANNING_DIR", os.path.join(PLUGIN_DIR, ".planning"))
+LEDGER_DIR = os.path.join(PLANNING_DIR, "ledger")
+COMPLETED_DIR = os.path.join(LEDGER_DIR, "completed")
+CONFLICTS_DIR = os.path.join(LEDGER_DIR, "conflicts")
+DECISIONS_FILE = os.path.join(LEDGER_DIR, "decisions.md")
+# H-4 protocol capsules live under .planning/protocol/capsules (may be absent).
+PROTOCOL_CAPSULES_DIR = os.path.join(PLANNING_DIR, "protocol", "capsules")
+HAID_BIN = os.path.join(BIN_DIR, "heimdall-haid")
+CLAIM_BIN = os.path.join(BIN_DIR, "heimdall-claim")
+
+
+def now_iso():
+    return datetime.datetime.now(datetime.timezone.utc).strftime("%Y-%m-%dT%H:%M:%SZ")
+
+
+class LedgerError(Exception):
+    """A delegated CLI call failed; carries the captured stderr for the client."""
+
+    def __init__(self, message, detail=""):
+        super().__init__(message)
+        self.detail = detail
+
+
+# ── Delegation: every claim/identity mutation is a shell-out to the SoT CLI ────
+def run_cli(binary, args, env_extra=None):
+    """Run a heimdall CLI, return (stdout, stderr); raise LedgerError on nonzero."""
+    if not os.access(binary, os.X_OK):
+        raise LedgerError(f"required CLI not executable: {binary}")
+    env = dict(os.environ)
+    # Pin the planning tree so the CLI and this server agree on the ledger root.
+    env["HEIMDALL_PLANNING_DIR"] = PLANNING_DIR
+    if env_extra:
+        env.update(env_extra)
+    proc = subprocess.run(
+        [binary] + args,
+        capture_output=True,
+        text=True,
+        env=env,
+    )
+    if proc.returncode != 0:
+        raise LedgerError(
+            f"{os.path.basename(binary)} {' '.join(args)} exited {proc.returncode}",
+            detail=(proc.stderr or proc.stdout).strip(),
+        )
+    return proc.stdout, proc.stderr
+
+
+def slug_client(name):
+    """Slugify a client identity to a valid HAID role suffix ([a-z0-9][a-z0-9-]*)."""
+    out = []
+    for ch in (name or "").lower():
+        if ch.isalnum():
+            out.append(ch)
+        else:
+            out.append("-")
+    s = "".join(out).strip("-")
+    while "--" in s:
+        s = s.replace("--", "-")
+    s = s[:24].strip("-")
+    return s or "mcp-client"
+
+
+def client_haid(client_identity):
+    """Derive + register the spawn HAID for a connecting client; return the HAID.
+
+    Delegates entirely to heimdall-haid: `spawn <client>` builds the
+    `{root}/{client}` HAID, `register` upserts it active. The role suffix is the
+    durable claude-code/cursor/copilot distinguisher.
+    """
+    role = slug_client(client_identity)
+    haid, _ = run_cli(HAID_BIN, ["spawn", role])
+    haid = haid.strip()
+    run_cli(HAID_BIN, ["register", "--haid", haid, "--role", role])
+    return haid
+
+
+# ── Tool implementations (all thin; ledger logic stays in the CLIs) ────────────
+def tool_read_claims(_args, _haid):
+    """List active claims via heimdall-claim list --json (single source of truth)."""
+    out, _ = run_cli(CLAIM_BIN, ["list", "--json"])
+    try:
+        claims = json.loads(out or "[]")
+    except json.JSONDecodeError as exc:
+        raise LedgerError("heimdall-claim returned non-JSON", detail=str(exc))
+    return {
+        "active_claims": claims,
+        "count": len(claims),
+    }
+
+
+def tool_make_claim(args, haid):
+    """Claim surfaces for the calling client. Surfaces+task → heimdall-claim claim.
+
+    heimdall-claim is the single source of truth for the collision gate, atomic
+    write, and reap — we never reimplement those, so the claim file is owned by
+    the HAID the CLI derives (this MCP server process). To preserve the calling
+    client's attribution WITHOUT touching the CLI, the originating client HAID is
+    woven into the task_ref (the only client-supplied field the CLI persists) and
+    returned in the tool output, and the registry already carries the client's
+    spawn HAID (registered above). Attribution is auditable end-to-end.
+    """
+    surfaces = args.get("surfaces")
+    task = args.get("task")
+    ttl = args.get("ttl_minutes")
+    if not isinstance(surfaces, list) or not surfaces:
+        raise LedgerError("make_claim requires a non-empty 'surfaces' array")
+    if not all(isinstance(s, str) and s for s in surfaces):
+        raise LedgerError("every entry in 'surfaces' must be a non-empty string")
+    if not isinstance(task, str) or not task:
+        raise LedgerError("make_claim requires a non-empty 'task' string")
+    attributed_task = f"{task} (via {SERVER_NAME}:{haid})"
+    cli_args = ["claim", "--task", attributed_task]
+    if ttl is not None:
+        if not isinstance(ttl, int) or ttl < 1:
+            raise LedgerError("'ttl_minutes' must be a positive integer")
+        cli_args += ["--ttl", str(ttl)]
+    cli_args.append("--")
+    cli_args += surfaces
+    out, _ = run_cli(CLAIM_BIN, cli_args)
+    return {
+        "result": out.strip(),
+        "client_haid": haid,
+        "task_ref": attributed_task,
+        "surfaces": surfaces,
+        "task": task,
+    }
+
+
+def tool_release_claim(args, haid):
+    """Release the calling client's claim (or a named HAID's). → heimdall-claim release."""
+    target = args.get("haid") or haid
+    out, _ = run_cli(CLAIM_BIN, ["release", "--haid", target])
+    return {"result": out.strip(), "haid": target}
+
+
+def _read_capsule_dir(path, source):
+    capsules = []
+    if not os.path.isdir(path):
+        return capsules
+    for name in sorted(os.listdir(path)):
+        full = os.path.join(path, name)
+        if not os.path.isfile(full):
+            continue
+        if not (name.endswith(".md")):
+            continue
+        if name.upper() == "README.MD":
+            continue
+        with open(full, "r", encoding="utf-8") as fh:
+            body = fh.read()
+        capsules.append({"id": name[:-3], "source": source, "path": full, "body": body})
+    return capsules
+
+
+def tool_read_capsules(args, _haid):
+    """Read completed-task capsules + H-4 protocol capsules (if present)."""
+    capsules = _read_capsule_dir(COMPLETED_DIR, "completed")
+    capsules += _read_capsule_dir(PROTOCOL_CAPSULES_DIR, "protocol")
+    wanted = args.get("id")
+    if wanted:
+        capsules = [c for c in capsules if c["id"] == wanted]
+    return {"capsules": capsules, "count": len(capsules)}
+
+
+def tool_append_decision(args, haid):
+    """Append a HAID-attributed ADR-lite entry to decisions.md."""
+    title = args.get("title")
+    body = args.get("body")
+    if not isinstance(title, str) or not title.strip():
+        raise LedgerError("append_decision requires a non-empty 'title'")
+    if not isinstance(body, str) or not body.strip():
+        raise LedgerError("append_decision requires a non-empty 'body'")
+    os.makedirs(LEDGER_DIR, exist_ok=True)
+    ts = now_iso()
+    entry = (
+        f"\n## {ts} — {title.strip()}\n\n"
+        f"{body.strip()}\n\n"
+        f"*— recorded via {SERVER_NAME} by `{haid}`*\n"
+    )
+    # Append-only: decisions are never rewritten (matches decisions.md contract).
+    with open(DECISIONS_FILE, "a", encoding="utf-8") as fh:
+        fh.write(entry)
+    return {"appended": True, "timestamp": ts, "title": title.strip(), "haid": haid}
+
+
+def tool_raise_conflict_pr(args, haid):
+    """Author a conflicts/{date}-{id}.md record and describe the PR path."""
+    conflict_id = args.get("id")
+    title = args.get("title")
+    surfaces = args.get("surfaces")
+    displaced_haid = args.get("displaced_haid", "")
+    overriding_intent = args.get("overriding_intent", "")
+    displaced_intent = args.get("displaced_intent", "")
+    if not isinstance(conflict_id, str) or not conflict_id.strip():
+        raise LedgerError("raise_conflict_pr requires a non-empty 'id'")
+    if not isinstance(title, str) or not title.strip():
+        raise LedgerError("raise_conflict_pr requires a non-empty 'title'")
+    if not isinstance(surfaces, list) or not surfaces or not all(
+        isinstance(s, str) and s for s in surfaces
+    ):
+        raise LedgerError("raise_conflict_pr requires a non-empty 'surfaces' string array")
+    safe_id = slug_client(conflict_id) or "conflict"
+    date = now_iso()[:10]
+    fname = f"{date}-{safe_id}.md"
+    os.makedirs(CONFLICTS_DIR, exist_ok=True)
+    fpath = os.path.join(CONFLICTS_DIR, fname)
+    if os.path.exists(fpath):
+        raise LedgerError(f"conflict record already exists: {fname}")
+    haid_slug = haid.replace("/", "_").replace(":", "_")
+    task_slug = slug_client(safe_id)
+    branch = f"displaced/{haid_slug}-{task_slug}"
+    surfaces_block = "\n".join(f"  - {s}" for s in surfaces)
+    record = (
+        f"# Conflict {safe_id} — {title.strip()}\n\n"
+        f"- **Date:** {date}\n"
+        f"- **Overriding HAID:** {haid}  (via {SERVER_NAME})\n"
+        f"- **Displaced HAID:** {displaced_haid or '(unspecified)'}\n"
+        f"- **Surfaces:**\n{surfaces_block}\n\n"
+        f"## Both intents\n\n"
+        f"- **Overriding agent wanted:** {overriding_intent or '(unspecified)'}\n"
+        f"- **Displaced agent wanted:** {displaced_intent or '(unspecified)'}\n\n"
+        f"## Resolution\n\n"
+        f"- **Kept:** (to be decided by an owner/maintainer reviewing this PR)\n"
+        f"- **Displaced:** (to be decided)\n"
+        f"- **Preserved on branch:** `{branch}`  (never deleted)\n\n"
+        f"## Recovery path\n\n"
+        f"Restore displaced work from branch `{branch}`: cherry-pick its commits "
+        f"back onto the target branch, or reopen the displaced agent's claim once "
+        f"the contested surfaces are released.\n"
+    )
+    with open(fpath, "w", encoding="utf-8") as fh:
+        fh.write(record)
+    # Cross-link from decisions.md (the conflicts contract requires this).
+    rel = os.path.relpath(fpath, LEDGER_DIR)
+    decision_body = (
+        f"Conflict `{safe_id}` raised over surfaces {', '.join(surfaces)} by "
+        f"`{haid}`"
+        + (f" displacing `{displaced_haid}`" if displaced_haid else "")
+        + f". Auditable record: `{rel}`. Displaced work preserved on `{branch}`."
+    )
+    tool_append_decision(
+        {"title": f"conflict {safe_id} raised", "body": decision_body}, haid
+    )
+    pr_branch = f"conflict/{safe_id}"
+    return {
+        "conflict_file": fpath,
+        "relative_path": os.path.join("ledger", rel),
+        "preserved_branch": branch,
+        "pr_path": (
+            f"open a PR from branch `{pr_branch}` adding `{os.path.join('.planning', 'ledger', rel)}`; "
+            f"an owner/maintainer fills the Resolution section before merge."
+        ),
+        "haid": haid,
+    }
+
+
+# ── Tool registry: name → (handler, JSON-Schema inputSchema, description) ───────
+TOOLS = {
+    "read_claims": {
+        "handler": tool_read_claims,
+        "description": "List all ACTIVE coordination claims across every HAID "
+        "(delegates to `heimdall-claim list`). Use to see which surfaces are "
+        "already held before you claim.",
+        "inputSchema": {
+            "type": "object",
+            "properties": {
+                "client_identity": {
+                    "type": "string",
+                    "description": "Identity of the calling client (cursor, copilot, "
+                    "claude-code, ...) for HAID attribution. Optional; falls back "
+                    "to the identity declared at initialize.",
+                }
+            },
+            "additionalProperties": False,
+        },
+    },
+    "make_claim": {
+        "handler": tool_make_claim,
+        "description": "Claim one or more surfaces (file globs and/or "
+        "`file#symbol` refs) for a task before editing, attributed to the "
+        "calling client's HAID. Delegates to `heimdall-claim claim`; refuses "
+        "(error) if a surface overlaps another agent's active claim.",
+        "inputSchema": {
+            "type": "object",
+            "properties": {
+                "surfaces": {
+                    "type": "array",
+                    "items": {"type": "string"},
+                    "minItems": 1,
+                    "description": "Surfaces to claim: file globs (src/a/**) or "
+                    "symbol refs (src/a.ts#fn).",
+                },
+                "task": {
+                    "type": "string",
+                    "description": "Task reference this claim is for (e.g. a ticket or plan id).",
+                },
+                "ttl_minutes": {
+                    "type": "integer",
+                    "minimum": 1,
+                    "description": "Claim time-to-live in minutes (default 90).",
+                },
+                "client_identity": {
+                    "type": "string",
+                    "description": "Calling client identity for HAID attribution.",
+                },
+            },
+            "required": ["surfaces", "task"],
+            "additionalProperties": False,
+        },
+    },
+    "release_claim": {
+        "handler": tool_release_claim,
+        "description": "Release the calling client's claim (or a named HAID's "
+        "claim) so its surfaces are free to re-claim. Delegates to "
+        "`heimdall-claim release`.",
+        "inputSchema": {
+            "type": "object",
+            "properties": {
+                "haid": {
+                    "type": "string",
+                    "description": "HAID whose claim to release. Optional; defaults "
+                    "to the calling client's HAID.",
+                },
+                "client_identity": {
+                    "type": "string",
+                    "description": "Calling client identity for HAID attribution.",
+                },
+            },
+            "additionalProperties": False,
+        },
+    },
+    "read_capsules": {
+        "handler": tool_read_capsules,
+        "description": "Read completed-task hand-off capsules from "
+        "`.planning/ledger/completed/` plus H-4 protocol capsules from "
+        "`.planning/protocol/capsules/` (if present). Optional `id` filters to one.",
+        "inputSchema": {
+            "type": "object",
+            "properties": {
+                "id": {
+                    "type": "string",
+                    "description": "Return only the capsule with this id (filename without .md).",
+                },
+                "client_identity": {
+                    "type": "string",
+                    "description": "Calling client identity for HAID attribution.",
+                },
+            },
+            "additionalProperties": False,
+        },
+    },
+    "append_decision": {
+        "handler": tool_append_decision,
+        "description": "Append a HAID-attributed ADR-lite entry to the ledger's "
+        "append-only `decisions.md`. Use to record a coordination decision, a "
+        "sequencing call, or a surface-ownership agreement.",
+        "inputSchema": {
+            "type": "object",
+            "properties": {
+                "title": {"type": "string", "description": "Short decision title."},
+                "body": {
+                    "type": "string",
+                    "description": "One paragraph: the decision and the why.",
+                },
+                "client_identity": {
+                    "type": "string",
+                    "description": "Calling client identity for HAID attribution.",
+                },
+            },
+            "required": ["title", "body"],
+            "additionalProperties": False,
+        },
+    },
+    "raise_conflict_pr": {
+        "handler": tool_raise_conflict_pr,
+        "description": "Author an auditable `conflicts/{date}-{id}.md` record for "
+        "a contested surface, cross-link it from decisions.md, and return the PR "
+        "path an owner/maintainer reviews to resolve the conflict.",
+        "inputSchema": {
+            "type": "object",
+            "properties": {
+                "id": {"type": "string", "description": "Short conflict id (slugified)."},
+                "title": {"type": "string", "description": "Short conflict title."},
+                "surfaces": {
+                    "type": "array",
+                    "items": {"type": "string"},
+                    "minItems": 1,
+                    "description": "The contested surfaces.",
+                },
+                "displaced_haid": {
+                    "type": "string",
+                    "description": "HAID whose claim is being contested (optional).",
+                },
+                "overriding_intent": {
+                    "type": "string",
+                    "description": "What the overriding agent wants and why (optional).",
+                },
+                "displaced_intent": {
+                    "type": "string",
+                    "description": "What the displaced agent wanted and why (optional).",
+                },
+                "client_identity": {
+                    "type": "string",
+                    "description": "Calling client identity for HAID attribution.",
+                },
+            },
+            "required": ["id", "title", "surfaces"],
+            "additionalProperties": False,
+        },
+    },
+}
+
+
+def tools_list_payload():
+    return {
+        "tools": [
+            {
+                "name": name,
+                "description": spec["description"],
+                "inputSchema": spec["inputSchema"],
+            }
+            for name, spec in TOOLS.items()
+        ]
+    }
+
+
+# ── JSON-RPC plumbing ──────────────────────────────────────────────────────────
+def make_error(req_id, code, message, data=None):
+    err = {"code": code, "message": message}
+    if data is not None:
+        err["data"] = data
+    return {"jsonrpc": "2.0", "id": req_id, "error": err}
+
+
+def make_result(req_id, result):
+    return {"jsonrpc": "2.0", "id": req_id, "result": result}
+
+
+class Session:
+    """Per-connection state: the client identity declared at initialize."""
+
+    def __init__(self):
+        self.client_identity = None
+        self.initialized = False
+
+
+def handle_initialize(session, params):
+    client_info = (params or {}).get("clientInfo") or {}
+    session.client_identity = client_info.get("name") or "mcp-client"
+    session.initialized = True
+    return {
+        "protocolVersion": PROTOCOL_VERSION,
+        "capabilities": {"tools": {"listChanged": False}},
+        "serverInfo": {
+            "name": SERVER_NAME,
+            "version": TOOL_SCHEMA_VERSION,
+        },
+        "instructions": (
+            "Heimdall Coordination Ledger over MCP. Every tool call is "
+            "HAID-attributed to your client identity. Claim surfaces before "
+            "editing; read claims first to avoid collisions."
+        ),
+    }
+
+
+def handle_tools_call(session, params):
+    params = params or {}
+    name = params.get("name")
+    arguments = params.get("arguments") or {}
+    spec = TOOLS.get(name)
+    if spec is None:
+        raise LedgerError(f"unknown tool: {name}")
+    # Resolve the calling identity: per-call arg wins, else the initialize one.
+    client_identity = arguments.get("client_identity") or session.client_identity or "mcp-client"
+    haid = client_haid(client_identity)
+    payload = spec["handler"](arguments, haid)
+    # MCP tools/call result: content blocks. We return one JSON text block plus
+    # a structuredContent mirror so both text-only and structured clients work.
+    text = json.dumps(payload, indent=2, sort_keys=True)
+    return {
+        "content": [{"type": "text", "text": text}],
+        "structuredContent": payload,
+        "isError": False,
+    }
+
+
+def dispatch(session, request):
+    """Handle one JSON-RPC request object; return a response dict or None (notify)."""
+    if not isinstance(request, dict) or request.get("jsonrpc") != "2.0":
+        return make_error(None, -32600, "Invalid Request: not JSON-RPC 2.0")
+    method = request.get("method")
+    req_id = request.get("id")
+    params = request.get("params")
+    is_notification = "id" not in request
+
+    try:
+        if method == "initialize":
+            result = handle_initialize(session, params)
+        elif method == "notifications/initialized":
+            return None  # client ack; no response for notifications
+        elif method == "ping":
+            result = {}
+        elif method == "tools/list":
+            result = tools_list_payload()
+        elif method == "tools/call":
+            result = handle_tools_call(session, params)
+        else:
+            if is_notification:
+                return None
+            return make_error(req_id, -32601, f"Method not found: {method}")
+    except LedgerError as exc:
+        if is_notification:
+            return None
+        # Tool-execution failures are surfaced as a tools/call error result so the
+        # client sees them as a failed tool, per MCP convention; protocol-level
+        # method errors use the JSON-RPC error channel.
+        if method == "tools/call":
+            text = json.dumps({"error": str(exc), "detail": exc.detail}, indent=2)
+            return make_result(
+                req_id,
+                {"content": [{"type": "text", "text": text}], "isError": True},
+            )
+        return make_error(req_id, -32603, str(exc), data=exc.detail or None)
+    except Exception as exc:  # defensive: never crash the loop on one bad request
+        if is_notification:
+            return None
+        return make_error(req_id, -32603, f"internal error: {exc}")
+
+    if is_notification:
+        return None
+    return make_result(req_id, result)
+
+
+# ── stdio framing: accept Content-Length frames OR newline-delimited JSON ──────
+def read_messages(stream):
+    """Yield parsed JSON-RPC objects from stdin, tolerating both framings."""
+    buf = stream
+    for raw in iter(buf.readline, ""):
+        line = raw.strip()
+        if not line:
+            continue
+        if line.lower().startswith("content-length:"):
+            # LSP-style framing: read the declared body after the blank line.
+            try:
+                length = int(line.split(":", 1)[1].strip())
+            except ValueError:
+                continue
+            # consume headers up to the blank separator line
+            while True:
+                hdr = buf.readline()
+                if hdr.strip() == "":
+                    break
+            body = buf.read(length)
+            try:
+                yield json.loads(body)
+            except json.JSONDecodeError:
+                yield {"__parse_error__": True}
+            continue
+        try:
+            yield json.loads(line)
+        except json.JSONDecodeError:
+            yield {"__parse_error__": True}
+
+
+def main():
+    session = Session()
+    out = sys.stdout
+    for request in read_messages(sys.stdin):
+        if isinstance(request, dict) and request.get("__parse_error__"):
+            resp = make_error(None, -32700, "Parse error")
+        else:
+            resp = dispatch(session, request)
+        if resp is not None:
+            out.write(json.dumps(resp) + "\n")
+            out.flush()
+
+
+if __name__ == "__main__":
+    main()

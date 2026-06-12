@@ -213,3 +213,93 @@ forward/reverse, blackboard set/get, capsule ≤10-line cap + dependency-only
 hydration, validate accept/reject + on-receipt retry/escalate, delta-brief
 plan-exclusion, ledger measured delta, and the gate adapter's reference-only
 `gate_report`. Exit 0 iff all pass.
+
+---
+
+# MCP Interop Contract — `heimdall-ledger-mcp` — v1.0.0
+
+**Spec:** heimdall-team-spec §T-4 · **Status:** build-ready · **Transport:** MCP
+stdio JSON-RPC 2.0 (protocol revision `2024-11-05`)
+
+`bin/heimdall-ledger-mcp` exposes the Coordination Ledger (T-2) and the HAID
+attribution backbone (T-1) over the **Model Context Protocol**, so *any* MCP
+client — Cursor, GitHub Copilot, Claude Code, or a bespoke agent — can join the
+same git-native coordination surface. It is a **thin wrapper**: every claim and
+identity mutation shells out to `bin/heimdall-claim` and `bin/heimdall-haid`, the
+single sources of truth. The server reimplements none of their logic.
+
+## Why this is a protocol, not a feature
+
+A coordination ledger that competitors can *adopt* over a published, versioned
+wire contract is a **standard**, not a vendor feature. This is the
+platform-absorption counter: if the big editors speak this contract, then
+attribution and collision-prevention live in the open — not inside one vendor's
+walls, where a platform owner could absorb and close them. The tool schema below
+is the first-class public artifact, **semver-versioned** independently of the
+token-frugal protocol above. Bump **major** on a breaking tool-shape change,
+**minor** on an additive tool or field, **patch** on a fix that preserves the
+wire shape. Current: **`1.0.0`** (`serverInfo.version`).
+
+## Identity model
+
+Each connecting client declares itself once at `initialize`
+(`clientInfo.name` → `cursor` / `copilot` / `claude-code` / …) or per call via a
+`client_identity` argument. The server derives a **spawn HAID** `{root}/{client}`
+through `heimdall-haid spawn <client>` and registers it active via
+`heimdall-haid register`. The role suffix (`/cursor`, `/copilot`) is the durable
+distinguisher between clients in both the HAID and the registry `role` field, so
+the ledger names the exact agent that acted. Every tool result echoes the
+attributed HAID.
+
+## Handshake
+
+```
+→ {"jsonrpc":"2.0","id":1,"method":"initialize",
+   "params":{"protocolVersion":"2024-11-05","clientInfo":{"name":"cursor"}}}
+← {"jsonrpc":"2.0","id":1,"result":{"protocolVersion":"2024-11-05",
+   "capabilities":{"tools":{"listChanged":false}},
+   "serverInfo":{"name":"heimdall-ledger-mcp","version":"1.0.0"}, ...}}
+→ {"jsonrpc":"2.0","method":"notifications/initialized"}
+→ {"jsonrpc":"2.0","id":2,"method":"tools/list"}        # → the 6 tools below
+→ {"jsonrpc":"2.0","id":3,"method":"tools/call","params":{"name":"...","arguments":{...}}}
+```
+
+Stdio framing: both **newline-delimited JSON** and **`Content-Length:`-framed**
+(LSP-style) requests are accepted on read; responses are line-delimited. Also
+implements `ping`.
+
+## Tools (6)
+
+| Tool | Required args | Optional args | Delegates to / writes |
+|------|---------------|---------------|-----------------------|
+| `read_claims` | — | `client_identity` | `heimdall-claim list --json` → active claims + count |
+| `make_claim` | `surfaces[]`, `task` | `ttl_minutes`, `client_identity` | `heimdall-claim claim` — collision gate enforced; client HAID woven into `task_ref` |
+| `release_claim` | — | `haid`, `client_identity` | `heimdall-claim release` |
+| `read_capsules` | — | `id`, `client_identity` | reads `.planning/ledger/completed/*.md` + `.planning/protocol/capsules/*.md` (H-4) |
+| `append_decision` | `title`, `body` | `client_identity` | appends a HAID-attributed entry to `decisions.md` (append-only) |
+| `raise_conflict_pr` | `id`, `title`, `surfaces[]` | `displaced_haid`, `overriding_intent`, `displaced_intent`, `client_identity` | authors `conflicts/{date}-{id}.md`, cross-links from `decisions.md`, returns the PR path |
+
+Every tool also accepts `client_identity` (a per-call override of the
+initialize-time identity) for HAID attribution. Results are returned as a JSON
+`text` content block plus a `structuredContent` mirror, so both text-only and
+structured MCP clients work.
+
+```bash
+# Round-trip: claim via MCP, see it through the CLI single-source-of-truth.
+printf '%s\n' \
+  '{"jsonrpc":"2.0","id":1,"method":"initialize","params":{"clientInfo":{"name":"cursor"}}}' \
+  '{"jsonrpc":"2.0","id":3,"method":"tools/call","params":{"name":"make_claim","arguments":{"surfaces":["src/a/**"],"task":"T-9"}}}' \
+  | bin/heimdall-ledger-mcp
+bin/heimdall-claim list      # → the claim, task_ref carries the cursor HAID
+```
+
+## Client registration (`.mcp.json`)
+
+A drop-in `.mcp.json` at the repo root registers the server with any MCP host:
+
+```json
+{ "mcpServers": { "heimdall-ledger": { "command": "bin/heimdall-ledger-mcp" } } }
+```
+
+Point Cursor / Copilot / Claude Code at it; the host speaks `initialize` →
+`tools/list` → `tools/call` and the client joins the ledger with full attribution.
