@@ -1,0 +1,10 @@
+{
+  "$schema": "https://openapi.vercel.sh/vercel.json",
+  "redirects": [
+    {
+      "source": "/install",
+      "destination": "https://raw.githubusercontent.com/randomittin/heimdall/v1.1.0/install.sh",
+      "permanent": false
+    }
+  ]
+}
