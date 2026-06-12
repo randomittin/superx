@@ -29,6 +29,11 @@ superx-workspace/
 docs/analysis/
 docs/superpowers/plans/
 
+# guard install output — per-clone local git-hooks dir wired via core.hooksPath
+# (`hmd guard install`). Install output, not source. Lives in the working tree
+# (not .git/) on purpose so a relative core.hooksPath survives a repo move.
+.heimdall/
+
 # superx runtime artifacts
 .setup-done
 .last-update-from
