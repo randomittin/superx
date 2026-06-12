@@ -1,0 +1,44 @@
+{
+  "version": "1.0.0",
+  "description": "Coordination Ledger governance (spec T-3). Roles govern how Heimdall AGENTS coordinate edits to shared surfaces via the ledger. HONEST SCOPE: this file governs cooperating agents, NOT humans. Humans (and any hostile or buggy process) are governed by GitHub branch protection + CODEOWNERS — the ledger is NOT a security boundary.",
+  "roles": {
+    "owner": {
+      "rank": 3,
+      "summary": "Repo owner. May override-after-callout and resolve conflicts authoritatively.",
+      "can_override": true,
+      "override_requires_callout": true,
+      "force_push_allowed": false,
+      "notes": "Force-push to protected branches is governed by GitHub branch protection, not this ledger. Owner overrides of an AGENT claim still follow the structured override flow (override_notice -> grace -> conflicts entry -> decisions entry)."
+    },
+    "maintainer": {
+      "rank": 2,
+      "summary": "Trusted maintainer. May override-after-callout on claims within their CODEOWNERS surfaces.",
+      "can_override": true,
+      "override_requires_callout": true,
+      "force_push_allowed": false,
+      "notes": "Override authority is scoped to surfaces the maintainer owns via CODEOWNERS; outside those, behaves as contributor."
+    },
+    "contributor": {
+      "rank": 1,
+      "summary": "Contributor. PR-only, never force. May claim free surfaces but may NOT override another agent's active claim.",
+      "can_override": false,
+      "override_requires_callout": true,
+      "force_push_allowed": false,
+      "notes": "On collision, a contributor must sequence the work or request input — never displaces a held claim."
+    }
+  },
+  "override_flow": {
+    "summary": "How an authorized role (owner/maintainer) displaces another agent's ACTIVE claim. Every step is HAID-attributed and auditable. Displaced work is NEVER destroyed.",
+    "steps": [
+      "1. override_notice: the overriding agent posts a structured notice (decisions.md, citing both HAIDs, the claimed surfaces, and the reason) BEFORE acting.",
+      "2. grace: a 15-minute grace window during which the claim holder may respond, finish, or release.",
+      "3. preserve: the displaced agent's work is committed to a branch that is never deleted (e.g. displaced/{haid-slug}-{task}); the ledger records the branch name.",
+      "4. conflicts entry: the overriding agent authors conflicts/{date}-{id}.md documenting BOTH intents, what was KEPT, what was DISPLACED, and the RECOVERY path (how to restore the displaced work).",
+      "5. decisions entry: an ADR-lite decisions.md entry citing both HAIDs and linking the conflicts file, recording the resolution as the final, attributable decision."
+    ],
+    "grace_minutes": 15,
+    "preserve_displaced": true,
+    "displaced_branch_prefix": "displaced/"
+  },
+  "enforcement_honesty": "The ledger coordinates cooperating agents that agree to consult it. It cannot stop a determined or buggy writer. Real enforcement for HUMANS is GitHub branch protection (require PR review, block force-push on protected branches) + CODEOWNERS (require owner review on owned paths). Document and rely on those for security; use the ledger for agent coordination."
+}
