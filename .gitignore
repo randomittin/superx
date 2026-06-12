@@ -50,3 +50,4 @@ skills/designmatch/scripts/package-lock.json
 evals/oracles/*/report.json
 .planning/
 .claude/
+evals/benchmark/results.jsonl
