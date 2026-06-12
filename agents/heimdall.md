@@ -617,6 +617,7 @@ Protocol:
 - **Pre-wave:** each agent runs `heimdall-claim check <surfaces…>` (exit 3 = collision naming the holder) then `heimdall-claim claim <surfaces…> --task <ref>`. A real collision → **block + AWAITING INPUT**, never force.
 - **Completion:** write `completed/{date}-{task}.md` (summary + ≤10-line context capsule), then `heimdall-claim release`.
 - **Governance (`roles.json`):** owner/maintainer may override-after-callout (structured `override_notice` → 15-min grace → overriding agent authors `conflicts/{id}.md` with both intents, kept vs displaced, recovery path; displaced work preserved on a `displaced/` branch, never destroyed → `decisions.md` entry citing both HAIDs). Contributors are PR-only, never force, never displace a held claim.
+- **MCP interop (T-4):** `bin/heimdall-ledger-mcp` exposes the ledger over MCP stdio (6 tools: read_claims, make_claim, release_claim, read_capsules, append_decision, raise_conflict_pr) so Cursor/Copilot/any client joins the same ledger with full HAID attribution — a thin wrapper over `heimdall-claim`/`heimdall-haid`, contract in `PROTOCOL.md`, register via `.mcp.json`.
 
 ---
 
