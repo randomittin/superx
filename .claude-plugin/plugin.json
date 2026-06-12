@@ -1,6 +1,7 @@
 {
-  "name": "heimdall",
-  "description": "Nothing ships unproven. Autonomous multi-agent orchestrator for Claude Code that turns one prompt into a finished project — and keeps moving the bar on what counts as done: every plan wires an external, falsifiable oracle so the implementation can never grade its own homework, and the merge stays blocked until the work is proven correct. Decomposes work, spawns parallel agents, enforces quality gates with CTO-level judgment. Live observability via a terminal-native HUD statusline and end-of-run summary card.",
+  "name": "hmd",
+  "displayName": "Heimdall",
+  "description": "Nothing ships unproven. Heimdall is an autonomous multi-agent orchestrator for Claude Code that turns one prompt into a finished project — and keeps moving the bar on what counts as done: every plan wires an external, falsifiable oracle so the implementation can never grade its own homework, and the merge stays blocked until the work is proven correct. Decomposes work, spawns parallel agents, enforces quality gates with CTO-level judgment. Live observability via a terminal-native HUD statusline and end-of-run summary card.",
   "version": "1.1.0",
   "author": {
     "name": "Heimdall contributors",

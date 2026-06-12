@@ -8,8 +8,9 @@
   },
   "plugins": [
     {
-      "name": "heimdall",
-      "description": "Autonomous multi-agent orchestrator for Claude Code. Decomposes a prompt into waves, spawns parallel agents, wires an external falsifiable oracle so the implementation can never grade its own homework, and keeps the Bifröst closed until the work is proven correct. Live terminal-native HUD + end-of-run summary card.",
+      "name": "hmd",
+      "displayName": "Heimdall",
+      "description": "Heimdall — autonomous multi-agent orchestrator for Claude Code. Decomposes a prompt into waves, spawns parallel agents, wires an external falsifiable oracle so the implementation can never grade its own homework, and keeps the Bifröst closed until the work is proven correct. Live terminal-native HUD + end-of-run summary card.",
       "source": "./",
       "category": "productivity"
     }
