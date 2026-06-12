@@ -149,7 +149,24 @@ fi
 GOAL_SEG=""
 [ "$ST_GOAL" != "-" ] && GOAL_SEG="◎"
 
-# ── Emit single line ──
+# ── Watchman face: the always-on eye-pair that reacts to build state ──
+# Prepend the 1-line eye cluster from heimdall-face (--eyes). It resolves its own
+# emotion from STATE/gate state and renders ANSI itself. Graceful if the bin is
+# absent, non-executable, or errors — the HUD must never break. Single line only.
+FACE_SEG=""
+FACE_BIN="$(dirname "$0")/../bin/heimdall-face"
+if [ -x "$FACE_BIN" ] && command -v python3 >/dev/null 2>&1; then
+  # Match the HUD's own color decision: statusline emits ANSI even when not a tty
+  # (Claude Code captures stdout), so only suppress face color when this HUD has
+  # no color either (C is empty → plain mode).
+  _face_color_flag="--color"
+  [ -z "$C" ] && _face_color_flag="--no-color"
+  _face="$(python3 "$FACE_BIN" --eyes $_face_color_flag "$PROJECT" 2>/dev/null | head -n1)"
+  [ -n "$_face" ] && FACE_SEG="$_face"
+fi
+
+# ── Emit single line ──  (face already carries its own ESC bytes → %s, not %b)
+[ -n "$FACE_SEG" ] && printf "%s " "$FACE_SEG"
 printf "%b[HEIMDALL]%b %b%s%b" "$B$C" "$R" "$B" "$PHASE" "$R"
 [ -n "$WAVE_INFO" ] && printf " %b|%b %s tasks" "$D" "$R" "$WAVE_INFO"
 [ -n "$DISPATCH" ] && printf " %b|%b %s" "$D" "$R" "$DISPATCH"
