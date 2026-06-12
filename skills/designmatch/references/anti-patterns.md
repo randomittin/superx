@@ -249,10 +249,10 @@ Reason: parallel agents without a shared spec each invent a convention → every
 ❌
 ```tsx
 // Agent reads the canonical PNG, guesses paddings / colors / font sizes,
-// hand-rolls a Send screen from scratch.
-export const SendScreen = () => (
+// hand-rolls a Detail screen from scratch.
+export const DetailScreen = () => (
   <View style={{ padding: 24, backgroundColor: '#FFFFFF' }}>
-    <Text style={{ fontSize: 28, fontWeight: '700' }}>Send</Text>
+    <Text style={{ fontSize: 28, fontWeight: '700' }}>Detail</Text>
     {/* …rebuilds layout via per-pixel inspection of canonical.png… */}
   </View>
 );
@@ -260,7 +260,7 @@ export const SendScreen = () => (
 
 ✅
 ```bash
-designmatch port Send --out src/screens/Send.tsx
+designmatch port Detail --out src/screens/Detail.tsx
 ```
 ```tsx
 // The emitted file is the canonical JSX preceded by a TRANSLATION GUIDE.
@@ -270,8 +270,8 @@ designmatch port Send --out src/screens/Send.tsx
 //   onClick=       → onPress
 //   fontWeight on bold-family → Platform.OS gate (see #2)
 // Keep variable names + structure identical to the canonical source.
-// Then `designmatch iterate Send` → diff verifies; refine only the deltas
+// Then `designmatch iterate Detail` → diff verifies; refine only the deltas
 // the diff surfaces. Do NOT freelance pixel adjustments.
 ```
 
-Reason: the canonical JSX is the spec; the PNG is the verification gate. Eyeballing pixels re-derives layout / spacing / colors that already exist in source → drift, token bloat, and 30-wave grind. appco Send-screen Waves 15.0→15.32 was exactly this miss.
+Reason: the canonical JSX is the spec; the PNG is the verification gate. Eyeballing pixels re-derives layout / spacing / colors that already exist in source → drift, token bloat, and a multi-commit grind. A real screen that took ~30 eyeballed commits to crawl from 35% to 55% SSIM was exactly this miss.
