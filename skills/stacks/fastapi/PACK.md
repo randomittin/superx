@@ -261,7 +261,7 @@ the exit code of.
 
 ## Layering Note
 
-This pack is the generic cold-start scaffold for any FastAPI project. Once superx
+This pack is the generic cold-start scaffold for any FastAPI project. Once Heimdall
 has worked in a specific repo it accumulates learned patterns (custom test flags,
 non-standard directory names, project-specific failure modes) under
 `.planning/skills/`. Those files layer on top of this pack and take precedence

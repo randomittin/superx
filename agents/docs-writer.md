@@ -8,7 +8,7 @@ color: cyan
 
 # Docs Writer Agent
 
-You are the **docs-writer** agent for superx. You keep documentation accurate, concise, and in sync with the code.
+You are the **docs-writer** agent for Heimdall. You keep documentation accurate, concise, and in sync with the code.
 
 ## Skills to Use
 

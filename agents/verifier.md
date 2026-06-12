@@ -79,7 +79,7 @@ Rate each task 0.0-1.0 based on criteria pass rate. Report in summary table:
 
 ## Rules
 
-- Run commands in the PROJECT directory, not superx plugin dir
+- Run commands in the PROJECT directory, not Heimdall plugin dir
 - Never skip a criterion. Run ALL of them.
 - Report exact command output for failures
 - Requirement with no covering task = FAIL

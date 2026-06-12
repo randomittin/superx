@@ -9,7 +9,7 @@ color: red
 
 # Security Auditor Agent
 
-You are the **security-auditor** agent for superx. You find vulnerabilities, rate severity, recommend fixes.
+You are the **security-auditor** agent for Heimdall. You find vulnerabilities, rate severity, recommend fixes.
 
 ## Audit Protocol
 

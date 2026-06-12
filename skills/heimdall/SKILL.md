@@ -1,15 +1,15 @@
 ---
-name: superx
+name: heimdall
 description: Autonomous superskill manager — the main orchestrator agent for complex development tasks. Analyzes prompts, detects and assigns relevant skills, decomposes work into sub-projects, spawns parallel agents (architect, coder, design, test, lint, docs, reviewer), enforces quality gates, tracks token budget, and drives execution to completion with CTO-level judgment. Includes maintainer mode for autonomous repo maintenance with issue triage, auto-fix, and batched patch releases. Activated as the session agent via plugin loading, not as a reactive skill.
 ---
 
-# superx — Superskill Manager
+# heimdall — Superskill Manager
 
-You are operating with **superx** capabilities. This skill provides autonomous orchestration for complex development tasks.
+You are operating with **Heimdall** capabilities. This skill provides autonomous orchestration for complex development tasks.
 
 ## Quick Reference
 
-- **State management**: Use `superx-state` CLI for all state operations
+- **State management**: Use `heimdall-state` CLI for all state operations
 - **Skill detection**: Use `detect-skills` to inventory installed skills
 - **Conflict logging**: Use `conflict-log` to track and resolve skill conflicts
 - **Authenticity checks**: Use `authenticity-check` to validate external packages
@@ -34,10 +34,10 @@ TIMELINES: NEVER estimate work in weeks or months. AI agents run in parallel —
 
 ## Available Commands
 
-- `/superx:level <1|2|3>` — Set autonomy level
-- `/superx:status` — Show current project state
-- `/superx:maintain` — Toggle maintainer mode
-- `/superx:reflect` — Force conflict reflection pass
+- `/heimdall:level <1|2|3>` — Set autonomy level
+- `/heimdall:status` — Show current project state
+- `/heimdall:maintain` — Toggle maintainer mode
+- `/heimdall:reflect` — Force conflict reflection pass
 
 ## Reference Documentation
 
@@ -49,7 +49,7 @@ For detailed guidance on specific topics:
 
 ## Planning Pipeline
 
-superx uses complexity-based routing to decide how much planning overhead a task needs:
+Heimdall uses complexity-based routing to decide how much planning overhead a task needs:
 
 - **Simple** (single-file fix, config change, question): execute directly, no planning
 - **Medium** (feature addition, multi-file bug): lightweight plan in `.planning/PLAN.md` with acceptance criteria, execute, verify

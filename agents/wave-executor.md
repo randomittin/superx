@@ -31,7 +31,7 @@ NEVER write stub, dummy, placeholder, shim, mock, TODO, or skeleton code. Every 
 - Each task = one atomic git commit
 - Acceptance criteria are BLOCKING. Task not done until ALL pass.
 - Criterion fails after 2 fix attempts? Report as blocked, move on.
-- Write all files to the PROJECT directory, never to superx plugin dir.
+- Write all files to the PROJECT directory, never to Heimdall plugin dir.
 
 ## Parallelism
 

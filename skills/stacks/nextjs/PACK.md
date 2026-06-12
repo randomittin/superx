@@ -237,7 +237,7 @@ reviewer runs and reads the exit code of.
 ## Layering Note
 
 This pack is the **cold-start scaffold** — generic Next.js truths valid across
-projects. When superx detects repo-specific patterns (custom test runner flags,
+projects. When Heimdall detects repo-specific patterns (custom test runner flags,
 non-standard directory structure, proprietary UI library conventions), it writes
 those to `.planning/skills/*.md`. Those files are loaded after this pack and
 override any conflicting guidance here.

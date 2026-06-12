@@ -1,11 +1,11 @@
 ---
 name: save
-description: Save current work state for next session. Creates/updates .planning/ files (CHECKPOINT.md, STATE.md, settings.json) so superx resumes with full context. NOT a rewind — saves forward progress. Run before closing a session or at any milestone.
+description: Save current work state for next session. Creates/updates .planning/ files (CHECKPOINT.md, STATE.md, settings.json) so Heimdall resumes with full context. NOT a rewind — saves forward progress. Run before closing a session or at any milestone.
 ---
 
 # Save — Checkpoint Current State
 
-Create or update ALL `.planning/` state files so the next `superx` run resumes exactly where you left off.
+Create or update ALL `.planning/` state files so the next `heimdall` run resumes exactly where you left off.
 
 ## What to save
 
@@ -66,7 +66,7 @@ Write a concise handoff note that another Claude session can read and immediatel
 - User preferences: [e.g. "prefers tabs over spaces", "wants detailed commit messages", "hates emojis in code"]
 ```
 
-### 3. `.planning/settings.json` (project-specific superx config)
+### 3. `.planning/settings.json` (project-specific Heimdall config)
 Write or update project-specific execution settings:
 
 ```json
@@ -97,18 +97,18 @@ Write or update project-specific execution settings:
 }
 ```
 
-This file is read mechanically on every `superx` launch (injected into preamble alongside CHECKPOINT.md). Claude doesn't need to "discover" test/lint/build commands — they're hardcoded from the first run.
+This file is read mechanically on every `heimdall` launch (injected into preamble alongside CHECKPOINT.md). Claude doesn't need to "discover" test/lint/build commands — they're hardcoded from the first run.
 
 ### 4. Git checkpoint
 ```bash
-git add -A && git commit -m "superx: checkpoint — [brief description]"
+git add -A && git commit -m "heimdall: checkpoint — [brief description]"
 ```
 
 ### 5. Goal checkpoint
 
 If a `/goal` is currently active, save it for next session restoration:
 
-1. Check current goal: `superx-state goal-get`
+1. Check current goal: `heimdall-state goal-get`
 2. If a goal is active (not "none"), include in CHECKPOINT.md under a new section:
 
 ```markdown

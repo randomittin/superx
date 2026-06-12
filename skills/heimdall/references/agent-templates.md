@@ -39,7 +39,7 @@ Constraints:
 - Write tests alongside implementation
 
 After completion, run:
-  superx-state set '.plan.sub_projects[INDEX].status' '"complete"'
+  heimdall-state set '.plan.sub_projects[INDEX].status' '"complete"'
 ```
 
 ## Test Runner Agent
@@ -56,7 +56,7 @@ Protocol:
 2. Run full test suite
 3. Report pass/fail/skip counts
 4. Flag any untested code paths in recently changed files
-5. If all pass: run `superx-state mark-clean`
+5. If all pass: run `heimdall-state mark-clean`
 6. If failures: report details with file paths and error messages
 ```
 
@@ -69,7 +69,7 @@ Protocol:
 1. Run the project's configured linter (check package.json scripts)
 2. Run formatting check
 3. Report all violations with file paths and line numbers
-4. If clean: run `superx-state set '.quality_gates.lint_clean' 'true'`
+4. If clean: run `heimdall-state set '.quality_gates.lint_clean' 'true'`
 5. If violations: list them for the coder agent to fix
 ```
 
@@ -135,7 +135,7 @@ Constraints:
 - Do not change business logic or API code
 
 After completion, run:
-  superx-state set '.plan.sub_projects[INDEX].status' '"complete"'
+  heimdall-state set '.plan.sub_projects[INDEX].status' '"complete"'
 ```
 
 ## Agent Team Template

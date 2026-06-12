@@ -1,6 +1,6 @@
 # Stack Skill Packs
 
-Stack specialization in superx ships as **knowledge packs loaded onto existing
+Stack specialization in Heimdall ships as **knowledge packs loaded onto existing
 role agents** — never as new role x stack agents.
 
 - **Agents are roles.** `planner`, `coder`, `reviewer`, `architect`, etc. There
@@ -72,7 +72,7 @@ about a stack before it has ever seen this particular repo. It encodes
 stack-wide truths (e.g. "run `./gradlew test`", "Next.js app routes live under
 `app/`").
 
-`.planning/skills/` is the **per-repo refinement layer**. As superx works in a
+`.planning/skills/` is the **per-repo refinement layer**. As Heimdall works in a
 repo it extracts patterns specific to that codebase (its test runner flags, its
 directory quirks, recurring failure modes). Those refine — and where they
 conflict, take precedence over — the base pack, because they are closer to the
@@ -81,7 +81,7 @@ ground truth of the actual project.
 ## Session integration
 
 A `SessionStart` hook runs `bin/stack-pack detect` and writes the result to
-`.planning/detected-stack.json` (when the project is a superx project). Role
+`.planning/detected-stack.json` (when the project is a Heimdall project). Role
 agents can read that file instead of re-running detection, and call
 `bin/stack-pack load` to get the pack paths to read.
 
