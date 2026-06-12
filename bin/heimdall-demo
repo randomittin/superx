@@ -38,15 +38,24 @@ SELF="$0"
 if command -v readlink &>/dev/null; then
   SELF="$(readlink -f "$0" 2>/dev/null || readlink "$0" 2>/dev/null || echo "$0")"
 fi
-PLUGIN_DIR="$(cd "$(dirname "$SELF")/.." && pwd)"
+BIN_DIR="$(cd "$(dirname "$SELF")" && pwd)"
+PLUGIN_DIR="$(cd "$BIN_DIR/.." && pwd)"
+REEL_BIN="$BIN_DIR/heimdall-reel"
+CARD_BIN="$BIN_DIR/summary-card"
 
 # ── Defaults ──
 
 TARGET_DIR=""
 MODE="dry"        # dry | run
 FORCE=false
+NO_REEL=false     # --run only: skip the H-5 reel/summary-card endframe
 TASK_FILE=".heimdall-demo-task.md"
 PLAN_FILE=".planning/PLAN.md"
+
+# The single follow-up prompt we suggest after the build — the second-prompt
+# conversion (S-5): a natural next step that exercises a *different* heimdall
+# strength (verification + corpus) on the app we just built.
+FOLLOWUP_PROMPT="Add a /api/todos/{id} GET endpoint that returns one todo (404 on unknown id), with tests, and prove the whole suite is still green."
 
 # ── Usage ──
 
@@ -63,8 +72,18 @@ $(printf "${B}")ARGUMENTS$(printf "${R}")
 $(printf "${B}")FLAGS$(printf "${R}")
   --dry          Scaffold + print the paste-ready command. Never executes. (default)
   --run          Scaffold AND launch heimdall on the task (requires \`heimdall\` on PATH).
+                 On completion, prints the H-5 summary card + records a reel and
+                 suggests a follow-up prompt (the second-prompt conversion).
+  --no-reel      With --run: skip the reel/summary-card endframe.
   --force        Overwrite the target dir if it already exists.
   -h, --help     Show this help.
+
+$(printf "${B}")PREREQUISITES$(printf "${R}")
+  Dry mode (default): bash + coreutils only — runs on any fresh machine.
+  --run mode:         additionally needs \`heimdall\` (and Claude Code) on PATH.
+  The scaffolded task itself builds with: python3, pip, pytest (installed by
+  the task's own requirements.txt). The optional reel uses asciinema + agg if
+  present, and degrades gracefully to a text endframe if they are not.
 
 $(printf "${B}")WHAT IT DOES$(printf "${R}")
   Writes a fully-specified canned task (a Todo REST API + single-page frontend
@@ -87,6 +106,7 @@ for arg in "$@"; do
     --dry)     MODE="dry" ;;
     --run)     MODE="run" ;;
     --force)   FORCE=true ;;
+    --no-reel) NO_REEL=true ;;
     -*)
       printf "  ${P}✘${R} Unknown flag: ${B}%s${R}\n" "$arg" >&2
       printf "  ${D}Run ${C}heimdall-demo --help${D} for usage.${R}\n" >&2
@@ -234,6 +254,48 @@ printf "\n"
 # The exact prompt to hand heimdall — points it at the scaffolded task file.
 DEMO_PROMPT="Build the full-stack app specified in .heimdall-demo-task.md, following the plan seed in .planning/PLAN.md. All acceptance criteria must pass with runnable evidence."
 
+# ── End-of-run wow: summary card + reel + the suggested next prompt. ──
+# Shared by --run (real) so a completed build always lands on the H-5 endframe
+# and the second-prompt conversion. Pure shell, never fails the run.
+print_endframe() {
+  printf "\n"
+  printf "  ${V}━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━${R}\n"
+  printf "  ${C}${B}RUN COMPLETE${R} ${D}— the receipts${R}\n"
+  printf "  ${V}━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━${R}\n"
+
+  # 1) The H-5 summary card (degrades to "—" on missing data, never crashes).
+  if [ -x "$CARD_BIN" ]; then
+    "$CARD_BIN" "$ABS_DIR" || true
+  fi
+
+  # 2) The reel — one shareable artifact (graceful-degrade to a .txt endframe).
+  if [ "$NO_REEL" != true ] && [ -x "$REEL_BIN" ]; then
+    printf "\n  ${P}▸${R} ${B}Reel${R} ${D}— rendering the shareable endframe…${R}\n"
+    "$REEL_BIN" endframe "$ABS_DIR" --name heimdall-demo >/dev/null 2>&1 || true
+    if [ -d "$ABS_DIR/.planning/reels" ]; then
+      printf "  ${G}✔${R} reel artifacts in ${C}%s/.planning/reels/${R}\n" "$ABS_DIR"
+    fi
+  fi
+
+  # 3) The localhost URL (the demo task serves the app at :8000 via uvicorn).
+  printf "\n  ${B}Run the app you just built:${R}\n"
+  printf "  ${C}cd %s && uvicorn app:app${R}  ${D}→${R}  ${UL}http://localhost:8000${R}\n" "$ABS_DIR"
+
+  # 4) The atomic commits heimdall made (R7: one commit per task).
+  if git -C "$ABS_DIR" rev-parse --git-dir >/dev/null 2>&1; then
+    printf "\n  ${B}Atomic commits:${R}\n"
+    git -C "$ABS_DIR" log --oneline -8 2>/dev/null | while IFS= read -r ln; do
+      printf "    ${D}%s${R}\n" "$ln"
+    done
+  fi
+
+  # 5) The second-prompt conversion — one concrete follow-up.
+  printf "\n  ${V}━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━${R}\n"
+  printf "  ${B}Try one more — exercise the verification layer:${R}\n"
+  printf "  ${C}cd %s && heimdall \"%s\"${R}\n" "$ABS_DIR" "$FOLLOWUP_PROMPT"
+  printf "  ${V}━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━${R}\n\n"
+}
+
 if [ "$MODE" = "run" ]; then
   if ! command -v heimdall &>/dev/null; then
     printf "  ${W}⚠${R} ${B}heimdall${R} not found on PATH — cannot auto-run.\n"
@@ -243,7 +305,16 @@ if [ "$MODE" = "run" ]; then
     printf "  ${P}▸${R} ${B}Launching heimdall${R} ${D}(--run)${R}\n"
     printf "  ${D}cd %s && heimdall \"%s\"${R}\n\n" "$ABS_DIR" "$DEMO_PROMPT"
     cd "$ABS_DIR"
-    exec heimdall "$DEMO_PROMPT"
+    # Record a reel WHILE heimdall builds when the recorder + reel bin exist;
+    # otherwise run heimdall directly. Either way we return and render the
+    # endframe (summary card + reel + follow-up) — we do NOT exec/replace.
+    if [ "$NO_REEL" != true ] && [ -x "$REEL_BIN" ] && command -v asciinema &>/dev/null; then
+      "$REEL_BIN" record "$ABS_DIR" --name heimdall-demo -- heimdall "$DEMO_PROMPT" || true
+    else
+      heimdall "$DEMO_PROMPT" || true
+    fi
+    print_endframe
+    exit 0
   fi
 fi
 
@@ -254,6 +325,10 @@ printf "  ${C}cd %s && heimdall \"%s\"${R}\n" "$ABS_DIR" "$DEMO_PROMPT"
 printf "\n"
 printf "  ${D}No ${C}heimdall${D} on PATH? Open Claude Code in that dir and say:${R}\n"
 printf "  ${D}  \"%s\"${R}\n" "$DEMO_PROMPT"
+printf "\n"
+printf "  ${D}When the build finishes you'll get a summary card, a shareable reel,${R}\n"
+printf "  ${D}and a suggested follow-up that exercises the verification layer:${R}\n"
+printf "  ${D}  \"%s\"${R}\n" "$FOLLOWUP_PROMPT"
 printf "\n"
 printf "  ${W}▸${R} Safe by default — nothing was executed. Add ${C}--run${R} to launch automatically.\n"
 printf "\n"
