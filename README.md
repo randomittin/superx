@@ -23,18 +23,23 @@ The delta Heimdall sells is verification, not generation. With the model held co
 Each of these runs on a fresh machine with only the documented prerequisites. Doors marked *coming* are specified but not yet shipped.
 
 ```bash
-heimdall demo                     # coming — a ~15-min canned run ending in a summary card + reel
-heimdall debloat --report-only    # coming — zero-risk: point it at any repo, get a bloat scorecard, change nothing
-heimdall bench                    # coming — reproduce the public benchmark table on your own machine
+heimdall-demo                     # scaffold a real full-stack task; --run builds it and ends in a summary card + reel + a follow-up prompt
+heimdall-debloat --report-only    # zero-risk: point it at any repo, get a bloat scorecard, change nothing
+heimdall-bench                    # reproduce the public benchmark table on your own machine (dry by default, zero API spend)
 heimdall spec                     # coming — turn a spec into a wave-planned, gate-verified build
 ```
 
-Until those land, the proofs already in the tree are runnable today:
+`heimdall-demo` and `heimdall-bench` are **safe to run sight-unseen**: the demo
+defaults to dry (it scaffolds the task + prints the paste-ready command and
+executes nothing), and `heimdall-bench` defaults to a dry pass that validates the
+suite and prints the capture plan **without spending a single API token**. Opt in
+to the real thing with `heimdall-demo --run` and `heimdall-bench --live`.
+
+The deeper proofs already in the tree are runnable today too:
 
 ```bash
 bin/falsify exchange-lob          # inject every mutant; assert the gate goes red on each (score must be 1.0)
 bin/corpus run                    # replay the failure corpus; print the real catch-rate
-bin/benchmark --dry               # validate the benchmark suite + print the capture plan (no API calls)
 ```
 
 ---
