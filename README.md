@@ -60,26 +60,29 @@ The live flagship status table is at [`evals/flagship/STATUS.md`](evals/flagship
 
 ## Install
 
-### Via the Claude Code plugin marketplace (primary)
+One command, from zero to running. It installs Node + Claude Code if missing, clones Heimdall to `~/.heimdall`, registers the plugin with Claude Code, and puts `heimdall` on your PATH — with a banner the whole way:
 
 ```bash
-claude plugins marketplace add randomittin/heimdall-marketplace
-claude plugins install heimdall
+curl -fsSL https://raw.githubusercontent.com/randomittin/heimdall/main/install.sh | bash
 ```
 
-Then run Heimdall over a task in auto mode (the default — a background safety classifier blocks prompt injection and risky escalation while still letting Heimdall work autonomously):
+Then see Heimdall build a real full-stack app — dry by default, zero API spend:
+
+```bash
+heimdall-demo            # scaffolds the demo task + prints the paste-ready command
+heimdall-demo --run      # actually build it end-to-end
+```
+
+Once installed, run Heimdall over your own task in auto mode (the default — a background safety classifier blocks prompt injection and risky escalation while still letting Heimdall work autonomously):
 
 ```bash
 cd /path/to/your/project
 heimdall --auto "build a real-time dashboard with auth and charts"
 ```
 
-### Or install manually
+The installer is idempotent — re-run it any time to update.
 
-```bash
-git clone https://github.com/randomittin/heimdall.git ~/.heimdall
-export PATH="$PATH:$HOME/.heimdall/bin"
-```
+> A published Claude Code plugin marketplace (`claude plugins install heimdall@…`) is **coming**. Until then the curl installer above is the supported path; it registers the same plugin locally from your clone.
 
 > **`--dangerously-skip-permissions`** exists as a flag but is **not** the default. It hands an agent full autonomy with no safety classifier in the loop; prefer `--auto`. Only reach for skip-permissions in a throwaway sandbox you are willing to lose.
 
