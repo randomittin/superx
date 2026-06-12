@@ -1,0 +1,140 @@
+#!/usr/bin/env bash
+# heimdall-bench — reproduce the public benchmark table on YOUR machine.
+#
+# This is the documented entry door (S-5). It is a thin, branded front-end over
+# the measurement harness in `bin/benchmark`: it does NOT invent numbers — it
+# PRODUCES them by actually running the suite under two arms (raw Claude Code vs
+# heimdall) and emitting the exact table format the published `evals/` table uses.
+#
+# Safe by default: with no flags it runs a DRY pass — validates the suite, prints
+# the capture plan and the per-task verify steps, and spends ZERO API tokens. A
+# cold stranger can run `heimdall bench` and see exactly what a real run measures
+# without burning a cent. Opt in to a real run with `--live`.
+#
+# Usage:
+#   heimdall-bench                      Dry: validate suite + print capture plan (no API)
+#   heimdall-bench --dry                Same as above (explicit)
+#   heimdall-bench --live               Measure for real (spends API tokens)
+#   heimdall-bench --live --model <id>  Pin a model id (e.g. the flagship Fable 5)
+#   heimdall-bench --task <id> [...]    Restrict to one task
+#   heimdall-bench --arm raw|heimdall|both
+#   heimdall-bench --table              After a live run, print the published-format table
+#   heimdall-bench --help
+#
+# Honesty principle (carried from evals/benchmark/README.md): publish everything
+# measured, including tasks where heimdall loses. Tokens come from the Claude
+# CLI's own usage accounting; "tests passing" is the genuine result of running
+# each task's verify[] commands. Nothing is hand-tuned, nothing is hardcoded.
+set -euo pipefail
+
+# ── Resolve paths (bin/heimdall-bench → heimdall/) ──
+SELF="$0"
+if command -v readlink &>/dev/null; then
+  SELF="$(readlink -f "$0" 2>/dev/null || readlink "$0" 2>/dev/null || echo "$0")"
+fi
+BIN_DIR="$(cd "$(dirname "$SELF")" && pwd)"
+PLUGIN_DIR="$(cd "$BIN_DIR/.." && pwd)"
+HARNESS="$BIN_DIR/benchmark"
+BENCH_DIR="$PLUGIN_DIR/evals/benchmark"
+RESULTS_JSONL="$BENCH_DIR/results.jsonl"
+RESULTS_MD="$BENCH_DIR/results.md"
+
+# ── Colors (truecolor with plain fallback, matching the other bins) ──
+if [[ "${COLORTERM:-}" == "truecolor" || "${COLORTERM:-}" == "24bit" || "${TERM:-}" == *256color* ]]; then
+  P='\033[38;2;224;86;160m'; C='\033[38;2;0;212;255m'; V='\033[38;2;155;89;182m'
+  G='\033[38;2;78;204;163m'; D='\033[38;2;100;100;120m'; W='\033[38;2;255;200;80m'
+else
+  P='\033[35m'; C='\033[36m'; V='\033[34m'; G='\033[32m'; D='\033[37m'; W='\033[33m'
+fi
+B='\033[1m'; R='\033[0m'
+
+usage() {
+  cat <<EOF
+$(printf "${P}${B}")heimdall-bench$(printf "${R}") — reproduce the public benchmark table on your own machine
+
+$(printf "${B}")USAGE$(printf "${R}")
+  heimdall-bench [--dry|--live] [--model <id>] [--task <id>] [--arm raw|heimdall|both] [--table]
+
+$(printf "${B}")FLAGS$(printf "${R}")
+  --dry              Validate the suite + print the capture plan. No API calls. (default)
+  --live             Actually invoke Claude and measure (spends API tokens).
+  --model <id>       Model id passed through to the Claude CLI (e.g. the flagship).
+  --task <id>        Run a single task by id (default: the whole suite).
+  --arm <which>      raw | heimdall | both  (default: both).
+  --interventions N  Record N human interventions for a manual run (default 0).
+  --table            Print the published-format markdown table from the last live run.
+  -h, --help         Show this help.
+
+$(printf "${B}")PREREQUISITES$(printf "${R}")
+  Dry mode (default): bash + jq only — runs on any fresh machine, no API.
+  --live mode:        additionally needs the \`claude\` CLI with valid auth.
+
+$(printf "${B}")WHAT IT DOES$(printf "${R}")
+  Runs a fixed suite of representative coding tasks under two arms — raw Claude
+  Code vs Claude Code driven through heimdall — and measures, per task x arm:
+  tokens (from the CLI's own usage accounting), wall-clock seconds, tests passed
+  (by running each task's verify[] commands), cost, and turns. It writes the same
+  table format the public evals table publishes, so the number in any claim is
+  one you can reproduce here. It NEVER hardcodes results.
+
+$(printf "${B}")EXAMPLES$(printf "${R}")
+  heimdall-bench                       # dry: see what a live run would measure (no API)
+  heimdall-bench --live                # real run, both arms, whole suite
+  heimdall-bench --live --model claude-opus-4-8
+  heimdall-bench --task 02-bugfix-with-tests --arm heimdall --live
+  heimdall-bench --table               # reprint the last live run's published table
+EOF
+}
+
+# ── Args: --table is handled here; everything else is forwarded to the harness. ──
+SHOW_TABLE=false
+FORWARD=()
+SAW_MODE=false
+while [ $# -gt 0 ]; do
+  case "$1" in
+    -h|--help) usage; exit 0 ;;
+    --table)   SHOW_TABLE=true; shift ;;
+    --dry|--live) SAW_MODE=true; FORWARD+=("$1"); shift ;;
+    --model|--task|--arm|--interventions)
+      # value-taking flags: forward both the flag and its argument
+      [ $# -ge 2 ] || { printf "  ${P}x${R} %s needs a value\n" "$1" >&2; exit 2; }
+      FORWARD+=("$1" "$2"); shift 2 ;;
+    *) printf "  ${P}x${R} Unknown flag: ${B}%s${R}\n" "$1" >&2
+       printf "  ${D}Run ${C}heimdall-bench --help${D} for usage.${R}\n" >&2
+       exit 2 ;;
+  esac
+done
+
+# ── --table: print the published-format table from the last live run and exit. ──
+if [ "$SHOW_TABLE" = true ]; then
+  if [ ! -s "$RESULTS_MD" ]; then
+    printf "  ${W}!${R} No results yet. Run ${C}heimdall-bench --live${R} first.\n" >&2
+    exit 1
+  fi
+  printf "\n  ${B}Published-format benchmark table${R} ${D}(from the last live run)${R}\n"
+  printf "  ${D}source: %s${R}\n\n" "$RESULTS_MD"
+  cat "$RESULTS_MD"
+  printf "\n  ${D}Machine-readable rows: %s${R}\n\n" "$RESULTS_JSONL"
+  exit 0
+fi
+
+# ── Sanity: the harness must exist and be runnable. ──
+[ -x "$HARNESS" ] || { printf "  ${P}x${R} measurement harness not found: %s\n" "$HARNESS" >&2; exit 1; }
+command -v jq >/dev/null 2>&1 || { printf "  ${P}x${R} jq is required (brew install jq)\n" >&2; exit 1; }
+
+# ── Banner ──
+printf "\n"
+printf "  ${P}${B}░▒▓█${R} ${C}${B}H E I M D A L L   B E N C H${R} ${P}${B}█▓▒░${R}\n"
+printf "  ${V}━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━${R}\n"
+printf "  ${D}Reproduce the public table on your machine — same suite, same arms.${R}\n"
+if [ "$SAW_MODE" = false ]; then
+  printf "  ${W}>${R} ${D}No mode given — running ${C}--dry${D} (validate + plan, ${B}zero API spend${R}${D}).${R}\n"
+  printf "  ${D}  Add ${C}--live${D} to measure for real.${R}\n"
+fi
+printf "\n"
+
+# Delegate to the measurement harness. It is dry-by-default, so forwarding an
+# empty FORWARD array yields a safe dry run. We never fabricate output — the
+# harness prints exactly what it measures (or, in dry mode, the plan).
+# bash 3.2-safe empty-array expansion under `set -u`.
+exec "$HARNESS" ${FORWARD[@]+"${FORWARD[@]}"}
