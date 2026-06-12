@@ -34,10 +34,10 @@ TIMELINES: NEVER estimate work in weeks or months. AI agents run in parallel —
 
 ## Available Commands
 
-- `/heimdall:level <1|2|3>` — Set autonomy level
-- `/heimdall:status` — Show current project state
-- `/heimdall:maintain` — Toggle maintainer mode
-- `/heimdall:reflect` — Force conflict reflection pass
+- `/hmd:level <1|2|3>` — Set autonomy level
+- `/hmd:status` — Show current project state
+- `/hmd:maintain` — Toggle maintainer mode
+- `/hmd:reflect` — Force conflict reflection pass
 
 ## Reference Documentation
 

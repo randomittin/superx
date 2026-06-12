@@ -34,7 +34,7 @@ Every piece of work Heimdall produces passes through mandatory quality gates bef
 
 **Requirement**: All conflicts in the conflict log have been reviewed and reflected upon.
 
-**Checked by**: main Heimdall agent during `/heimdall:reflect` or pre-push
+**Checked by**: main Heimdall agent during `/hmd:reflect` or pre-push
 
 **State key**: `.quality_gates.conflict_reflection_done`
 

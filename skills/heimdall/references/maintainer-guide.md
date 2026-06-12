@@ -5,7 +5,7 @@ Maintainer mode turns Heimdall into an autonomous repo maintainer that triages i
 ## Activation
 
 ```
-/heimdall:maintain
+/hmd:maintain
 ```
 
 This runs a guided setup wizard that:
@@ -15,21 +15,21 @@ This runs a guided setup wizard that:
 4. Optionally configures Slack notifications
 5. Enables maintainer mode and runs the first check immediately
 
-For subsequent activations, `/heimdall:maintain` remembers your configuration.
+For subsequent activations, `/hmd:maintain` remembers your configuration.
 
 ## Continuous Monitoring
 
 After activation, keep the monitor running with:
 ```
-/loop 30m /heimdall:maintain-check
+/loop 30m /hmd:maintain-check
 ```
 
 Or for persistent monitoring that survives session restarts:
 ```
-/schedule maintain-check --cron "*/30 * * * *" --command "/heimdall:maintain-check"
+/schedule maintain-check --cron "*/30 * * * *" --command "/hmd:maintain-check"
 ```
 
-Each `/heimdall:maintain-check` invocation runs one full cycle: scan → triage → fix → release.
+Each `/hmd:maintain-check` invocation runs one full cycle: scan → triage → fix → release.
 
 ## Issue Ingestion
 
